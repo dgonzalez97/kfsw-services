@@ -1,0 +1,11 @@
+menu "K-FSW services"
+
+config KFSW_LOG_MIN_LEVEL
+	int "Minimum K-FSW log level"
+	range 0 4
+	default 1
+	help
+	  Compile messages at or above this severity. Values are 0 for DEBUG,
+	  1 for INFO, 2 for WARNING, 3 for ERROR, and 4 to disable logging.
+
+endmenu

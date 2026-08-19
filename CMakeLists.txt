@@ -1,5 +1,6 @@
 add_library(kfsw_services STATIC
     src/boot.c
+    src/log.c
 )
 
 add_library(kfsw::services ALIAS kfsw_services)

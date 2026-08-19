@@ -2,5 +2,6 @@ name: kfsw-services
 
 build:
   cmake: .
+  kconfig: Kconfig
   depends:
     - kfsw-platform
