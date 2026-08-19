@@ -1,0 +1,6 @@
+name: kfsw-services
+
+build:
+  cmake: .
+  depends:
+    - kfsw-platform
