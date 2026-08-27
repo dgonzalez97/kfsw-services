@@ -1,9 +1,11 @@
 #ifndef KFSW_SERVICES_LOG_H
 #define KFSW_SERVICES_LOG_H
 
+#include <stdint.h>
+
 #if defined(__GNUC__) || defined(__clang__)
-#define KFSW_LOG_PRINTF_LIKE(format_index, first_arg) \
-    __attribute__((format(printf, format_index, first_arg)))
+#define KFSW_LOG_PRINTF_LIKE(format_index, first_arg)                                              \
+	__attribute__((format(printf, format_index, first_arg)))
 #else
 #define KFSW_LOG_PRINTF_LIKE(format_index, first_arg)
 #endif
@@ -12,6 +14,12 @@
 extern "C" {
 #endif
 
+/** Set the runtime minimum log level (0 DEBUG through 4 disabled). */
+int kfsw_log_set_level(uint8_t level);
+
+/** Return the active runtime minimum log level. */
+uint8_t kfsw_log_get_level(void);
+
 #if CONFIG_KFSW_LOG_MIN_LEVEL <= 3
 /**
  * @brief Log an error message.
@@ -19,10 +27,11 @@ extern "C" {
  * @param format printf-style format string.
  * @param ... Format arguments.
  */
-void kfsw_log_error(const char *format, ...)
-    KFSW_LOG_PRINTF_LIKE(1, 2);
+void kfsw_log_error(const char *format, ...) KFSW_LOG_PRINTF_LIKE(1, 2);
 #else
-#define kfsw_log_error(...) do { } while (0)
+#define kfsw_log_error(...)                                                                        \
+	do {                                                                                       \
+	} while (0)
 #endif
 
 #if CONFIG_KFSW_LOG_MIN_LEVEL <= 2
@@ -32,10 +41,11 @@ void kfsw_log_error(const char *format, ...)
  * @param format printf-style format string.
  * @param ... Format arguments.
  */
-void kfsw_log_warning(const char *format, ...)
-    KFSW_LOG_PRINTF_LIKE(1, 2);
+void kfsw_log_warning(const char *format, ...) KFSW_LOG_PRINTF_LIKE(1, 2);
 #else
-#define kfsw_log_warning(...) do { } while (0)
+#define kfsw_log_warning(...)                                                                      \
+	do {                                                                                       \
+	} while (0)
 #endif
 
 #if CONFIG_KFSW_LOG_MIN_LEVEL <= 1
@@ -45,10 +55,11 @@ void kfsw_log_warning(const char *format, ...)
  * @param format printf-style format string.
  * @param ... Format arguments.
  */
-void kfsw_log_info(const char *format, ...)
-    KFSW_LOG_PRINTF_LIKE(1, 2);
+void kfsw_log_info(const char *format, ...) KFSW_LOG_PRINTF_LIKE(1, 2);
 #else
-#define kfsw_log_info(...) do { } while (0)
+#define kfsw_log_info(...)                                                                         \
+	do {                                                                                       \
+	} while (0)
 #endif
 
 #if CONFIG_KFSW_LOG_MIN_LEVEL <= 0
@@ -58,10 +69,11 @@ void kfsw_log_info(const char *format, ...)
  * @param format printf-style format string.
  * @param ... Format arguments.
  */
-void kfsw_log_debug(const char *format, ...)
-    KFSW_LOG_PRINTF_LIKE(1, 2);
+void kfsw_log_debug(const char *format, ...) KFSW_LOG_PRINTF_LIKE(1, 2);
 #else
-#define kfsw_log_debug(...) do { } while (0)
+#define kfsw_log_debug(...)                                                                        \
+	do {                                                                                       \
+	} while (0)
 #endif
 
 #ifdef __cplusplus

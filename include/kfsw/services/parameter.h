@@ -60,6 +60,9 @@ struct kfsw_param_info {
 	bool read_only;
 };
 
+/** K-FSW-owned libparam user flag selecting values for persistence. */
+#define KFSW_PARAM_FLAG_PERSISTENT 0x00010000UL
+
 typedef bool (*kfsw_param_visitor_t)(const struct kfsw_param_info *info, void *context);
 
 /** Validate and enable the statically linked local parameter table. */
@@ -76,6 +79,20 @@ int kfsw_param_set(const char *name, const struct kfsw_param_value *value);
 
 /** Visit local parameter descriptions. */
 int kfsw_param_visit(kfsw_param_visitor_t visitor, void *context);
+
+#if CONFIG_KFSW_PARAM_PERSISTENCE
+/** Save all explicitly persistent local parameters as one atomic snapshot. */
+int kfsw_param_persist_save(void);
+
+/** Load a valid snapshot, ignoring unknown names and incompatible entries. */
+int kfsw_param_persist_load(void);
+
+/** Delete the active persistent snapshot and any abandoned temporary file. */
+int kfsw_param_persist_clear(void);
+
+/** Restore persistent parameters to their compiled defaults in RAM only. */
+int kfsw_param_restore_defaults(void);
+#endif
 
 /** Register the CSP parameter and parameter-list endpoints once. */
 int kfsw_param_server_start(void);

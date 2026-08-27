@@ -67,6 +67,9 @@ if(CONFIG_KFSW_PARAM)
 
     zephyr_linker_sources(SECTIONS zephyr/libparam-sections.ld)
     list(APPEND kfsw_services_sources src/parameter.c)
+    if(CONFIG_KFSW_PARAM_PERSISTENCE)
+        list(APPEND kfsw_services_sources src/parameter_persistence.c)
+    endif()
 endif()
 
 add_library(kfsw_services STATIC ${kfsw_services_sources})

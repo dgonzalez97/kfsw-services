@@ -18,6 +18,15 @@ config KFSW_PARAM
 
 if KFSW_PARAM
 
+config KFSW_PARAM_PERSISTENCE
+	bool "Explicit LittleFS parameter snapshots"
+	depends on KFSW_STORAGE
+	select CRC
+	help
+	  Save and restore explicitly selected local parameters using a bounded,
+	  versioned snapshot under /kfsw/params. Runtime parameter changes remain
+	  in RAM until an explicit save operation.
+
 config KFSW_PARAM_PORT
 	int "CSP parameter transaction port"
 	range 1 63

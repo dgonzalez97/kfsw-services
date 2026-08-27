@@ -16,31 +16,52 @@
 #include <param/param_server.h>
 
 #include <kfsw/comms/csp.h>
+#include <kfsw/services/log.h>
 #include <kfsw/services/parameter.h>
+
+#include "parameter_internal.h"
 
 /* Upstream's version 3 list wire structure; kept private to this adapter. */
 #include "param_list.h"
 
 #define KFSW_PARAM_PROTOCOL_VERSION 2
 #define KFSW_PARAM_LIST_VERSION 3
+#define KFSW_PARAM_DEFAULT_TEST_U32 42U
+#define KFSW_PARAM_DEFAULT_TEST_I32 -7
+#define KFSW_PARAM_DEFAULT_TEST_FLOAT 1.5F
 
 static uint16_t node_id_value = CONFIG_KFSW_CSP_ADDRESS;
 static uint8_t log_level_value = CONFIG_KFSW_LOG_MIN_LEVEL;
-static uint32_t test_u32_value = 42U;
-static int32_t test_i32_value = -7;
-static float test_float_value = 1.5F;
+static uint32_t test_u32_value = KFSW_PARAM_DEFAULT_TEST_U32;
+static int32_t test_i32_value = KFSW_PARAM_DEFAULT_TEST_I32;
+static float test_float_value = KFSW_PARAM_DEFAULT_TEST_FLOAT;
+
+static void log_level_changed(const param_t *param, int offset)
+{
+	ARG_UNUSED(param);
+	ARG_UNUSED(offset);
+
+	if (kfsw_log_set_level(log_level_value) != 0) {
+		log_level_value = CONFIG_KFSW_LOG_MIN_LEVEL;
+		(void)kfsw_log_set_level(log_level_value);
+	}
+}
 
 PARAM_DEFINE_STATIC_RAM(0, node_id, PARAM_TYPE_UINT16, 1, sizeof(node_id_value),
 			PM_READONLY | PM_SYSINFO, NULL, NULL, &node_id_value,
 			"Build-time CSP node address");
-PARAM_DEFINE_STATIC_RAM(1, log_level, PARAM_TYPE_UINT8, 1, sizeof(log_level_value), PM_CONF, NULL,
-			NULL, &log_level_value, "Runtime logging policy value");
-PARAM_DEFINE_STATIC_RAM(2, test_u32, PARAM_TYPE_UINT32, 1, sizeof(test_u32_value), PM_DEBUG, NULL,
-			NULL, &test_u32_value, "Writable unsigned integration value");
-PARAM_DEFINE_STATIC_RAM(3, test_i32, PARAM_TYPE_INT32, 1, sizeof(test_i32_value), PM_DEBUG, NULL,
-			NULL, &test_i32_value, "Writable signed integration value");
-PARAM_DEFINE_STATIC_RAM(4, test_float, PARAM_TYPE_FLOAT, 1, sizeof(test_float_value), PM_DEBUG,
-			NULL, NULL, &test_float_value, "Writable floating-point integration value");
+PARAM_DEFINE_STATIC_RAM(1, log_level, PARAM_TYPE_UINT8, 1, sizeof(log_level_value),
+			PM_CONF | KFSW_PARAM_FLAG_PERSISTENT, log_level_changed, NULL,
+			&log_level_value, "Runtime logging policy value");
+PARAM_DEFINE_STATIC_RAM(2, test_u32, PARAM_TYPE_UINT32, 1, sizeof(test_u32_value),
+			PM_DEBUG | KFSW_PARAM_FLAG_PERSISTENT, NULL, NULL, &test_u32_value,
+			"Writable unsigned integration value");
+PARAM_DEFINE_STATIC_RAM(3, test_i32, PARAM_TYPE_INT32, 1, sizeof(test_i32_value),
+			PM_DEBUG | KFSW_PARAM_FLAG_PERSISTENT, NULL, NULL, &test_i32_value,
+			"Writable signed integration value");
+PARAM_DEFINE_STATIC_RAM(4, test_float, PARAM_TYPE_FLOAT, 1, sizeof(test_float_value),
+			PM_DEBUG | KFSW_PARAM_FLAG_PERSISTENT, NULL, NULL, &test_float_value,
+			"Writable floating-point integration value");
 
 _Static_assert(sizeof(param_transfer3_t) <= CSP_BUFFER_SIZE,
 	       "CSP buffers must fit an upstream parameter-list entry");
@@ -51,6 +72,16 @@ K_MUTEX_DEFINE(kfsw_param_remote_lock);
 static bool initialized;
 static bool server_started;
 static csp_socket_t list_socket;
+
+void kfsw_param_table_lock(void)
+{
+	k_mutex_lock(&kfsw_param_lock, K_FOREVER);
+}
+
+void kfsw_param_table_unlock(void)
+{
+	k_mutex_unlock(&kfsw_param_lock);
+}
 
 static enum kfsw_param_type from_libparam_type(param_type_e type)
 {
@@ -300,6 +331,9 @@ int kfsw_param_set(const char *name, const struct kfsw_param_value *value)
 		result = -EACCES;
 	} else {
 		result = validate_scalar(param, value);
+		if ((result == 0) && (param == &log_level) && (value->scalar.u8 > 4U)) {
+			result = -ERANGE;
+		}
 		if (result == 0) {
 			param_set(param, 0U, (void *)&value->scalar);
 		}
@@ -307,6 +341,28 @@ int kfsw_param_set(const char *name, const struct kfsw_param_value *value)
 	k_mutex_unlock(&kfsw_param_lock);
 	return result;
 }
+
+#if CONFIG_KFSW_PARAM_PERSISTENCE
+int kfsw_param_restore_defaults(void)
+{
+	uint8_t default_log_level = CONFIG_KFSW_LOG_MIN_LEVEL;
+	uint32_t default_test_u32 = KFSW_PARAM_DEFAULT_TEST_U32;
+	int32_t default_test_i32 = KFSW_PARAM_DEFAULT_TEST_I32;
+	float default_test_float = KFSW_PARAM_DEFAULT_TEST_FLOAT;
+
+	if (!initialized) {
+		return -EACCES;
+	}
+
+	k_mutex_lock(&kfsw_param_lock, K_FOREVER);
+	param_set(&log_level, 0U, &default_log_level);
+	param_set(&test_u32, 0U, &default_test_u32);
+	param_set(&test_i32, 0U, &default_test_i32);
+	param_set(&test_float, 0U, &default_test_float);
+	k_mutex_unlock(&kfsw_param_lock);
+	return 0;
+}
+#endif
 
 int kfsw_param_visit(kfsw_param_visitor_t visitor, void *context)
 {
