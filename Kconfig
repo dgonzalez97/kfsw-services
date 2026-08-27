@@ -64,4 +64,47 @@ config KFSW_PARAM_LIST_PRIORITY
 
 endif # KFSW_PARAM
 
+config KFSW_FTP
+	bool "K-FSW file transfer service"
+	depends on KFSW_CSP && KFSW_STORAGE
+	select CRC
+	help
+	  Enable the bounded K-FSW file transfer client and server. All paths are
+	  sandboxed below /kfsw/ftp and all CSP connections require RDP and CRC32.
+
+if KFSW_FTP
+
+config KFSW_FTP_CSP_PORT
+	int "CSP file transfer port"
+	range 1 63
+	default 9
+
+config KFSW_FTP_TIMEOUT_MS
+	int "File transfer receive timeout in milliseconds"
+	range 1000 120000
+	default 15000
+	help
+	  Timeout for each protocol message. This must remain longer than the
+	  libcsp RDP connection timeout used by the application.
+
+config KFSW_FTP_WORKER_STACK_SIZE
+	int "File transfer worker thread stack size"
+	range 1024 16384
+	default 3072
+
+config KFSW_FTP_WORKER_PRIORITY
+	int "File transfer worker thread priority"
+	default 2
+
+config KFSW_FTP_ACCEPTOR_STACK_SIZE
+	int "File transfer acceptor thread stack size"
+	range 768 8192
+	default 1536
+
+config KFSW_FTP_ACCEPTOR_PRIORITY
+	int "File transfer acceptor thread priority"
+	default 2
+
+endif # KFSW_FTP
+
 endmenu

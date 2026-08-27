@@ -72,6 +72,15 @@ if(CONFIG_KFSW_PARAM)
     endif()
 endif()
 
+if(CONFIG_KFSW_FTP)
+    list(APPEND kfsw_services_sources
+        src/ftp_client.c
+        src/ftp_common.c
+        src/ftp_protocol.c
+        src/ftp_server.c
+    )
+endif()
+
 add_library(kfsw_services STATIC ${kfsw_services_sources})
 
 add_library(kfsw::services ALIAS kfsw_services)
@@ -87,6 +96,13 @@ target_link_libraries(kfsw_services
         zephyr_interface
 )
 
+if(CONFIG_KFSW_PARAM OR CONFIG_KFSW_FTP)
+    target_link_libraries(kfsw_services
+        PRIVATE
+            kfsw::comms
+    )
+endif()
+
 if(CONFIG_KFSW_PARAM)
     target_include_directories(kfsw_services
         PRIVATE
@@ -94,7 +110,6 @@ if(CONFIG_KFSW_PARAM)
     )
     target_link_libraries(kfsw_services
         PRIVATE
-            kfsw::comms
             kfsw_libparam
     )
 endif()
