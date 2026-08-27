@@ -1,0 +1,21 @@
+/* Generated K-FSW build configuration for upstream libparam. */
+#ifndef KFSW_LIBPARAM_CONFIG_H
+#define KFSW_LIBPARAM_CONFIG_H
+
+#include <stddef.h>
+
+#define PARAM_HAVE_SYS_QUEUE 1
+#define PARAM_LIST_POOL @CONFIG_KFSW_PARAM_REMOTE_POOL_SIZE@
+#define PARAM_VMEM_64_BITS_API 1
+
+/* Picolibc does not expose the BSD strlcpy API used by param_list.c. */
+size_t kfsw_libparam_strlcpy(char *destination, const char *source,
+			    size_t destination_size);
+
+/*
+ * PARAM_LIST_DYNAMIC and PARAM_HAVE_TIMESTAMP are intentionally undefined.
+ * File VMEM, FRAM VMEM, and the collector are excluded by the CMake source
+ * selection rather than configured through Meson.
+ */
+
+#endif

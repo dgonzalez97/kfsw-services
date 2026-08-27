@@ -5,3 +5,5 @@ build:
   kconfig: Kconfig
   depends:
     - kfsw-platform
+    - kfsw-comms
+    - libcsp
