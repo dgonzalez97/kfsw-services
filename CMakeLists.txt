@@ -4,6 +4,13 @@ set(kfsw_services_sources
 )
 
 if(CONFIG_KFSW_PARAM)
+    list(APPEND kfsw_services_sources src/parameter.c)
+    if(CONFIG_KFSW_PARAM_PERSISTENCE)
+        list(APPEND kfsw_services_sources src/parameter_persistence.c)
+    endif()
+endif()
+
+if(CONFIG_KFSW_PARAM_CSP)
     set(KFSW_LIBPARAM_ROOT
         "${CMAKE_CURRENT_LIST_DIR}/third_party/libparam"
     )
@@ -66,10 +73,7 @@ if(CONFIG_KFSW_PARAM)
     )
 
     zephyr_linker_sources(SECTIONS zephyr/libparam-sections.ld)
-    list(APPEND kfsw_services_sources src/parameter.c)
-    if(CONFIG_KFSW_PARAM_PERSISTENCE)
-        list(APPEND kfsw_services_sources src/parameter_persistence.c)
-    endif()
+    list(APPEND kfsw_services_sources src/parameter_csp.c)
 endif()
 
 if(CONFIG_KFSW_FTP)
@@ -94,16 +98,18 @@ target_link_libraries(kfsw_services
     PUBLIC
         kfsw::platform
         zephyr_interface
+    PRIVATE
+        kernel
 )
 
-if(CONFIG_KFSW_PARAM OR CONFIG_KFSW_FTP)
+if(CONFIG_KFSW_PARAM_CSP OR CONFIG_KFSW_FTP)
     target_link_libraries(kfsw_services
         PRIVATE
             kfsw::comms
     )
 endif()
 
-if(CONFIG_KFSW_PARAM)
+if(CONFIG_KFSW_PARAM_CSP)
     target_include_directories(kfsw_services
         PRIVATE
             "${KFSW_LIBPARAM_ROOT}/src/param/list"
