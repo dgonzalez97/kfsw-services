@@ -6,23 +6,27 @@ Bootstrap:
 
 - boot/readiness service
 - basic console logging
-- deterministic local and CSP parameter service
+- deterministic local parameter service with optional CSP integration
 
 ## Parameters
 
-K-FSW integrates the MIT-licensed
-[Space Inventor libparam](https://github.com/spaceinventor/libparam) through a
-project-owned Zephyr/CMake adapter. The independent west project is checked out
-at `third_party/libparam` and pinned to
-`c296dfb6055a3c360f44dcbbd6ad108e98c76640`.
+`CONFIG_KFSW_PARAM` enables the deterministic local table and public local API.
+It has no dependency on CSP or libcsp. `CONFIG_KFSW_PARAM_PERSISTENCE` adds
+explicit local snapshots and depends only on the storage capability.
 
-The first configuration uses a static local table and a 16-entry preallocated
-remote list pool. Dynamic parameter creation, timestamps, upstream file and
-FRAM VMEM, the collector, upstream shell code, RDP, and MPack file/allocation
-helpers are disabled. Parameter transactions use configurable CSP port 10 and
-list descriptions use configurable CSP port 12, matching current upstream
-libparam. CSP initialization, interfaces, routes, and the router remain owned
-by `kfsw-comms`.
+`CONFIG_KFSW_PARAM_CSP` is the optional remote adapter. It depends on both
+`CONFIG_KFSW_PARAM` and `CONFIG_KFSW_CSP` and integrates the MIT-licensed
+[Space Inventor libparam](https://github.com/spaceinventor/libparam) wire codec.
+The independent west project is checked out at `third_party/libparam` and
+pinned to `c296dfb6055a3c360f44dcbbd6ad108e98c76640`.
+
+The adapter bridges the local table to libparam's server codec and uses a
+16-entry preallocated remote list pool. Dynamic parameter creation, timestamps,
+upstream file and FRAM VMEM, the collector, upstream shell code, RDP, and MPack
+file/allocation helpers are disabled. Parameter transactions use configurable
+CSP port 10 and list descriptions use configurable CSP port 12, matching
+current upstream libparam. CSP initialization, interfaces, routes, and the
+router remain owned by `kfsw-comms`.
 
 Applications should use `include/kfsw/services/parameter.h`; raw libparam APIs
 are an integration detail.
@@ -35,7 +39,7 @@ explicit: parameter writes change RAM, while `kfsw_param_persist_save()` writes
 the selected values. A valid snapshot is restored after parameter-table
 initialization and before the CSP parameter server starts.
 
-The persistent set is marked with a K-FSW-owned libparam user flag and currently
+The persistent set is marked with a K-FSW-owned parameter flag and currently
 contains `log_level`, `test_u32`, `test_i32`, and `test_float`. The read-only
 `node_id` is excluded. Loading matches by name and type, ignores unknown or
 incompatible entries, and rejects invalid headers, versions, lengths, or CRCs

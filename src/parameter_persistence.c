@@ -8,9 +8,6 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/crc.h>
 
-#include <param/param.h>
-#include <param/param_list.h>
-
 #include <kfsw/platform/storage.h>
 #include <kfsw/services/log.h>
 #include <kfsw/services/parameter.h>
@@ -53,22 +50,33 @@ K_MUTEX_DEFINE(kfsw_param_persist_lock);
 
 static uint8_t snapshot[KFSW_PARAM_PERSIST_MAX_SNAPSHOT_SIZE];
 
-static int persistent_type(const param_t *param, uint8_t *type, uint16_t *value_size)
+static size_t bounded_string_length(const char *text, size_t maximum)
 {
-	switch ((param_type_e)param->type) {
-	case PARAM_TYPE_UINT8:
+	size_t length = 0U;
+
+	while ((length < maximum) && (text[length] != '\0')) {
+		length++;
+	}
+	return length;
+}
+
+static int persistent_type(const struct kfsw_param_entry *entry, uint8_t *type,
+			   uint16_t *value_size)
+{
+	switch (entry->info.type) {
+	case KFSW_PARAM_U8:
 		*type = PERSIST_TYPE_U8;
 		*value_size = sizeof(uint8_t);
 		return 0;
-	case PARAM_TYPE_UINT32:
+	case KFSW_PARAM_U32:
 		*type = PERSIST_TYPE_U32;
 		*value_size = sizeof(uint32_t);
 		return 0;
-	case PARAM_TYPE_INT32:
+	case KFSW_PARAM_I32:
 		*type = PERSIST_TYPE_I32;
 		*value_size = sizeof(int32_t);
 		return 0;
-	case PARAM_TYPE_FLOAT:
+	case KFSW_PARAM_FLOAT:
 		*type = PERSIST_TYPE_FLOAT;
 		*value_size = sizeof(float);
 		return 0;
@@ -77,15 +85,15 @@ static int persistent_type(const param_t *param, uint8_t *type, uint16_t *value_
 	}
 }
 
-static int encode_value(const param_t *param, uint8_t *output, size_t output_size)
+static int encode_value(const struct kfsw_param_entry *entry, uint8_t *output, size_t output_size)
 {
-	union kfsw_param_scalar value = {0};
+	struct kfsw_param_value value = {0};
 	uint16_t value_size;
 	uint8_t type;
 	uint32_t raw_value;
 	int result;
 
-	result = persistent_type(param, &type, &value_size);
+	result = persistent_type(entry, &type, &value_size);
 	if (result != 0) {
 		return result;
 	}
@@ -93,19 +101,22 @@ static int encode_value(const param_t *param, uint8_t *output, size_t output_siz
 		return -ENOSPC;
 	}
 
-	param_get(param, 0U, &value);
+	result = kfsw_param_read_entry(entry, &value);
+	if (result != 0) {
+		return result;
+	}
 	switch (type) {
 	case PERSIST_TYPE_U8:
-		output[0] = value.u8;
+		output[0] = value.scalar.u8;
 		break;
 	case PERSIST_TYPE_U32:
-		sys_put_be32(value.u32, output);
+		sys_put_be32(value.scalar.u32, output);
 		break;
 	case PERSIST_TYPE_I32:
-		sys_put_be32((uint32_t)value.i32, output);
+		sys_put_be32((uint32_t)value.scalar.i32, output);
 		break;
 	case PERSIST_TYPE_FLOAT:
-		memcpy(&raw_value, &value.f32, sizeof(raw_value));
+		memcpy(&raw_value, &value.scalar.f32, sizeof(raw_value));
 		sys_put_be32(raw_value, output);
 		break;
 	default:
@@ -117,30 +128,31 @@ static int encode_value(const param_t *param, uint8_t *output, size_t output_siz
 
 static int build_snapshot(size_t *snapshot_size)
 {
-	param_list_iterator iterator = {0};
-	const param_t *param;
 	size_t offset = KFSW_PARAM_PERSIST_HEADER_SIZE;
 	uint16_t entry_count = 0U;
 	int result = 0;
 
 	memset(snapshot, 0, sizeof(snapshot));
 	kfsw_param_table_lock();
-	while ((param = param_list_iterate(&iterator)) != NULL) {
+	for (size_t index = 0U; index < kfsw_param_entry_count(); index++) {
+		const struct kfsw_param_entry *entry = kfsw_param_entry_at(index);
 		size_t name_size;
 		uint16_t value_size;
 		uint8_t type;
 
-		if ((*param->node != 0U) || ((param->mask & KFSW_PARAM_FLAG_PERSISTENT) == 0U) ||
-		    ((param->mask & PM_READONLY) != 0U)) {
+		if ((entry->info.node != 0U) ||
+		    ((entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) == 0U) ||
+		    entry->info.read_only) {
 			continue;
 		}
 
-		name_size = strnlen(param->name, KFSW_PARAM_PERSIST_MAX_NAME_SIZE + 1U);
+		name_size = bounded_string_length(entry->info.name,
+						  KFSW_PARAM_PERSIST_MAX_NAME_SIZE + 1U);
 		if ((name_size == 0U) || (name_size > KFSW_PARAM_PERSIST_MAX_NAME_SIZE)) {
 			result = -ENAMETOOLONG;
 			break;
 		}
-		result = persistent_type(param, &type, &value_size);
+		result = persistent_type(entry, &type, &value_size);
 		if (result != 0) {
 			break;
 		}
@@ -155,9 +167,9 @@ static int build_snapshot(size_t *snapshot_size)
 		snapshot[offset + 1U] = type;
 		sys_put_be16(value_size, &snapshot[offset + 2U]);
 		offset += KFSW_PARAM_PERSIST_ENTRY_HEADER_SIZE;
-		memcpy(&snapshot[offset], param->name, name_size);
+		memcpy(&snapshot[offset], entry->info.name, name_size);
 		offset += name_size;
-		result = encode_value(param, &snapshot[offset], sizeof(snapshot) - offset);
+		result = encode_value(entry, &snapshot[offset], sizeof(snapshot) - offset);
 		if (result != 0) {
 			break;
 		}
@@ -288,38 +300,40 @@ static int validate_snapshot(size_t size, uint16_t *entry_count)
 	return (offset == size) ? 0 : -EBADMSG;
 }
 
-static bool entry_matches(const param_t *param, const struct persist_entry *entry)
+static bool entry_matches(const struct kfsw_param_entry *param_entry,
+			  const struct persist_entry *persist_entry)
 {
 	uint16_t value_size;
 	uint8_t type;
 
-	return (persistent_type(param, &type, &value_size) == 0) && (type == entry->type) &&
-	       (value_size == entry->value_size);
+	return (persistent_type(param_entry, &type, &value_size) == 0) &&
+	       (type == persist_entry->type) && (value_size == persist_entry->value_size);
 }
 
-static void decode_and_set(const param_t *param, const struct persist_entry *entry)
+static void decode_and_set(const struct kfsw_param_entry *param_entry,
+			   const struct persist_entry *persist_entry)
 {
 	union kfsw_param_scalar value = {0};
 	uint32_t raw_value;
 
-	switch (entry->type) {
+	switch (persist_entry->type) {
 	case PERSIST_TYPE_U8:
-		value.u8 = entry->value[0];
+		value.u8 = persist_entry->value[0];
 		break;
 	case PERSIST_TYPE_U32:
-		value.u32 = sys_get_be32(entry->value);
+		value.u32 = sys_get_be32(persist_entry->value);
 		break;
 	case PERSIST_TYPE_I32:
-		value.i32 = (int32_t)sys_get_be32(entry->value);
+		value.i32 = (int32_t)sys_get_be32(persist_entry->value);
 		break;
 	case PERSIST_TYPE_FLOAT:
-		raw_value = sys_get_be32(entry->value);
+		raw_value = sys_get_be32(persist_entry->value);
 		memcpy(&value.f32, &raw_value, sizeof(value.f32));
 		break;
 	default:
 		return;
 	}
-	param_set(param, 0U, &value);
+	kfsw_param_write_entry(param_entry, &value);
 }
 
 static int apply_snapshot(size_t size, uint16_t entry_count)
@@ -329,7 +343,7 @@ static int apply_snapshot(size_t size, uint16_t entry_count)
 	kfsw_param_table_lock();
 	for (uint16_t index = 0U; index < entry_count; index++) {
 		struct persist_entry entry;
-		const param_t *param;
+		const struct kfsw_param_entry *param_entry;
 		char name[KFSW_PARAM_PERSIST_MAX_NAME_SIZE + 1U];
 		int result = next_entry(snapshot, size, &offset, &entry);
 
@@ -339,17 +353,18 @@ static int apply_snapshot(size_t size, uint16_t entry_count)
 		}
 		memcpy(name, entry.name, entry.name_size);
 		name[entry.name_size] = '\0';
-		param = param_list_find_name(0, name);
-		if ((param == NULL) || ((param->mask & KFSW_PARAM_FLAG_PERSISTENT) == 0U) ||
-		    ((param->mask & PM_READONLY) != 0U)) {
+		param_entry = kfsw_param_find_name(name);
+		if ((param_entry == NULL) ||
+		    ((param_entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) == 0U) ||
+		    param_entry->info.read_only) {
 			kfsw_log_warning("Ignoring unknown persistent parameter '%s'", name);
 			continue;
 		}
-		if (!entry_matches(param, &entry)) {
+		if (!entry_matches(param_entry, &entry)) {
 			kfsw_log_warning("Ignoring incompatible persistent parameter '%s'", name);
 			continue;
 		}
-		decode_and_set(param, &entry);
+		decode_and_set(param_entry, &entry);
 	}
 	kfsw_param_table_unlock();
 	return 0;

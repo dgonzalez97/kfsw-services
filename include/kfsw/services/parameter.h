@@ -60,7 +60,7 @@ struct kfsw_param_info {
 	bool read_only;
 };
 
-/** K-FSW-owned libparam user flag selecting values for persistence. */
+/** K-FSW-owned user flag selecting local values for persistence. */
 #define KFSW_PARAM_FLAG_PERSISTENT 0x00010000UL
 
 typedef bool (*kfsw_param_visitor_t)(const struct kfsw_param_info *info, void *context);
@@ -94,7 +94,8 @@ int kfsw_param_persist_clear(void);
 int kfsw_param_restore_defaults(void);
 #endif
 
-/** Register the CSP parameter and parameter-list endpoints once. */
+#if CONFIG_KFSW_PARAM_CSP
+/** Register the optional CSP parameter and parameter-list endpoints once. */
 int kfsw_param_server_start(void);
 
 /** Download and cache a node's upstream version 3 parameter list. */
@@ -108,6 +109,7 @@ int kfsw_param_remote_set(uint16_t node, const char *name, const struct kfsw_par
 
 /** Visit the cached parameter descriptions for a selected CSP node. */
 int kfsw_param_remote_visit(uint16_t node, kfsw_param_visitor_t visitor, void *context);
+#endif
 
 /** Return a stable printable name for a K-FSW parameter type. */
 const char *kfsw_param_type_name(enum kfsw_param_type type);

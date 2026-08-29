@@ -10,11 +10,10 @@ config KFSW_LOG_MIN_LEVEL
 
 config KFSW_PARAM
 	bool "K-FSW parameter service"
-	depends on KFSW_CSP
 	select CBPRINTF_FP_SUPPORT
 	help
-	  Enable the deterministic K-FSW parameter table and the libparam-based
-	  local and CSP client/server APIs.
+	  Enable the deterministic local K-FSW parameter table and API. This
+	  capability does not require CSP; persistence remains a local option.
 
 if KFSW_PARAM
 
@@ -26,6 +25,17 @@ config KFSW_PARAM_PERSISTENCE
 	  Save and restore explicitly selected local parameters using a bounded,
 	  versioned snapshot under /kfsw/params. Runtime parameter changes remain
 	  in RAM until an explicit save operation.
+
+endif # KFSW_PARAM
+
+config KFSW_PARAM_CSP
+	bool "K-FSW parameter CSP adapter"
+	depends on KFSW_PARAM && KFSW_CSP
+	help
+	  Expose the local parameter table over the established libparam CSP wire
+	  protocol and enable remote parameter client/cache operations.
+
+if KFSW_PARAM_CSP
 
 config KFSW_PARAM_PORT
 	int "CSP parameter transaction port"
@@ -62,7 +72,7 @@ config KFSW_PARAM_LIST_PRIORITY
 	int "Parameter-list server thread priority"
 	default 1
 
-endif # KFSW_PARAM
+endif # KFSW_PARAM_CSP
 
 config KFSW_FTP
 	bool "K-FSW file transfer service"
