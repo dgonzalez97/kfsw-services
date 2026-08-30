@@ -10,9 +10,16 @@ Bootstrap:
 
 ## Parameters
 
-`CONFIG_KFSW_PARAM` enables the deterministic local table and public local API.
-It has no dependency on CSP or libcsp. `CONFIG_KFSW_PARAM_PERSISTENCE` adds
-explicit local snapshots and depends only on the storage capability.
+`CONFIG_KFSW_PARAM` enables the deterministic local index and public local API.
+It has no dependency on CSP or libcsp. Each semantic component owns a plain
+`const struct kfsw_param_definition` table, its backing values, validation, and
+change callbacks. The executable passes its enabled definition sets to
+`kfsw_param_init()`, which validates duplicate IDs/names, supported scalar
+shapes, and defaults before building a bounded sorted index. The PARAM core
+does not include owner headers or encode owner-specific policy.
+
+`CONFIG_KFSW_PARAM_PERSISTENCE` adds explicit local snapshots and depends only
+on the storage capability.
 
 `CONFIG_KFSW_PARAM_CSP` is the optional remote adapter. It depends on both
 `CONFIG_KFSW_PARAM` and `CONFIG_KFSW_CSP` and integrates the MIT-licensed
@@ -39,13 +46,15 @@ explicit: parameter writes change RAM, while `kfsw_param_persist_save()` writes
 the selected values. A valid snapshot is restored after parameter-table
 initialization and before the CSP parameter server starts.
 
-The persistent set is marked with a K-FSW-owned parameter flag and currently
-contains `log_level`, `test_u32`, `test_i32`, and `test_float`. The read-only
-`node_id` is excluded. Loading matches by name and type, ignores unknown or
-incompatible entries, and rejects invalid headers, versions, lengths, or CRCs
-without changing the live table. Saves use a synced temporary file followed by
-LittleFS rename replacement; compiled defaults and snapshot deletion remain
-separate operations.
+The persistent set is selected by a K-FSW-owned parameter flag. The logging
+service owns the production `log_level` persistent value; test compositions
+may add separately owned compatibility fixtures. The application-owned,
+read-only `node_id` is excluded. Loading matches by name and type, ignores
+unknown or incompatible entries, and rejects invalid headers, versions,
+lengths, CRCs, or owner validation without changing that entry. Saves use a
+synced temporary file followed by LittleFS rename replacement; compiled
+defaults and snapshot deletion remain separate operations. The KPAR v1 wire
+format is unchanged by definition aggregation.
 
 ## File transfer
 

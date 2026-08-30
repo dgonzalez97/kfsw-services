@@ -4,12 +4,52 @@
 
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/printk.h>
+#include <zephyr/sys/util.h>
 
 #include <kfsw/services/log.h>
+#if CONFIG_KFSW_PARAM
+#include <kfsw/services/parameter.h>
+#endif
 
 #define KFSW_LOG_MESSAGE_SIZE 192U
 
 static atomic_t kfsw_log_level = ATOMIC_INIT(CONFIG_KFSW_LOG_MIN_LEVEL);
+
+#if CONFIG_KFSW_PARAM
+static uint8_t kfsw_log_param_value = CONFIG_KFSW_LOG_MIN_LEVEL;
+
+static int validate_log_level(const union kfsw_param_scalar *value)
+{
+	return (value->u8 <= 4U) ? 0 : -ERANGE;
+}
+
+static void apply_log_level(const union kfsw_param_scalar *value)
+{
+	if (kfsw_log_set_level(value->u8) != 0) {
+		kfsw_log_param_value = CONFIG_KFSW_LOG_MIN_LEVEL;
+		(void)kfsw_log_set_level(kfsw_log_param_value);
+	}
+}
+
+static const struct kfsw_param_definition log_param_definitions[] = {
+	{
+		.id = 1U,
+		.type = KFSW_PARAM_U8,
+		.flags = KFSW_PARAM_FLAG_CONFIGURATION | KFSW_PARAM_FLAG_PERSISTENT,
+		.name = "log_level",
+		.description = "Runtime logging policy value",
+		.value = &kfsw_log_param_value,
+		.default_value = {.u8 = CONFIG_KFSW_LOG_MIN_LEVEL},
+		.validate = validate_log_level,
+		.changed = apply_log_level,
+	},
+};
+
+const struct kfsw_param_definition_set kfsw_log_param_definitions = {
+	.definitions = log_param_definitions,
+	.count = ARRAY_SIZE(log_param_definitions),
+};
+#endif
 
 int kfsw_log_set_level(uint8_t level)
 {

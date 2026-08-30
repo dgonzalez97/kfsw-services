@@ -60,13 +60,53 @@ struct kfsw_param_info {
 	bool read_only;
 };
 
+/** Parameter cannot be changed through local or remote set operations. */
+#define KFSW_PARAM_FLAG_READ_ONLY 0x00000001UL
+/** Parameter controls operator-selected configuration. */
+#define KFSW_PARAM_FLAG_CONFIGURATION 0x00000004UL
+/** Parameter reports build or runtime system identity. */
+#define KFSW_PARAM_FLAG_SYSTEM_INFO 0x00000040UL
+/** Parameter exists for diagnostic or test behavior. */
+#define KFSW_PARAM_FLAG_DEBUG 0x00000200UL
 /** K-FSW-owned user flag selecting local values for persistence. */
 #define KFSW_PARAM_FLAG_PERSISTENT 0x00010000UL
 
+/** Validate a proposed scalar value; return zero to accept it. */
+typedef int (*kfsw_param_validator_t)(const union kfsw_param_scalar *value);
+/** Apply owner behavior after the backing scalar changes. */
+typedef void (*kfsw_param_changed_t)(const union kfsw_param_scalar *value);
+
+/**
+ * One scalar parameter declaration owned by a component.
+ *
+ * The definition, its strings, and its writable value storage must remain
+ * valid for the service lifetime. Defaults are copied into value storage at
+ * successful initialization. Validator and change callbacks run while PARAM
+ * serializes access, so they must not call back into the parameter API.
+ */
+struct kfsw_param_definition {
+	uint16_t id;
+	enum kfsw_param_type type;
+	uint32_t flags;
+	const char *name;
+	const char *unit;
+	const char *description;
+	void *value;
+	union kfsw_param_scalar default_value;
+	kfsw_param_validator_t validate;
+	kfsw_param_changed_t changed;
+};
+
+/** A compile-time group of parameter definitions from one semantic owner. */
+struct kfsw_param_definition_set {
+	const struct kfsw_param_definition *definitions;
+	size_t count;
+};
+
 typedef bool (*kfsw_param_visitor_t)(const struct kfsw_param_info *info, void *context);
 
-/** Validate and enable the statically linked local parameter table. */
-int kfsw_param_init(void);
+/** Aggregate, validate, and enable the supplied component definition sets. */
+int kfsw_param_init(const struct kfsw_param_definition_set *const *sets, size_t set_count);
 
 /** Return whether the local parameter table was initialized successfully. */
 bool kfsw_param_is_initialized(void);

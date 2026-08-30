@@ -3,6 +3,10 @@
 
 #include <stdint.h>
 
+#if CONFIG_KFSW_PARAM
+#include <kfsw/services/parameter.h>
+#endif
+
 #if defined(__GNUC__) || defined(__clang__)
 #define KFSW_LOG_PRINTF_LIKE(format_index, first_arg)                                              \
 	__attribute__((format(printf, format_index, first_arg)))
@@ -19,6 +23,11 @@ int kfsw_log_set_level(uint8_t level);
 
 /** Return the active runtime minimum log level. */
 uint8_t kfsw_log_get_level(void);
+
+#if CONFIG_KFSW_PARAM
+/** Logging-owned runtime policy parameter definitions. */
+extern const struct kfsw_param_definition_set kfsw_log_param_definitions;
+#endif
 
 #if CONFIG_KFSW_LOG_MIN_LEVEL <= 3
 /**
