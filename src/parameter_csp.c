@@ -26,38 +26,89 @@
 #define KFSW_PARAM_PROTOCOL_VERSION 2
 #define KFSW_PARAM_LIST_VERSION 3
 
-#define KFSW_PARAM_CSP_TYPE_KFSW_PARAM_U8 PARAM_TYPE_UINT8
-#define KFSW_PARAM_CSP_TYPE_KFSW_PARAM_U16 PARAM_TYPE_UINT16
-#define KFSW_PARAM_CSP_TYPE_KFSW_PARAM_U32 PARAM_TYPE_UINT32
-#define KFSW_PARAM_CSP_TYPE_KFSW_PARAM_I32 PARAM_TYPE_INT32
-#define KFSW_PARAM_CSP_TYPE_KFSW_PARAM_FLOAT PARAM_TYPE_FLOAT
-#define KFSW_PARAM_CSP_TYPE(type) KFSW_PARAM_CSP_TYPE_(type)
-#define KFSW_PARAM_CSP_TYPE_(type) KFSW_PARAM_CSP_TYPE_##type
+static param_t local_parameters[KFSW_PARAM_MAX_DEFINITIONS];
+static bool local_parameters_registered;
 
-#define KFSW_PARAM_CSP_CALLBACK_NONE NULL
-#define KFSW_PARAM_CSP_CALLBACK_LOG_LEVEL log_level_changed_from_csp
-#define KFSW_PARAM_CSP_CALLBACK(callback) KFSW_PARAM_CSP_CALLBACK_(callback)
-#define KFSW_PARAM_CSP_CALLBACK_(callback) KFSW_PARAM_CSP_CALLBACK_##callback
+static size_t scalar_size(enum kfsw_param_type type);
 
-static void log_level_changed_from_csp(const param_t *param, int offset)
+static void parameter_changed_from_csp(const param_t *param, int offset)
 {
-	ARG_UNUSED(param);
 	ARG_UNUSED(offset);
 
-	kfsw_param_value_changed(1U);
+	kfsw_param_value_changed(param->id);
 }
 
-/*
- * libparam owns the established wire codec. These static descriptors bridge
- * that codec to the same storage used by the CSP-independent local table.
- */
-#define KFSW_PARAM_DEFINE_CSP_BRIDGE(entry_id, entry_name, entry_type, member, c_type,             \
-				     entry_default, entry_flags, callback, entry_description)      \
-	PARAM_DEFINE_STATIC_RAM(entry_id, entry_name, KFSW_PARAM_CSP_TYPE(entry_type), 1,          \
-				sizeof(c_type), entry_flags, KFSW_PARAM_CSP_CALLBACK(callback),    \
-				NULL, &kfsw_param_value_##entry_name, entry_description);
-KFSW_PARAM_TABLE(KFSW_PARAM_DEFINE_CSP_BRIDGE)
-#undef KFSW_PARAM_DEFINE_CSP_BRIDGE
+static param_type_e to_libparam_type(enum kfsw_param_type type)
+{
+	switch (type) {
+	case KFSW_PARAM_U8:
+		return PARAM_TYPE_UINT8;
+	case KFSW_PARAM_U16:
+		return PARAM_TYPE_UINT16;
+	case KFSW_PARAM_U32:
+		return PARAM_TYPE_UINT32;
+	case KFSW_PARAM_U64:
+		return PARAM_TYPE_UINT64;
+	case KFSW_PARAM_I8:
+		return PARAM_TYPE_INT8;
+	case KFSW_PARAM_I16:
+		return PARAM_TYPE_INT16;
+	case KFSW_PARAM_I32:
+		return PARAM_TYPE_INT32;
+	case KFSW_PARAM_I64:
+		return PARAM_TYPE_INT64;
+	case KFSW_PARAM_X8:
+		return PARAM_TYPE_XINT8;
+	case KFSW_PARAM_X16:
+		return PARAM_TYPE_XINT16;
+	case KFSW_PARAM_X32:
+		return PARAM_TYPE_XINT32;
+	case KFSW_PARAM_X64:
+		return PARAM_TYPE_XINT64;
+	case KFSW_PARAM_FLOAT:
+		return PARAM_TYPE_FLOAT;
+	case KFSW_PARAM_DOUBLE:
+		return PARAM_TYPE_DOUBLE;
+	case KFSW_PARAM_STRING:
+		return PARAM_TYPE_STRING;
+	case KFSW_PARAM_DATA:
+		return PARAM_TYPE_DATA;
+	case KFSW_PARAM_INVALID:
+	default:
+		return PARAM_TYPE_INVALID;
+	}
+}
+
+static int register_local_parameters(void)
+{
+	if (local_parameters_registered) {
+		return 0;
+	}
+
+	memset(local_parameters, 0, sizeof(local_parameters));
+	for (size_t index = kfsw_param_entry_count(); index > 0U; index--) {
+		const struct kfsw_param_entry *entry = kfsw_param_entry_at(index - 1U);
+		param_t *descriptor = &local_parameters[index - 1U];
+
+		descriptor->node = (uint16_t *)&node_self;
+		descriptor->id = entry->info.id;
+		descriptor->type = to_libparam_type(entry->info.type);
+		descriptor->name = (char *)entry->info.name;
+		descriptor->array_size = entry->info.array_size;
+		descriptor->array_step = scalar_size(entry->info.type);
+		descriptor->mask = entry->info.flags;
+		descriptor->unit = (char *)entry->info.unit;
+		descriptor->callback = parameter_changed_from_csp;
+		descriptor->addr = entry->definition->value;
+		descriptor->docstr = (char *)entry->info.description;
+
+		if ((descriptor->type == PARAM_TYPE_INVALID) || (param_list_add(descriptor) != 0)) {
+			return -EEXIST;
+		}
+	}
+	local_parameters_registered = true;
+	return 0;
+}
 
 _Static_assert(sizeof(param_transfer3_t) <= CSP_BUFFER_SIZE,
 	       "CSP buffers must fit an upstream parameter-list entry");
@@ -356,6 +407,10 @@ int kfsw_param_server_start(void)
 	kfsw_csp_get_info(&csp_info);
 	if (!csp_info.initialized) {
 		return -EACCES;
+	}
+	result = register_local_parameters();
+	if (result != 0) {
+		return result;
 	}
 
 	result = csp_bind(&list_socket, CONFIG_KFSW_PARAM_LIST_PORT);

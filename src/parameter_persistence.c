@@ -310,30 +310,38 @@ static bool entry_matches(const struct kfsw_param_entry *param_entry,
 	       (type == persist_entry->type) && (value_size == persist_entry->value_size);
 }
 
-static void decode_and_set(const struct kfsw_param_entry *param_entry,
-			   const struct persist_entry *persist_entry)
+static int decode_and_set(const struct kfsw_param_entry *param_entry,
+			  const struct persist_entry *persist_entry)
 {
-	union kfsw_param_scalar value = {0};
+	struct kfsw_param_value value = {
+		.type = param_entry->info.type,
+		.size = persist_entry->value_size,
+	};
 	uint32_t raw_value;
+	int result;
 
 	switch (persist_entry->type) {
 	case PERSIST_TYPE_U8:
-		value.u8 = persist_entry->value[0];
+		value.scalar.u8 = persist_entry->value[0];
 		break;
 	case PERSIST_TYPE_U32:
-		value.u32 = sys_get_be32(persist_entry->value);
+		value.scalar.u32 = sys_get_be32(persist_entry->value);
 		break;
 	case PERSIST_TYPE_I32:
-		value.i32 = (int32_t)sys_get_be32(persist_entry->value);
+		value.scalar.i32 = (int32_t)sys_get_be32(persist_entry->value);
 		break;
 	case PERSIST_TYPE_FLOAT:
 		raw_value = sys_get_be32(persist_entry->value);
-		memcpy(&value.f32, &raw_value, sizeof(value.f32));
+		memcpy(&value.scalar.f32, &raw_value, sizeof(value.scalar.f32));
 		break;
 	default:
-		return;
+		return -ENOTSUP;
 	}
-	kfsw_param_write_entry(param_entry, &value);
+	result = kfsw_param_validate_entry(param_entry, &value);
+	if (result == 0) {
+		kfsw_param_write_entry(param_entry, &value.scalar);
+	}
+	return result;
 }
 
 static int apply_snapshot(size_t size, uint16_t entry_count)
@@ -364,7 +372,9 @@ static int apply_snapshot(size_t size, uint16_t entry_count)
 			kfsw_log_warning("Ignoring incompatible persistent parameter '%s'", name);
 			continue;
 		}
-		decode_and_set(param_entry, &entry);
+		if (decode_and_set(param_entry, &entry) != 0) {
+			kfsw_log_warning("Ignoring invalid persistent parameter '%s'", name);
+		}
 	}
 	kfsw_param_table_unlock();
 	return 0;
