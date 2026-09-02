@@ -7,17 +7,11 @@
 #include <zephyr/fs/fs.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/atomic.h>
-#include <zephyr/sys/crc.h>
 
-#include <csp/csp.h>
-#include <csp/csp_buffer.h>
-#include <csp/csp_id.h>
-
-#include <kfsw/comms/csp.h>
 #include <kfsw/platform/storage.h>
 #include <kfsw/services/ftp.h>
 
-#include "ftp_internal.h"
+#include "ftp_link.h"
 
 K_MUTEX_DEFINE(kfsw_ftp_client_lock);
 
@@ -26,14 +20,24 @@ static struct kfsw_ftp_workspace client_workspace;
 
 static int validate_client(uint16_t node)
 {
-	struct kfsw_csp_info csp_info;
-	const unsigned int host_bits = csp_id_get_host_bits();
-
-	kfsw_csp_get_info(&csp_info);
-	if (!kfsw_storage_is_ready() || !csp_info.initialized || !csp_info.router_running) {
+	if (!kfsw_storage_is_ready() || !kfsw_ftp_link_is_ready()) {
 		return -EACCES;
 	}
-	return (node < (1UL << host_bits)) ? 0 : -EINVAL;
+	return (node <= kfsw_ftp_link_max_node()) ? 0 : -EINVAL;
+}
+
+static bool is_local_node(uint16_t node)
+{
+	return node == kfsw_ftp_link_local_node();
+}
+
+/*
+ * A request addressed to this node reads its own FTP root directly, so it
+ * needs storage and a started service but no router, route or connection.
+ */
+static int validate_local(void)
+{
+	return (kfsw_storage_is_ready() && kfsw_ftp_is_started()) ? 0 : -EACCES;
 }
 
 static uint32_t allocate_request_id(void)
@@ -41,12 +45,6 @@ static uint32_t allocate_request_id(void)
 	uint32_t request_id = (uint32_t)atomic_inc(&next_request_id) + 1U;
 
 	return (request_id == 0U) ? (uint32_t)atomic_inc(&next_request_id) + 1U : request_id;
-}
-
-static csp_conn_t *connect_remote(uint16_t node)
-{
-	return csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_FTP_CSP_PORT,
-			   CONFIG_KFSW_FTP_TIMEOUT_MS, CSP_O_RDP | CSP_O_CRC32);
 }
 
 static int validate_virtual_path(const char *path, bool allow_root, char *scratch,
@@ -70,23 +68,27 @@ static int validate_virtual_path(const char *path, bool allow_root, char *scratc
 	return 0;
 }
 
-static int receive_response(csp_conn_t *connection, uint8_t expected_opcode, uint32_t request_id,
-			    struct kfsw_ftp_message *response, csp_packet_t **packet)
+/*
+ * Receive one response and require that it is the expected reply to the
+ * request that is in flight. The frame stays owned by the caller so a response
+ * body can still be read; an error releases it here.
+ */
+static int receive_response(struct kfsw_ftp_link *link, uint8_t expected_opcode,
+			    uint32_t request_id, struct kfsw_ftp_link_frame *frame)
 {
-	int result = kfsw_ftp_receive_message(connection, response, packet);
+	int result = kfsw_ftp_link_receive(link, frame);
 
 	if (result != 0) {
 		return result;
 	}
-	if ((response->opcode != expected_opcode) || (response->request_id != request_id)) {
-		csp_buffer_free(*packet);
-		*packet = NULL;
+	if ((frame->message.opcode != expected_opcode) ||
+	    (frame->message.request_id != request_id)) {
+		kfsw_ftp_link_release(frame);
 		return -EBADMSG;
 	}
-	result = kfsw_ftp_wire_status_to_errno(response->status);
+	result = kfsw_ftp_wire_status_to_errno(frame->message.status);
 	if (result != 0) {
-		csp_buffer_free(*packet);
-		*packet = NULL;
+		kfsw_ftp_link_release(frame);
 	}
 	return result;
 }
@@ -95,14 +97,13 @@ static int simple_path_request(uint16_t node, const char *path, bool allow_root,
 			       uint8_t request_opcode, uint8_t response_opcode,
 			       struct kfsw_ftp_message *response_out)
 {
-	struct kfsw_ftp_message response;
+	struct kfsw_ftp_link link = {0};
+	struct kfsw_ftp_link_frame frame = {0};
 	struct kfsw_ftp_message request = {
 		.opcode = request_opcode,
 		.request_id = allocate_request_id(),
 		.path = (const uint8_t *)path,
 	};
-	csp_packet_t *packet = NULL;
-	csp_conn_t *connection = NULL;
 	int result;
 
 	result = validate_client(node);
@@ -114,22 +115,19 @@ static int simple_path_request(uint16_t node, const char *path, bool allow_root,
 	if (result != 0) {
 		return result;
 	}
-	connection = connect_remote(node);
-	if (connection == NULL) {
-		return -ECONNREFUSED;
+	result = kfsw_ftp_link_connect(&link, node);
+	if (result != 0) {
+		return result;
 	}
-	result = kfsw_ftp_send_message(connection, &request);
+	result = kfsw_ftp_link_send(&link, &request);
 	if (result == 0) {
-		result = receive_response(connection, response_opcode, request.request_id,
-					  &response, &packet);
+		result = receive_response(&link, response_opcode, request.request_id, &frame);
 	}
 	if ((result == 0) && (response_out != NULL)) {
-		*response_out = response;
+		*response_out = frame.message;
 	}
-	if (packet != NULL) {
-		csp_buffer_free(packet);
-	}
-	(void)csp_close(connection);
+	kfsw_ftp_link_release(&frame);
+	kfsw_ftp_link_close(&link);
 	return result;
 }
 
@@ -138,108 +136,153 @@ int kfsw_ftp_mkdir(uint16_t node, const char *path)
 	int result;
 
 	k_mutex_lock(&kfsw_ftp_client_lock, K_FOREVER);
-	result = simple_path_request(node, path, false, KFSW_FTP_OP_MKDIR_REQUEST,
-				     KFSW_FTP_OP_MKDIR_RESPONSE, NULL);
+	if (is_local_node(node)) {
+		result = validate_local();
+		if (result == 0) {
+			result = kfsw_ftp_local_mkdir(path, &client_workspace);
+		}
+	} else {
+		result = simple_path_request(node, path, false, KFSW_FTP_OP_MKDIR_REQUEST,
+					     KFSW_FTP_OP_MKDIR_RESPONSE, NULL);
+	}
 	k_mutex_unlock(&kfsw_ftp_client_lock);
 	return result;
 }
 
-int kfsw_ftp_stat(uint16_t node, const char *path, struct kfsw_ftp_stat *info)
+static int remote_stat(uint16_t node, const char *path, struct kfsw_ftp_stat *info)
 {
 	struct kfsw_ftp_message response;
+	int result = simple_path_request(node, path, true, KFSW_FTP_OP_STAT_REQUEST,
+					 KFSW_FTP_OP_STAT_RESPONSE, &response);
+
+	if (result != 0) {
+		return result;
+	}
+	if ((response.path_size != 0U) || (response.data_size != 0U) ||
+	    ((response.flags != KFSW_FTP_ENTRY_FILE) &&
+	     (response.flags != KFSW_FTP_ENTRY_DIRECTORY))) {
+		return -EBADMSG;
+	}
+	info->type = (enum kfsw_ftp_entry_type)response.flags;
+	info->size = response.total_size;
+	info->crc32 = response.crc32;
+	return 0;
+}
+
+int kfsw_ftp_stat(uint16_t node, const char *path, struct kfsw_ftp_stat *info)
+{
 	int result;
 
 	if (info == NULL) {
 		return -EINVAL;
 	}
 	k_mutex_lock(&kfsw_ftp_client_lock, K_FOREVER);
-	result = simple_path_request(node, path, true, KFSW_FTP_OP_STAT_REQUEST,
-				     KFSW_FTP_OP_STAT_RESPONSE, &response);
-	if (result == 0) {
-		if ((response.path_size != 0U) || (response.data_size != 0U) ||
-		    ((response.flags != KFSW_FTP_ENTRY_FILE) &&
-		     (response.flags != KFSW_FTP_ENTRY_DIRECTORY))) {
-			result = -EBADMSG;
-		} else {
-			info->type = (enum kfsw_ftp_entry_type)response.flags;
-			info->size = response.total_size;
-			info->crc32 = response.crc32;
+	if (is_local_node(node)) {
+		result = validate_local();
+		if (result == 0) {
+			result = kfsw_ftp_local_stat(path, &client_workspace, info);
 		}
+	} else {
+		result = remote_stat(node, path, info);
 	}
 	k_mutex_unlock(&kfsw_ftp_client_lock);
 	return result;
 }
 
-int kfsw_ftp_list(uint16_t node, const char *path, kfsw_ftp_list_visitor_t visitor, void *context)
+static int visit_list_entry(const struct kfsw_ftp_message *response,
+			    kfsw_ftp_list_visitor_t visitor, void *context, bool *keep_visiting)
 {
+	char name[KFSW_FTP_MAX_PATH_SIZE + 1U];
+	struct kfsw_ftp_entry entry = {
+		.name = name,
+		.type = (enum kfsw_ftp_entry_type)response->flags,
+		.size = response->total_size,
+	};
+
+	if ((response->opcode != KFSW_FTP_OP_LIST_ENTRY) ||
+	    (response->status != KFSW_FTP_STATUS_OK) || (response->path_size == 0U) ||
+	    (response->data_size != 0U) ||
+	    ((response->flags != KFSW_FTP_ENTRY_FILE) &&
+	     (response->flags != KFSW_FTP_ENTRY_DIRECTORY))) {
+		return -EBADMSG;
+	}
+	memcpy(name, response->path, response->path_size);
+	name[response->path_size] = '\0';
+	*keep_visiting = visitor(&entry, context);
+	return 0;
+}
+
+static int remote_list(uint16_t node, const char *path, kfsw_ftp_list_visitor_t visitor,
+		       void *context)
+{
+	struct kfsw_ftp_link link = {0};
 	struct kfsw_ftp_message request = {
 		.opcode = KFSW_FTP_OP_LIST_REQUEST,
 		.request_id = allocate_request_id(),
 		.path = (const uint8_t *)path,
 	};
-	csp_conn_t *connection = NULL;
 	bool keep_visiting = true;
 	int result;
 
-	if (visitor == NULL) {
-		return -EINVAL;
-	}
-	k_mutex_lock(&kfsw_ftp_client_lock, K_FOREVER);
 	result = validate_client(node);
 	if (result == 0) {
 		result = validate_virtual_path(path, true, client_workspace.path,
 					       sizeof(client_workspace.path), &request.path_size);
 	}
 	if (result == 0) {
-		connection = connect_remote(node);
-		result = (connection != NULL) ? 0 : -ECONNREFUSED;
+		result = kfsw_ftp_link_connect(&link, node);
 	}
 	if (result == 0) {
-		result = kfsw_ftp_send_message(connection, &request);
+		result = kfsw_ftp_link_send(&link, &request);
 	}
 	while (result == 0) {
-		struct kfsw_ftp_message response;
-		csp_packet_t *packet = NULL;
+		struct kfsw_ftp_link_frame frame;
 
-		result = kfsw_ftp_receive_message(connection, &response, &packet);
+		result = kfsw_ftp_link_receive(&link, &frame);
 		if (result != 0) {
 			break;
 		}
-		if (response.request_id != request.request_id) {
+		if (frame.message.request_id != request.request_id) {
 			result = -EBADMSG;
-		} else if (response.opcode == KFSW_FTP_OP_LIST_END) {
-			result = kfsw_ftp_wire_status_to_errno(response.status);
-			csp_buffer_free(packet);
+		} else if (frame.message.opcode == KFSW_FTP_OP_LIST_END) {
+			result = kfsw_ftp_wire_status_to_errno(frame.message.status);
+			kfsw_ftp_link_release(&frame);
 			break;
-		} else if ((response.opcode != KFSW_FTP_OP_LIST_ENTRY) ||
-			   (response.status != KFSW_FTP_STATUS_OK) || (response.path_size == 0U) ||
-			   (response.data_size != 0U) ||
-			   ((response.flags != KFSW_FTP_ENTRY_FILE) &&
-			    (response.flags != KFSW_FTP_ENTRY_DIRECTORY))) {
-			result = -EBADMSG;
 		} else if (keep_visiting) {
-			char name[KFSW_FTP_MAX_PATH_SIZE + 1U];
-			const struct kfsw_ftp_entry entry = {
-				.name = name,
-				.type = (enum kfsw_ftp_entry_type)response.flags,
-				.size = response.total_size,
-			};
-
-			memcpy(name, response.path, response.path_size);
-			name[response.path_size] = '\0';
-			keep_visiting = visitor(&entry, context);
+			result = visit_list_entry(&frame.message, visitor, context, &keep_visiting);
 		}
-		csp_buffer_free(packet);
+		kfsw_ftp_link_release(&frame);
 	}
-	if (connection != NULL) {
-		(void)csp_close(connection);
+	kfsw_ftp_link_close(&link);
+	return result;
+}
+
+int kfsw_ftp_list(uint16_t node, const char *path, kfsw_ftp_list_visitor_t visitor, void *context)
+{
+	int result;
+
+	if (visitor == NULL) {
+		return -EINVAL;
+	}
+	k_mutex_lock(&kfsw_ftp_client_lock, K_FOREVER);
+	if (is_local_node(node)) {
+		result = validate_local();
+		if (result == 0) {
+			result = kfsw_ftp_local_list(path, &client_workspace, visitor, context);
+		}
+	} else {
+		result = remote_list(node, path, visitor, context);
 	}
 	k_mutex_unlock(&kfsw_ftp_client_lock);
 	return result;
 }
 
-static int open_local_source(const char *local_path, const char *remote_path,
-			     struct kfsw_ftp_message *request, uint32_t *file_size, uint32_t *crc32)
+/*
+ * Resolve both ends of an upload and CRC the local file before the connection
+ * opens, so the server learns the expected size and CRC in the request itself.
+ */
+static int prepare_upload(const char *local_path, const char *remote_path,
+			  struct kfsw_ftp_message *request, struct kfsw_ftp_transfer *transfer)
 {
 	uint16_t remote_path_size;
 	int result;
@@ -254,127 +297,129 @@ static int open_local_source(const char *local_path, const char *remote_path,
 	if (result != 0) {
 		return result;
 	}
-	result = kfsw_ftp_file_crc(client_workspace.path, &client_workspace, file_size, crc32);
+	result = kfsw_ftp_file_crc(client_workspace.path, &client_workspace, &transfer->total_size,
+				   &transfer->crc32);
 	if (result != 0) {
 		return result;
 	}
 	request->path = (const uint8_t *)remote_path;
 	request->path_size = remote_path_size;
-	request->total_size = *file_size;
-	request->crc32 = *crc32;
+	request->total_size = transfer->total_size;
+	request->crc32 = transfer->crc32;
 	return 0;
+}
+
+/* PUT_READY means the server opened its temporary file; PUT_RESULT means it refused. */
+static int await_put_ready(struct kfsw_ftp_link *link, uint32_t request_id)
+{
+	struct kfsw_ftp_link_frame frame;
+	int result = kfsw_ftp_link_receive(link, &frame);
+
+	if (result != 0) {
+		return result;
+	}
+	if ((frame.message.request_id != request_id) ||
+	    ((frame.message.opcode != KFSW_FTP_OP_PUT_READY) &&
+	     (frame.message.opcode != KFSW_FTP_OP_PUT_RESULT))) {
+		result = -EBADMSG;
+	} else {
+		result = kfsw_ftp_wire_status_to_errno(frame.message.status);
+		if ((result == 0) && (frame.message.opcode != KFSW_FTP_OP_PUT_READY)) {
+			result = -EBADMSG;
+		}
+	}
+	kfsw_ftp_link_release(&frame);
+	return result;
+}
+
+/* The peer echoes what it committed; a disagreement is an integrity failure. */
+static int await_transfer_result(struct kfsw_ftp_link *link, uint8_t result_opcode,
+				 const struct kfsw_ftp_transfer *transfer)
+{
+	struct kfsw_ftp_link_frame frame;
+	int result = receive_response(link, result_opcode, transfer->request_id, &frame);
+
+	if (result != 0) {
+		return result;
+	}
+	if ((frame.message.total_size != transfer->total_size) ||
+	    (frame.message.crc32 != transfer->crc32)) {
+		result = -EILSEQ;
+	}
+	kfsw_ftp_link_release(&frame);
+	return result;
+}
+
+static void report_transfer(struct kfsw_ftp_transfer_result *transfer_result, uint32_t bytes,
+			    uint32_t crc32, uint32_t started_ms)
+{
+	transfer_result->bytes = bytes;
+	transfer_result->crc32 = crc32;
+	transfer_result->duration_ms = k_uptime_get_32() - started_ms;
 }
 
 int kfsw_ftp_put(uint16_t node, const char *local_path, const char *remote_path,
 		 struct kfsw_ftp_transfer_result *transfer_result)
 {
+	struct kfsw_ftp_link link = {0};
 	struct kfsw_ftp_message request = {
 		.opcode = KFSW_FTP_OP_PUT_REQUEST,
 		.request_id = allocate_request_id(),
 	};
-	struct fs_file_t file;
-	csp_conn_t *connection = NULL;
-	uint32_t file_size = 0U;
-	uint32_t crc32 = 0U;
-	uint32_t offset = 0U;
+	struct kfsw_ftp_transfer transfer = {
+		.link = &link,
+		.workspace = &client_workspace,
+		.request_id = request.request_id,
+		.data_opcode = KFSW_FTP_OP_PUT_DATA,
+	};
 	uint32_t started_ms;
-	int close_result;
 	int result;
 
 	if (transfer_result == NULL) {
 		return -EINVAL;
+	}
+	if (is_local_node(node)) {
+		return -ENOTSUP;
 	}
 	memset(transfer_result, 0, sizeof(*transfer_result));
 	k_mutex_lock(&kfsw_ftp_client_lock, K_FOREVER);
 	started_ms = k_uptime_get_32();
 	result = validate_client(node);
 	if (result == 0) {
-		result = open_local_source(local_path, remote_path, &request, &file_size, &crc32);
+		result = prepare_upload(local_path, remote_path, &request, &transfer);
 	}
 	if (result == 0) {
-		connection = connect_remote(node);
-		result = (connection != NULL) ? 0 : -ECONNREFUSED;
+		result = kfsw_ftp_link_connect(&link, node);
 	}
 	if (result == 0) {
-		result = kfsw_ftp_send_message(connection, &request);
+		result = kfsw_ftp_link_send(&link, &request);
 	}
 	if (result == 0) {
-		struct kfsw_ftp_message response;
-		csp_packet_t *packet = NULL;
-
-		result = kfsw_ftp_receive_message(connection, &response, &packet);
-		if (result == 0) {
-			if ((response.request_id != request.request_id) ||
-			    ((response.opcode != KFSW_FTP_OP_PUT_READY) &&
-			     (response.opcode != KFSW_FTP_OP_PUT_RESULT))) {
-				result = -EBADMSG;
-			} else {
-				result = kfsw_ftp_wire_status_to_errno(response.status);
-				if ((result == 0) && (response.opcode != KFSW_FTP_OP_PUT_READY)) {
-					result = -EBADMSG;
-				}
-			}
-			csp_buffer_free(packet);
-		}
-	}
-	fs_file_t_init(&file);
-	if (result == 0) {
-		result = fs_open(&file, client_workspace.path, FS_O_READ);
-	}
-	while ((result == 0) && (offset < file_size)) {
-		ssize_t bytes_read =
-			fs_read(&file, client_workspace.chunk, sizeof(client_workspace.chunk));
-		struct kfsw_ftp_message data_message = {
-			.opcode = KFSW_FTP_OP_PUT_DATA,
-			.request_id = request.request_id,
-			.offset = offset,
-			.total_size = file_size,
-			.crc32 = crc32,
-			.data = client_workspace.chunk,
-		};
-
-		if (bytes_read <= 0) {
-			result = (bytes_read < 0) ? (int)bytes_read : -EIO;
-			break;
-		}
-		data_message.data_size = (uint16_t)bytes_read;
-		result = kfsw_ftp_send_message(connection, &data_message);
-		offset += (result == 0) ? (uint32_t)bytes_read : 0U;
-	}
-	if (file.mp != NULL) {
-		close_result = fs_close(&file);
-		if (result == 0) {
-			result = close_result;
-		}
+		result = await_put_ready(&link, request.request_id);
 	}
 	if (result == 0) {
-		struct kfsw_ftp_message response;
-		csp_packet_t *packet = NULL;
-
-		result = receive_response(connection, KFSW_FTP_OP_PUT_RESULT, request.request_id,
-					  &response, &packet);
-		if ((result == 0) &&
-		    ((response.total_size != file_size) || (response.crc32 != crc32))) {
-			result = -EILSEQ;
-		}
-		if (packet != NULL) {
-			csp_buffer_free(packet);
-		}
-	}
-	if (connection != NULL) {
-		(void)csp_close(connection);
+		result = kfsw_ftp_transfer_open_source(&transfer, client_workspace.path);
 	}
 	if (result == 0) {
-		transfer_result->bytes = file_size;
-		transfer_result->crc32 = crc32;
-		transfer_result->duration_ms = k_uptime_get_32() - started_ms;
+		result = kfsw_ftp_transfer_send(&transfer);
+	}
+	if (result == 0) {
+		result = await_transfer_result(&link, KFSW_FTP_OP_PUT_RESULT, &transfer);
+	}
+	kfsw_ftp_link_close(&link);
+	if (result == 0) {
+		report_transfer(transfer_result, transfer.total_size, transfer.crc32, started_ms);
 	}
 	k_mutex_unlock(&kfsw_ftp_client_lock);
 	return result;
 }
 
-static int prepare_local_download(const char *remote_path, const char *local_path,
-				  struct kfsw_ftp_message *request)
+/*
+ * Resolve both ends of a download and derive the temporary path. An existing
+ * local file stays untouched until the transfer commits.
+ */
+static int prepare_download(const char *remote_path, const char *local_path,
+			    struct kfsw_ftp_message *request)
 {
 	struct fs_dirent entry;
 	uint16_t local_path_size;
@@ -404,150 +449,91 @@ static int prepare_local_download(const char *remote_path, const char *local_pat
 					    sizeof(client_workspace.temporary_path));
 }
 
-static int write_all(struct fs_file_t *file, const uint8_t *data, size_t size)
+/* GET_INFO carries the expected size and CRC; GET_RESULT means the server refused. */
+static int await_get_info(struct kfsw_ftp_link *link, struct kfsw_ftp_transfer *transfer)
 {
-	size_t offset = 0U;
+	struct kfsw_ftp_link_frame frame;
+	int result = kfsw_ftp_link_receive(link, &frame);
 
-	while (offset < size) {
-		ssize_t written = fs_write(file, &data[offset], size - offset);
-
-		if (written < 0) {
-			return (int)written;
-		}
-		if (written == 0) {
-			return -EIO;
-		}
-		offset += (size_t)written;
+	if (result != 0) {
+		return result;
 	}
-	return 0;
+	if ((frame.message.request_id != transfer->request_id) ||
+	    ((frame.message.opcode != KFSW_FTP_OP_GET_INFO) &&
+	     (frame.message.opcode != KFSW_FTP_OP_GET_RESULT))) {
+		result = -EBADMSG;
+	} else {
+		result = kfsw_ftp_wire_status_to_errno(frame.message.status);
+		if ((result == 0) && (frame.message.opcode == KFSW_FTP_OP_GET_INFO)) {
+			transfer->total_size = frame.message.total_size;
+			transfer->crc32 = frame.message.crc32;
+		} else if (result == 0) {
+			result = -EBADMSG;
+		}
+	}
+	kfsw_ftp_link_release(&frame);
+	return result;
 }
 
 int kfsw_ftp_get(uint16_t node, const char *remote_path, const char *local_path,
 		 struct kfsw_ftp_transfer_result *transfer_result)
 {
+	struct kfsw_ftp_link link = {0};
 	struct kfsw_ftp_message request = {
 		.opcode = KFSW_FTP_OP_GET_REQUEST,
 		.request_id = allocate_request_id(),
 	};
-	struct fs_file_t file;
-	csp_conn_t *connection = NULL;
-	uint32_t expected_size = 0U;
-	uint32_t expected_crc = 0U;
-	uint32_t received = 0U;
-	uint32_t crc32 = 0U;
+	struct kfsw_ftp_transfer transfer = {
+		.link = &link,
+		.workspace = &client_workspace,
+		.request_id = request.request_id,
+		.data_opcode = KFSW_FTP_OP_GET_DATA,
+	};
 	uint32_t started_ms;
-	bool temporary_ready = false;
-	int close_result;
 	int result;
 
 	if (transfer_result == NULL) {
 		return -EINVAL;
+	}
+	if (is_local_node(node)) {
+		return -ENOTSUP;
 	}
 	memset(transfer_result, 0, sizeof(*transfer_result));
 	k_mutex_lock(&kfsw_ftp_client_lock, K_FOREVER);
 	started_ms = k_uptime_get_32();
 	result = validate_client(node);
 	if (result == 0) {
-		result = prepare_local_download(remote_path, local_path, &request);
-		temporary_ready = result == 0;
+		result = prepare_download(remote_path, local_path, &request);
 	}
 	if (result == 0) {
-		connection = connect_remote(node);
-		result = (connection != NULL) ? 0 : -ECONNREFUSED;
+		result = kfsw_ftp_link_connect(&link, node);
 	}
 	if (result == 0) {
-		result = kfsw_ftp_send_message(connection, &request);
+		result = kfsw_ftp_link_send(&link, &request);
 	}
 	if (result == 0) {
-		struct kfsw_ftp_message response;
-		csp_packet_t *packet = NULL;
-
-		result = kfsw_ftp_receive_message(connection, &response, &packet);
+		result = await_get_info(&link, &transfer);
+	}
+	if (result == 0) {
+		result = kfsw_ftp_transfer_open_sink(&transfer, client_workspace.temporary_path);
+	}
+	if (result == 0) {
+		result = kfsw_ftp_transfer_receive(&transfer);
 		if (result == 0) {
-			if ((response.request_id != request.request_id) ||
-			    ((response.opcode != KFSW_FTP_OP_GET_INFO) &&
-			     (response.opcode != KFSW_FTP_OP_GET_RESULT))) {
-				result = -EBADMSG;
-			} else {
-				result = kfsw_ftp_wire_status_to_errno(response.status);
-				if ((result == 0) && (response.opcode == KFSW_FTP_OP_GET_INFO)) {
-					expected_size = response.total_size;
-					expected_crc = response.crc32;
-				} else if (result == 0) {
-					result = -EBADMSG;
-				}
-			}
-			csp_buffer_free(packet);
+			/*
+			 * The server's result arrives before the commit, so a
+			 * server-side failure is seen while the received data is
+			 * still only a temporary file.
+			 */
+			result = await_transfer_result(&link, KFSW_FTP_OP_GET_RESULT, &transfer);
 		}
+		result = kfsw_ftp_transfer_finish(&transfer, client_workspace.path,
+						  client_workspace.temporary_path, result);
 	}
-	fs_file_t_init(&file);
+	kfsw_ftp_link_close(&link);
 	if (result == 0) {
-		(void)fs_unlink(client_workspace.temporary_path);
-		result = fs_open(&file, client_workspace.temporary_path,
-				 FS_O_CREATE | FS_O_WRITE | FS_O_TRUNC);
-	}
-	while ((result == 0) && (received < expected_size)) {
-		struct kfsw_ftp_message response;
-		csp_packet_t *packet = NULL;
-
-		result = kfsw_ftp_receive_message(connection, &response, &packet);
-		if (result != 0) {
-			break;
-		}
-		if ((response.opcode != KFSW_FTP_OP_GET_DATA) ||
-		    (response.request_id != request.request_id) || (response.status != 0U) ||
-		    (response.flags != 0U) || (response.path_size != 0U) ||
-		    (response.data_size == 0U) || (response.offset != received) ||
-		    (response.total_size != expected_size) || (response.crc32 != expected_crc) ||
-		    (response.data_size > expected_size - received)) {
-			result = -EBADMSG;
-		} else {
-			result = write_all(&file, response.data, response.data_size);
-			if (result == 0) {
-				crc32 = crc32_ieee_update(crc32, response.data, response.data_size);
-				received += response.data_size;
-			}
-		}
-		csp_buffer_free(packet);
-	}
-	if (result == 0) {
-		struct kfsw_ftp_message response;
-		csp_packet_t *packet = NULL;
-
-		result = receive_response(connection, KFSW_FTP_OP_GET_RESULT, request.request_id,
-					  &response, &packet);
-		if ((result == 0) &&
-		    ((response.total_size != expected_size) || (response.crc32 != expected_crc))) {
-			result = -EILSEQ;
-		}
-		if (packet != NULL) {
-			csp_buffer_free(packet);
-		}
-	}
-	if (result == 0) {
-		result = fs_sync(&file);
-	}
-	if (file.mp != NULL) {
-		close_result = fs_close(&file);
-		if (result == 0) {
-			result = close_result;
-		}
-	}
-	if (result == 0) {
-		result = kfsw_ftp_commit_temporary(client_workspace.path,
-						   client_workspace.temporary_path, received, crc32,
-						   expected_size, expected_crc);
-	}
-	if ((result != 0) && temporary_ready) {
-		(void)fs_unlink(client_workspace.temporary_path);
-	}
-	if (connection != NULL) {
-		(void)csp_close(connection);
-	}
-	if (result == 0) {
-		transfer_result->bytes = received;
-		transfer_result->crc32 = crc32;
-		transfer_result->duration_ms = k_uptime_get_32() - started_ms;
+		report_transfer(transfer_result, transfer.offset, transfer.actual_crc32,
+				started_ms);
 	}
 	k_mutex_unlock(&kfsw_ftp_client_lock);
 	return result;

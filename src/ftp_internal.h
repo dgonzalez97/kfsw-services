@@ -4,7 +4,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include <csp/csp.h>
+#include <zephyr/fs/fs.h>
 
 #include <kfsw/services/ftp.h>
 
@@ -48,6 +48,11 @@ enum kfsw_ftp_wire_status {
 	KFSW_FTP_STATUS_NOT_DIRECTORY = 12,
 };
 
+/*
+ * One decoded protocol message. After a decode, path and data point into the
+ * buffer the message arrived in; both are borrowed until that buffer is
+ * released.
+ */
 struct kfsw_ftp_message {
 	uint8_t opcode;
 	uint8_t flags;
@@ -68,6 +73,27 @@ struct kfsw_ftp_workspace {
 	uint8_t chunk[KFSW_FTP_CHUNK_SIZE];
 };
 
+/* Defined by the transport backend; see ftp_link.h. */
+struct kfsw_ftp_link;
+
+/*
+ * One file transfer in progress. The engine owns the file handle between an
+ * open and the matching send or receive call, and updates offset and
+ * actual_crc32 as it goes so the caller can report what really moved.
+ */
+struct kfsw_ftp_transfer {
+	struct kfsw_ftp_link *link;
+	struct kfsw_ftp_workspace *workspace;
+	struct fs_file_t file;
+	uint32_t request_id;
+	uint32_t total_size;
+	uint32_t crc32;
+	uint32_t offset;
+	uint32_t actual_crc32;
+	uint8_t data_opcode;
+};
+
+/* Wire codec, path policy and status mapping. */
 int kfsw_ftp_protocol_encode(uint8_t *buffer, size_t capacity,
 			     const struct kfsw_ftp_message *message, size_t *encoded_size);
 int kfsw_ftp_protocol_decode(const uint8_t *buffer, size_t size, struct kfsw_ftp_message *message);
@@ -75,11 +101,10 @@ int kfsw_ftp_resolve_path(const char *virtual_path, bool allow_root, char *resol
 			  size_t resolved_size);
 int kfsw_ftp_wire_status_to_errno(uint8_t status);
 uint8_t kfsw_ftp_errno_to_wire_status(int error);
-int kfsw_ftp_send_message(csp_conn_t *connection, const struct kfsw_ftp_message *message);
-int kfsw_ftp_receive_message(csp_conn_t *connection, struct kfsw_ftp_message *message,
-			     csp_packet_t **packet);
 int kfsw_ftp_copy_message_path(const struct kfsw_ftp_message *message, char *path,
 			       size_t path_size);
+
+/* Local storage below the FTP root. */
 int kfsw_ftp_file_crc(const char *path, struct kfsw_ftp_workspace *workspace, uint32_t *file_size,
 		      uint32_t *crc32);
 int kfsw_ftp_make_temporary_path(const char *path, char *temporary_path,
@@ -87,5 +112,18 @@ int kfsw_ftp_make_temporary_path(const char *path, char *temporary_path,
 int kfsw_ftp_commit_temporary(const char *path, const char *temporary_path, uint32_t actual_size,
 			      uint32_t actual_crc32, uint32_t expected_size,
 			      uint32_t expected_crc32);
+int kfsw_ftp_local_mkdir(const char *virtual_path, struct kfsw_ftp_workspace *workspace);
+int kfsw_ftp_local_stat(const char *virtual_path, struct kfsw_ftp_workspace *workspace,
+			struct kfsw_ftp_stat *info);
+int kfsw_ftp_local_list(const char *virtual_path, struct kfsw_ftp_workspace *workspace,
+			kfsw_ftp_list_visitor_t visitor, void *context);
+
+/* Transfer engine; see ftp_transfer.c. */
+int kfsw_ftp_transfer_open_source(struct kfsw_ftp_transfer *transfer, const char *source_path);
+int kfsw_ftp_transfer_send(struct kfsw_ftp_transfer *transfer);
+int kfsw_ftp_transfer_open_sink(struct kfsw_ftp_transfer *transfer, const char *temporary_path);
+int kfsw_ftp_transfer_receive(struct kfsw_ftp_transfer *transfer);
+int kfsw_ftp_transfer_finish(struct kfsw_ftp_transfer *transfer, const char *target_path,
+			     const char *temporary_path, int result);
 
 #endif

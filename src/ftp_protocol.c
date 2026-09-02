@@ -91,6 +91,17 @@ int kfsw_ftp_protocol_decode(const uint8_t *buffer, size_t size, struct kfsw_ftp
 	return 0;
 }
 
+int kfsw_ftp_copy_message_path(const struct kfsw_ftp_message *message, char *path, size_t path_size)
+{
+	if ((message == NULL) || (path == NULL) || (message->path_size == 0U) ||
+	    (message->path_size >= path_size)) {
+		return -EINVAL;
+	}
+	memcpy(path, message->path, message->path_size);
+	path[message->path_size] = '\0';
+	return 0;
+}
+
 int kfsw_ftp_resolve_path(const char *virtual_path, bool allow_root, char *resolved,
 			  size_t resolved_size)
 {

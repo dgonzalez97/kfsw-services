@@ -52,20 +52,43 @@ bool kfsw_ftp_is_started(void);
 /** Validate a virtual path using the same rules as the client and server. */
 int kfsw_ftp_validate_path(const char *path, bool allow_root);
 
-/** List one remote directory. Paths are relative to the FTP root. */
+/**
+ * List one directory. Paths are relative to the FTP root.
+ *
+ * A request addressed to this node's own CSP address is served directly from
+ * local storage, without a connection or a route.
+ */
 int kfsw_ftp_list(uint16_t node, const char *path, kfsw_ftp_list_visitor_t visitor, void *context);
 
-/** Return remote file/directory metadata and a file CRC32. */
+/**
+ * Return file/directory metadata and a file CRC32.
+ *
+ * A request addressed to this node's own CSP address is served locally.
+ */
 int kfsw_ftp_stat(uint16_t node, const char *path, struct kfsw_ftp_stat *info);
 
-/** Create one remote directory. Parent directories must already exist. */
+/**
+ * Create one directory. Parent directories must already exist.
+ *
+ * A request addressed to this node's own CSP address is served locally.
+ */
 int kfsw_ftp_mkdir(uint16_t node, const char *path);
 
-/** Stream a local FTP-root file to a remote FTP-root path. */
+/**
+ * Stream a local FTP-root file to a remote FTP-root path.
+ *
+ * Transfers are between two nodes; this node's own CSP address returns
+ * -ENOTSUP.
+ */
 int kfsw_ftp_put(uint16_t node, const char *local_path, const char *remote_path,
 		 struct kfsw_ftp_transfer_result *result);
 
-/** Stream a remote FTP-root file to a local FTP-root path. */
+/**
+ * Stream a remote FTP-root file to a local FTP-root path.
+ *
+ * Transfers are between two nodes; this node's own CSP address returns
+ * -ENOTSUP.
+ */
 int kfsw_ftp_get(uint16_t node, const char *remote_path, const char *local_path,
 		 struct kfsw_ftp_transfer_result *result);
 
