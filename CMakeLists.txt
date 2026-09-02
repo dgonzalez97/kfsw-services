@@ -4,9 +4,9 @@ set(kfsw_services_sources
 )
 
 if(CONFIG_KFSW_PARAM)
-    list(APPEND kfsw_services_sources src/parameter.c)
+    list(APPEND kfsw_services_sources src/parameter/parameter.c)
     if(CONFIG_KFSW_PARAM_PERSISTENCE)
-        list(APPEND kfsw_services_sources src/parameter_persistence.c)
+        list(APPEND kfsw_services_sources src/parameter/parameter_persistence.c)
     endif()
 endif()
 
@@ -38,7 +38,7 @@ if(CONFIG_KFSW_PARAM_CSP)
     )
 
     set(kfsw_libparam_sources
-        src/libparam_compat.c
+        src/parameter/libparam_compat.c
         "${KFSW_LIBPARAM_ROOT}/src/mpack/mpack.c"
         "${KFSW_LIBPARAM_ROOT}/src/param/list/param_list.c"
         "${KFSW_LIBPARAM_ROOT}/src/param/param.c"
@@ -73,30 +73,30 @@ if(CONFIG_KFSW_PARAM_CSP)
     )
 
     zephyr_linker_sources(SECTIONS zephyr/libparam-sections.ld)
-    list(APPEND kfsw_services_sources src/parameter_csp.c)
+    list(APPEND kfsw_services_sources src/parameter/parameter_csp.c)
 endif()
 
 if(CONFIG_KFSW_FTP)
     list(APPEND kfsw_services_sources
-        src/ftp_client.c
-        src/ftp_link_csp.c
-        src/ftp_protocol.c
-        src/ftp_server.c
-        src/ftp_store.c
-        src/ftp_transfer.c
+        src/ftp/ftp_client.c
+        src/ftp/ftp_link_csp.c
+        src/ftp/ftp_protocol.c
+        src/ftp/ftp_server.c
+        src/ftp/ftp_store.c
+        src/ftp/ftp_transfer.c
     )
 endif()
 
 if(CONFIG_KFSW_EVENT)
-    list(APPEND kfsw_services_sources src/event.c)
+    list(APPEND kfsw_services_sources src/event/event.c)
 endif()
 
 if(CONFIG_KFSW_COMMAND)
-    list(APPEND kfsw_services_sources src/command.c)
+    list(APPEND kfsw_services_sources src/command/command.c)
     if(CONFIG_KFSW_COMMAND_CSP)
         list(APPEND kfsw_services_sources
-            src/command_csp.c
-            src/command_protocol.c
+            src/command/command_csp.c
+            src/command/command_protocol.c
         )
     endif()
 endif()
