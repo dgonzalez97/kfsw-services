@@ -58,10 +58,48 @@ format is unchanged by definition aggregation.
 
 ## File transfer
 
-`CONFIG_KFSW_FTP` enables the K-FSW-owned CSP file-transfer client and server.
-It uses configurable CSP port 9 and requires libcsp RDP plus CSP CRC32 on every
-connection. RDP supplies flow control, retransmission, and ordered delivery;
-the application protocol does not add a second ACK/retry layer.
+`CONFIG_KFSW_FTP` enables the K-FSW-owned file-transfer client and server. The
+current transport is CSP on configurable port 9 with libcsp RDP plus CSP CRC32
+on every connection. RDP supplies flow control, retransmission, and ordered
+delivery; the application protocol does not add a second ACK/retry layer.
+
+### Layering rule
+
+The service is split into an operation layer, a transfer engine, and a
+reliable-transport interface:
+
+```text
+ftp_client.c  ftp_server.c  ftp_transfer.c  ftp_protocol.c  ftp_store.c
+                              |
+                       only the ftp_link API
+                              v
+                          ftp_link.h
+                              |
+                    +---------+----------+
+                    |                    |
+              ftp_link_csp.c        future backend
+               CSP + RDP           or test double
+```
+
+One rule keeps that boundary checkable rather than a matter of judgement:
+
+> No `#include <csp/...>` and no `kfsw_csp_*()` outside `ftp_link_csp.c`.
+
+Everything the core needs to know about the transport is reached through
+`ftp_link.h`, including the local endpoint identifier, the highest addressable
+node, the largest payload one message can carry, and whether the transport is
+ready to route. Swapping the backend therefore does not touch the protocol,
+the transfer engine, or the storage rules.
+
+The interface also carries the packet-ownership contract. A received message
+arrives as a `kfsw_ftp_link_frame` whose `path` and `data` borrow the
+transport's buffer; `kfsw_ftp_link_release()` is what ends that borrow, so the
+lifetime is expressed by the API rather than by comment.
+
+This is deliberately not TFTP. TFTP carries DATA/ACK, timeouts, retries, and
+duplicate handling because it usually runs over UDP. Here RDP already provides
+those, so adding them again would duplicate the transport without buying
+anything.
 
 The version 1 wire format is explicitly encoded in network byte order. A
 24-byte header carries version, opcode, flags/status, request identifier,

@@ -79,9 +79,11 @@ endif()
 if(CONFIG_KFSW_FTP)
     list(APPEND kfsw_services_sources
         src/ftp_client.c
-        src/ftp_common.c
+        src/ftp_link_csp.c
         src/ftp_protocol.c
         src/ftp_server.c
+        src/ftp_store.c
+        src/ftp_transfer.c
     )
 endif()
 
