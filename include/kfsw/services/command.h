@@ -45,6 +45,21 @@ enum kfsw_command_status {
 	KFSW_COMMAND_UNAVAILABLE = 6,
 };
 
+/**
+ * Event identifiers owned by the command service.
+ *
+ * Numbers are stable and never reused. Payloads carry the command identifier
+ * and the source node as big-endian u16, then the status as one byte.
+ */
+enum kfsw_event_command_id {
+	/** A command ran, whatever its outcome. */
+	KFSW_EVENT_COMMAND_INVOKED = 1,
+	/** A request named a command this node does not implement. */
+	KFSW_EVENT_COMMAND_UNKNOWN = 2,
+	/** A request failed validation before any handler ran. */
+	KFSW_EVENT_COMMAND_REJECTED = 3,
+};
+
 /** Behavioural flags a definition declares about itself. */
 #define KFSW_COMMAND_FLAG_MUTATING BIT(0)
 
