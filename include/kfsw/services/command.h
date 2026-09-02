@@ -1,0 +1,180 @@
+#ifndef KFSW_SERVICES_COMMAND_H
+#define KFSW_SERVICES_COMMAND_H
+
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/**
+ * @file
+ * @brief One normalized path for invoking a K-FSW operation.
+ *
+ * A command is defined once and reachable two ways: by name from the shell,
+ * and by numeric identifier over CSP. Both front ends resolve to the same
+ * definition, the same argument validation and the same handler, so a local
+ * operator and a ground station cannot diverge.
+ *
+ * Definitions are contributed as compile-time sets by their semantic owner,
+ * the same way parameter definitions are, and the registry is frozen before
+ * the application reports readiness.
+ */
+
+#define KFSW_COMMAND_MAX_ARGS 4U
+#define KFSW_COMMAND_MAX_TEXT_SIZE 64U
+#define KFSW_COMMAND_MAX_DETAIL_SIZE 96U
+
+/** Argument and result value kinds carried on the wire. */
+enum kfsw_command_type {
+	KFSW_COMMAND_TYPE_U32 = 1,
+	KFSW_COMMAND_TYPE_I32 = 2,
+	KFSW_COMMAND_TYPE_TEXT = 3,
+};
+
+/** Outcome of one command invocation. */
+enum kfsw_command_status {
+	KFSW_COMMAND_OK = 0,
+	KFSW_COMMAND_UNKNOWN = 1,
+	KFSW_COMMAND_INVALID_ARGUMENT = 2,
+	KFSW_COMMAND_DENIED = 3,
+	KFSW_COMMAND_BUSY = 4,
+	KFSW_COMMAND_FAILED = 5,
+	KFSW_COMMAND_UNAVAILABLE = 6,
+};
+
+/** Behavioural flags a definition declares about itself. */
+#define KFSW_COMMAND_FLAG_MUTATING BIT(0)
+
+/** One validated argument handed to a handler. */
+struct kfsw_command_arg {
+	enum kfsw_command_type type;
+	union {
+		uint32_t u32;
+		int32_t i32;
+		const char *text;
+	} value;
+};
+
+/**
+ * Where a request came from.
+ *
+ * Authentication and authorization are not implemented. The fields are
+ * reserved now so that adding them later does not change this structure's
+ * meaning: a handler must never assume a particular source is trusted.
+ */
+struct kfsw_command_source {
+	/** CSP node that issued the request, or 0 for a local invocation. */
+	uint16_t node;
+	/** True once the request has been authenticated. Always false today. */
+	bool authenticated;
+};
+
+/** What a handler reports back. */
+struct kfsw_command_result {
+	enum kfsw_command_status status;
+	/** Optional short human-readable detail. May be left empty. */
+	char detail[KFSW_COMMAND_MAX_DETAIL_SIZE];
+};
+
+/**
+ * Command implementation.
+ *
+ * Runs on the command worker thread, never on a CSP receive context. Arguments
+ * are already checked for count and type. Text arguments are NUL-terminated
+ * and remain valid only for the duration of the call.
+ */
+typedef int (*kfsw_command_handler_t)(const struct kfsw_command_arg *args, size_t arg_count,
+				      const struct kfsw_command_source *source,
+				      struct kfsw_command_result *result);
+
+/** One command, owned by the component that implements it. */
+struct kfsw_command_definition {
+	/** Stable numeric identifier used on the wire. Never reused. */
+	uint16_t id;
+	/** Stable short name used by the shell. */
+	const char *name;
+	/** One-line description shown by `command list`. */
+	const char *help;
+	uint32_t flags;
+	uint8_t arg_count;
+	/** Expected type of each argument, in order. */
+	const enum kfsw_command_type *arg_types;
+	kfsw_command_handler_t handler;
+};
+
+/** A compile-time group of command definitions from one semantic owner. */
+struct kfsw_command_definition_set {
+	const struct kfsw_command_definition *commands;
+	size_t count;
+};
+
+/** Description of one registered command, for enumeration and argument parsing. */
+struct kfsw_command_info {
+	uint16_t id;
+	const char *name;
+	const char *help;
+	uint32_t flags;
+	uint8_t arg_count;
+	/** Expected type of each argument, so a front end can convert its input. */
+	const enum kfsw_command_type *arg_types;
+};
+
+typedef bool (*kfsw_command_visitor_t)(const struct kfsw_command_info *info, void *context);
+
+/**
+ * Aggregate the supplied definition sets and freeze the registry.
+ *
+ * Rejects duplicate identifiers, duplicate names, missing handlers, and
+ * argument counts above KFSW_COMMAND_MAX_ARGS.
+ */
+int kfsw_command_init(const struct kfsw_command_definition_set *const *sets, size_t set_count);
+
+/** Return whether the registry was built successfully. */
+bool kfsw_command_is_initialized(void);
+
+/** Visit each registered command. */
+void kfsw_command_visit(kfsw_command_visitor_t visitor, void *context);
+
+/** Look up one registered command by name. Returns -ENOENT when absent. */
+int kfsw_command_find(const char *name, struct kfsw_command_info *info);
+
+/** Invoke a command on this node by name. */
+int kfsw_command_invoke(const char *name, const struct kfsw_command_arg *args, size_t arg_count,
+			struct kfsw_command_result *result);
+
+/** Invoke a command on this node by wire identifier. */
+int kfsw_command_invoke_id(uint16_t id, const struct kfsw_command_arg *args, size_t arg_count,
+			   const struct kfsw_command_source *source,
+			   struct kfsw_command_result *result);
+
+/** Human-readable name for a status, for shell output and logs. */
+const char *kfsw_command_status_name(enum kfsw_command_status status);
+
+#if defined(CONFIG_KFSW_COMMAND_CSP)
+
+/** Bind the command port and start serving remote requests. */
+int kfsw_command_server_start(void);
+
+/** Return whether the remote front end is accepting requests. */
+bool kfsw_command_server_is_started(void);
+
+/**
+ * Invoke a command on a remote node by name.
+ *
+ * The name is resolved against this node's registry to obtain the wire
+ * identifier, so both nodes must agree on identifiers. A node that does not
+ * implement the identifier answers with KFSW_COMMAND_UNKNOWN.
+ */
+int kfsw_command_invoke_remote(uint16_t node, const char *name, const struct kfsw_command_arg *args,
+			       size_t arg_count, struct kfsw_command_result *result);
+
+#endif /* CONFIG_KFSW_COMMAND_CSP */
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif
