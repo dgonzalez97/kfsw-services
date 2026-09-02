@@ -87,6 +87,16 @@ if(CONFIG_KFSW_FTP)
     )
 endif()
 
+if(CONFIG_KFSW_COMMAND)
+    list(APPEND kfsw_services_sources src/command.c)
+    if(CONFIG_KFSW_COMMAND_CSP)
+        list(APPEND kfsw_services_sources
+            src/command_csp.c
+            src/command_protocol.c
+        )
+    endif()
+endif()
+
 add_library(kfsw_services STATIC ${kfsw_services_sources})
 
 add_library(kfsw::services ALIAS kfsw_services)
@@ -104,7 +114,7 @@ target_link_libraries(kfsw_services
         kernel
 )
 
-if(CONFIG_KFSW_PARAM_CSP OR CONFIG_KFSW_FTP)
+if(CONFIG_KFSW_PARAM_CSP OR CONFIG_KFSW_FTP OR CONFIG_KFSW_COMMAND_CSP)
     target_link_libraries(kfsw_services
         PRIVATE
             kfsw::comms

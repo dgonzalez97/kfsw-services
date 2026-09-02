@@ -117,4 +117,55 @@ config KFSW_FTP_ACCEPTOR_PRIORITY
 
 endif # KFSW_FTP
 
+config KFSW_COMMAND
+	bool "K-FSW command service"
+	help
+	  Enable the command registry. Commands are contributed as compile-time
+	  sets by their owning component and reached by name from the shell or
+	  by numeric identifier over CSP, through one validation path.
+
+if KFSW_COMMAND
+
+config KFSW_COMMAND_MAX_COMMANDS
+	int "Maximum registered commands"
+	range 4 64
+	default 16
+	help
+	  Bounds the static registry. Startup fails if the composed definition
+	  sets exceed this count.
+
+config KFSW_COMMAND_CSP
+	bool "Expose commands over CSP"
+	depends on KFSW_CSP
+	help
+	  Serve command requests on a dedicated CSP port. Without this the
+	  registry is reachable only from local callers such as the shell.
+
+if KFSW_COMMAND_CSP
+
+config KFSW_COMMAND_CSP_PORT
+	int "CSP command port"
+	range 1 63
+	default 11
+	help
+	  Distinct from file transfer (9) and the parameter adapter (10, 12).
+
+config KFSW_COMMAND_TIMEOUT_MS
+	int "Command receive timeout in milliseconds"
+	range 1000 120000
+	default 10000
+
+config KFSW_COMMAND_SERVER_STACK_SIZE
+	int "Command server thread stack size"
+	range 1024 16384
+	default 3072
+
+config KFSW_COMMAND_SERVER_PRIORITY
+	int "Command server thread priority"
+	default 2
+
+endif # KFSW_COMMAND_CSP
+
+endif # KFSW_COMMAND
+
 endmenu
