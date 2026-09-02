@@ -37,6 +37,21 @@ struct kfsw_ftp_transfer_result {
 
 typedef bool (*kfsw_ftp_list_visitor_t)(const struct kfsw_ftp_entry *entry, void *context);
 
+/**
+ * Event identifiers owned by the file-transfer service.
+ *
+ * Numbers are stable and never reused. Transfer payloads are the peer node as
+ * a big-endian u16, then the byte count and CRC32 as big-endian u32.
+ */
+enum kfsw_event_ftp_id {
+	/** An upload committed on the peer. */
+	KFSW_EVENT_FTP_PUT_DONE = 1,
+	/** A download committed locally. */
+	KFSW_EVENT_FTP_GET_DONE = 2,
+	/** A transfer failed. Payload: peer node u16, then the errno as i32. */
+	KFSW_EVENT_FTP_TRANSFER_FAILED = 3,
+};
+
 /** Prepare the sandboxed local file-transfer root after storage is mounted. */
 int kfsw_ftp_init(void);
 

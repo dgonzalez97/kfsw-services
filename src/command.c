@@ -5,9 +5,13 @@
 #include <string.h>
 
 #include <zephyr/kernel.h>
+#include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/util.h>
 
 #include <kfsw/services/command.h>
+#if CONFIG_KFSW_EVENT
+#include <kfsw/services/event.h>
+#endif
 
 #include "command_internal.h"
 
@@ -176,6 +180,31 @@ static enum kfsw_command_status check_arguments(const struct kfsw_command_defini
 	return KFSW_COMMAND_OK;
 }
 
+/*
+ * Every dispatch outcome is recorded, so what a remote caller did remains
+ * answerable after the console has scrolled away.
+ */
+static void record_outcome(uint16_t event_id, uint16_t command_id,
+			   const struct kfsw_command_source *source,
+			   enum kfsw_command_status status)
+{
+#if CONFIG_KFSW_EVENT
+	uint8_t payload[5];
+
+	sys_put_be16(command_id, &payload[0]);
+	sys_put_be16(source->node, &payload[2]);
+	payload[4] = (uint8_t)status;
+	kfsw_event_emit(KFSW_EVENT_SOURCE_COMMAND, event_id,
+			(status == KFSW_COMMAND_OK) ? KFSW_EVENT_INFO : KFSW_EVENT_WARNING, payload,
+			sizeof(payload));
+#else
+	ARG_UNUSED(event_id);
+	ARG_UNUSED(command_id);
+	ARG_UNUSED(source);
+	ARG_UNUSED(status);
+#endif
+}
+
 static int dispatch(const struct kfsw_command_definition *definition,
 		    const struct kfsw_command_arg *args, size_t arg_count,
 		    const struct kfsw_command_source *source, struct kfsw_command_result *result)
@@ -189,10 +218,12 @@ static int dispatch(const struct kfsw_command_definition *definition,
 	}
 	if (definition == NULL) {
 		result->status = KFSW_COMMAND_UNKNOWN;
+		record_outcome(KFSW_EVENT_COMMAND_UNKNOWN, 0U, source, result->status);
 		return -ENOENT;
 	}
 	result->status = check_arguments(definition, args, arg_count);
 	if (result->status != KFSW_COMMAND_OK) {
+		record_outcome(KFSW_EVENT_COMMAND_REJECTED, definition->id, source, result->status);
 		return -EINVAL;
 	}
 
@@ -204,6 +235,7 @@ static int dispatch(const struct kfsw_command_definition *definition,
 	if ((handler_result != 0) && (result->status == KFSW_COMMAND_OK)) {
 		result->status = KFSW_COMMAND_FAILED;
 	}
+	record_outcome(KFSW_EVENT_COMMAND_INVOKED, definition->id, source, result->status);
 	return handler_result;
 }
 

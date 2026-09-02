@@ -7,9 +7,13 @@
 #include <zephyr/fs/fs.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/atomic.h>
+#include <zephyr/sys/byteorder.h>
 
 #include <kfsw/platform/storage.h>
 #include <kfsw/services/ftp.h>
+#if CONFIG_KFSW_EVENT
+#include <kfsw/services/event.h>
+#endif
 
 #include "ftp_link.h"
 
@@ -358,6 +362,30 @@ static void report_transfer(struct kfsw_ftp_transfer_result *transfer_result, ui
 	transfer_result->duration_ms = k_uptime_get_32() - started_ms;
 }
 
+/*
+ * A completed or failed transfer is exactly the kind of fact an operator needs
+ * to establish later, so it is recorded as well as returned.
+ */
+static void record_transfer_event(uint16_t event_id, uint16_t node, uint32_t bytes,
+				  uint32_t crc32_or_errno, bool failed)
+{
+#if CONFIG_KFSW_EVENT
+	uint8_t payload[10];
+
+	sys_put_be16(node, &payload[0]);
+	sys_put_be32(bytes, &payload[2]);
+	sys_put_be32(crc32_or_errno, &payload[6]);
+	kfsw_event_emit(KFSW_EVENT_SOURCE_FTP, event_id,
+			failed ? KFSW_EVENT_ERROR : KFSW_EVENT_INFO, payload, sizeof(payload));
+#else
+	ARG_UNUSED(event_id);
+	ARG_UNUSED(node);
+	ARG_UNUSED(bytes);
+	ARG_UNUSED(crc32_or_errno);
+	ARG_UNUSED(failed);
+#endif
+}
+
 int kfsw_ftp_put(uint16_t node, const char *local_path, const char *remote_path,
 		 struct kfsw_ftp_transfer_result *transfer_result)
 {
@@ -409,6 +437,11 @@ int kfsw_ftp_put(uint16_t node, const char *local_path, const char *remote_path,
 	kfsw_ftp_link_close(&link);
 	if (result == 0) {
 		report_transfer(transfer_result, transfer.total_size, transfer.crc32, started_ms);
+		record_transfer_event(KFSW_EVENT_FTP_PUT_DONE, node, transfer.total_size,
+				      transfer.crc32, false);
+	} else {
+		record_transfer_event(KFSW_EVENT_FTP_TRANSFER_FAILED, node, transfer.offset,
+				      (uint32_t)(-result), true);
 	}
 	k_mutex_unlock(&kfsw_ftp_client_lock);
 	return result;
@@ -534,6 +567,11 @@ int kfsw_ftp_get(uint16_t node, const char *remote_path, const char *local_path,
 	if (result == 0) {
 		report_transfer(transfer_result, transfer.offset, transfer.actual_crc32,
 				started_ms);
+		record_transfer_event(KFSW_EVENT_FTP_GET_DONE, node, transfer.offset,
+				      transfer.actual_crc32, false);
+	} else {
+		record_transfer_event(KFSW_EVENT_FTP_TRANSFER_FAILED, node, transfer.offset,
+				      (uint32_t)(-result), true);
 	}
 	k_mutex_unlock(&kfsw_ftp_client_lock);
 	return result;
