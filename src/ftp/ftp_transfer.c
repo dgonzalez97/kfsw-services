@@ -2,9 +2,14 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <zephyr/fs/fs.h>
 #include <zephyr/sys/crc.h>
+
+#if CONFIG_KFSW_FWU
+#include <kfsw/services/fwu.h>
+#endif
 
 #include "ftp_link.h"
 
@@ -100,6 +105,33 @@ int kfsw_ftp_transfer_open_sink(struct kfsw_ftp_transfer *transfer, const char *
 	return fs_open(&transfer->file, temporary_path, FS_O_CREATE | FS_O_WRITE | FS_O_TRUNC);
 }
 
+#if CONFIG_KFSW_FWU
+bool kfsw_ftp_path_is_firmware(const char *path)
+{
+	if (path == NULL) {
+		return false;
+	}
+	return strcmp(path, CONFIG_KFSW_FTP_FIRMWARE_PATH) == 0;
+}
+
+int kfsw_ftp_transfer_open_firmware_sink(struct kfsw_ftp_transfer *transfer)
+{
+	int result;
+
+	if (transfer == NULL) {
+		return -EINVAL;
+	}
+
+	result = kfsw_fwu_begin(transfer->total_size, transfer->crc32);
+	if (result != 0) {
+		return result;
+	}
+
+	transfer->firmware = true;
+	return 0;
+}
+#endif /* CONFIG_KFSW_FWU */
+
 int kfsw_ftp_transfer_receive(struct kfsw_ftp_transfer *transfer)
 {
 	int result = 0;
@@ -116,6 +148,11 @@ int kfsw_ftp_transfer_receive(struct kfsw_ftp_transfer *transfer)
 		}
 		if (!data_message_is_valid(transfer, &frame.message)) {
 			result = -EBADMSG;
+#if CONFIG_KFSW_FWU
+		} else if (transfer->firmware) {
+			result = kfsw_fwu_write(transfer->offset, frame.message.data,
+						frame.message.data_size);
+#endif
 		} else {
 			result = write_all(&transfer->file, frame.message.data,
 					   frame.message.data_size);
@@ -139,6 +176,23 @@ int kfsw_ftp_transfer_finish(struct kfsw_ftp_transfer *transfer, const char *tar
 	if ((transfer == NULL) || (target_path == NULL) || (temporary_path == NULL)) {
 		return -EINVAL;
 	}
+
+#if CONFIG_KFSW_FWU
+	if (transfer->firmware) {
+		/* No file was ever opened, so there is nothing to sync, close or
+		 * rename. The update service owns verifying the image and
+		 * leaving the slot erased if it is rejected.
+		 */
+		if (result == 0) {
+			result = kfsw_fwu_finish();
+		}
+		if (result != 0) {
+			(void)kfsw_fwu_abort();
+		}
+		return result;
+	}
+#endif
+
 	if (result == 0) {
 		result = fs_sync(&transfer->file);
 	}
