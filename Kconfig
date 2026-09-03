@@ -232,6 +232,87 @@ config KFSW_FWU_SLOT_OFFSET_SECTORS
 	  Set to 0 only for a bootloader whose swap mode places the image at the
 	  slot start.
 
+config KFSW_FWU_LITE
+	bool "K-FSW lightweight firmware upload"
+	depends on KFSW_FWU
+	select CRC
+	help
+	  A direct path for putting a firmware image on a node, alongside the
+	  file transfer route. Both feed the same update service and may be
+	  built together; whichever starts a transfer first holds it and the
+	  other is told the service is busy.
+
+	  Blocks carry their own checksum and are checked before anything is
+	  written. A whole-image checksum tells you an eight minute upload
+	  failed; a per-block one tells you which block to send again.
+
+config KFSW_FWU_LITE_BLOCK_SIZE
+	int "Image block size in bytes"
+	depends on KFSW_FWU_LITE
+	default 192
+	range 16 512
+	help
+	  Payload carried by one block message. The default matches the file
+	  transfer chunk, which is sized so a message and its transport overhead
+	  fit one CSP buffer.
+
+	  Every block but the last must be exactly this size: the receiving node
+	  works out which block it expects from how much it already holds, and a
+	  short block in the middle would desynchronise the two without either
+	  noticing.
+
+config KFSW_FWU_LITE_CSP
+	bool "Serve lightweight firmware upload over CSP"
+	depends on KFSW_FWU_LITE
+	depends on KFSW_CSP
+	default y
+	help
+	  Bind the upload server to a CSP port and provide the sending side.
+	  Turn this off to build the protocol without a transport, which is what
+	  the unit tests do.
+
+config KFSW_FWU_LITE_CSP_PORT
+	int "CSP port for firmware upload"
+	depends on KFSW_FWU_LITE_CSP
+	default 13
+	range 0 63
+	help
+	  Ports in use: 9 file transfer, 10 parameter transactions, 11 commands,
+	  12 parameter list.
+
+config KFSW_FWU_LITE_RDP
+	bool "Use reliable delivery for firmware upload"
+	depends on KFSW_FWU_LITE_CSP
+	default n
+	help
+	  Off by default. The per-block checksum and repeat already recover
+	  losses, and adding a second retry mechanism underneath brings
+	  connection state and timeouts that can stall a transfer on a marginal
+	  link instead of reporting the block that needs resending.
+
+config KFSW_FWU_LITE_TIMEOUT_MS
+	int "Reply timeout in milliseconds"
+	depends on KFSW_FWU_LITE_CSP
+	default 8000
+	range 100 60000
+
+config KFSW_FWU_LITE_STACK_SIZE
+	int "Upload server stack size in bytes"
+	depends on KFSW_FWU_LITE_CSP
+	default 2048
+	range 1024 8192
+
+config KFSW_FWU_LITE_PRIORITY
+	int "Upload server thread priority"
+	depends on KFSW_FWU_LITE_CSP
+	default 3
+
+config KFSW_FWU_LITE_BLOCK_RETRIES
+	int "Times to repeat a block the node did not accept"
+	depends on KFSW_FWU_LITE_CSP
+	default 4
+	range 0 32
+
 config KFSW_FTP_FIRMWARE_PATH
 	string "Reserved upload path that routes to the firmware slot"
 	depends on KFSW_FWU
