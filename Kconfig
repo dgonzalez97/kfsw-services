@@ -232,6 +232,21 @@ config KFSW_FWU_SLOT_OFFSET_SECTORS
 	  Set to 0 only for a bootloader whose swap mode places the image at the
 	  slot start.
 
+config KFSW_FTP_FIRMWARE_PATH
+	string "Reserved upload path that routes to the firmware slot"
+	depends on KFSW_FWU
+	depends on KFSW_FTP
+	default "firmware.bin"
+	help
+	  A put to this path inside the transfer root is written into the
+	  firmware update slot instead of the filesystem. The client sends the
+	  size and CRC32 the update service needs as part of an ordinary put,
+	  so nothing about the wire protocol changes.
+
+	  The name is reserved: a file uploaded to it is never stored. It is
+	  still safe, because an image that is not a valid signed firmware is
+	  refused by the bootloader and the previous image continues to run.
+
 config KFSW_FWU_STREAM_BUFFER_SIZE
 	int "Flash write buffer size in bytes"
 	depends on KFSW_FWU

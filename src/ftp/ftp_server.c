@@ -206,11 +206,28 @@ static int serve_put(struct kfsw_ftp_link *link, const struct kfsw_ftp_message *
 	} else {
 		result = resolve_message_path(request, false);
 	}
-	if (result == 0) {
-		result = prepare_upload_target();
+#if CONFIG_KFSW_FWU
+	/* An ordinary put to the reserved path is a firmware upload. The client
+	 * already sends the size and CRC32 the update service needs, so this
+	 * needs no protocol change and works with the existing client on both
+	 * ends.
+	 */
+	if ((result == 0) && kfsw_ftp_path_is_firmware(request->path)) {
+		result = kfsw_ftp_transfer_open_firmware_sink(&transfer);
+		if (result != 0) {
+			return send_status(link, KFSW_FTP_OP_PUT_RESULT, request->request_id,
+					   wire_status(result), 0U, 0U);
+		}
 	}
+	if ((result == 0) && !transfer.firmware) {
+#else
 	if (result == 0) {
-		result = kfsw_ftp_transfer_open_sink(&transfer, server_workspace.temporary_path);
+#endif
+		result = prepare_upload_target();
+		if (result == 0) {
+			result = kfsw_ftp_transfer_open_sink(&transfer,
+							     server_workspace.temporary_path);
+		}
 	}
 	if (result != 0) {
 		return send_status(link, KFSW_FTP_OP_PUT_RESULT, request->request_id,

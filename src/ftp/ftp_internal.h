@@ -91,6 +91,11 @@ struct kfsw_ftp_transfer {
 	uint32_t offset;
 	uint32_t actual_crc32;
 	uint8_t data_opcode;
+	/* True when this upload is a firmware image bound for the update slot
+	 * rather than a file. The receive loop and the commit differ; nothing
+	 * else does, which is why this is a flag and not a second transfer
+	 * type. */
+	bool firmware;
 };
 
 /* Wire codec, path policy and status mapping. */
@@ -122,6 +127,20 @@ int kfsw_ftp_local_list(const char *virtual_path, struct kfsw_ftp_workspace *wor
 int kfsw_ftp_transfer_open_source(struct kfsw_ftp_transfer *transfer, const char *source_path);
 int kfsw_ftp_transfer_send(struct kfsw_ftp_transfer *transfer);
 int kfsw_ftp_transfer_open_sink(struct kfsw_ftp_transfer *transfer, const char *temporary_path);
+
+#if CONFIG_KFSW_FWU
+/**
+ * Direct this upload into the firmware update slot instead of a file.
+ *
+ * The size and CRC32 the client declared in its PUT request are exactly what
+ * the update service needs to begin, so no protocol change is required: an
+ * ordinary put to the reserved path is a firmware upload.
+ */
+int kfsw_ftp_transfer_open_firmware_sink(struct kfsw_ftp_transfer *transfer);
+
+/** True when a virtual path names the reserved firmware upload target. */
+bool kfsw_ftp_path_is_firmware(const char *path);
+#endif
 int kfsw_ftp_transfer_receive(struct kfsw_ftp_transfer *transfer);
 int kfsw_ftp_transfer_finish(struct kfsw_ftp_transfer *transfer, const char *target_path,
 			     const char *temporary_path, int result);
