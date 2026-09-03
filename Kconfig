@@ -188,4 +188,57 @@ endif # KFSW_COMMAND_CSP
 
 endif # KFSW_COMMAND
 
+config KFSW_FWU
+	bool "K-FSW firmware update"
+	depends on FLASH
+	depends on FLASH_MAP
+	select STREAM_FLASH
+	select CRC
+	help
+	  Receive a firmware image into the secondary image slot selected by the
+	  kfsw,fwu-partition devicetree chosen property, verify it against a
+	  CRC32, and offer it to the bootloader.
+
+	  The image is streamed into raw flash rather than staged as a file. An
+	  application image is larger than the filesystem partition on the first
+	  target, so staging it as a file is not possible there.
+
+config KFSW_FWU_MCUBOOT
+	bool "Offer completed images to MCUboot"
+	depends on KFSW_FWU
+	depends on BOOTLOADER_MCUBOOT
+	depends on IMG_MANAGER
+	default y
+	help
+	  Mark a completed image to be tried on the next boot, and confirm that
+	  the bootloader actually scheduled a swap.
+
+	  Turn this off to receive and verify images without asking for a
+	  reboot, which is what the unit tests do: they exercise the transfer
+	  and its rejections on a target that has no bootloader.
+
+config KFSW_FWU_SLOT_OFFSET_SECTORS
+	int "Sectors to skip at the start of the target slot"
+	depends on KFSW_FWU
+	default 1
+	range 0 8
+	help
+	  MCUboot's swap-using-offset mode requires an update to be written one
+	  sector into the secondary slot rather than at its start. Writing at
+	  the start is not rejected: the bootloader finds nothing to swap and
+	  carries on with the old image, which from the ground is
+	  indistinguishable from a successful update.
+
+	  Set to 0 only for a bootloader whose swap mode places the image at the
+	  slot start.
+
+config KFSW_FWU_STREAM_BUFFER_SIZE
+	int "Flash write buffer size in bytes"
+	depends on KFSW_FWU
+	default 512
+	range 64 4096
+	help
+	  Staging buffer between arriving chunks and the flash write block. Must
+	  be a multiple of the flash write block size.
+
 endmenu

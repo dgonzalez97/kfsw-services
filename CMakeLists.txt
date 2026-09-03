@@ -91,6 +91,10 @@ if(CONFIG_KFSW_EVENT)
     list(APPEND kfsw_services_sources src/event/event.c)
 endif()
 
+if(CONFIG_KFSW_FWU)
+    list(APPEND kfsw_services_sources src/fwu/fwu.c)
+endif()
+
 if(CONFIG_KFSW_COMMAND)
     list(APPEND kfsw_services_sources src/command/command.c)
     if(CONFIG_KFSW_COMMAND_CSP)
