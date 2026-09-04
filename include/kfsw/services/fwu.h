@@ -5,6 +5,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#if CONFIG_KFSW_PARAM
+#include <kfsw/services/parameter.h>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -180,6 +184,16 @@ int kfsw_fwu_get_status(struct kfsw_fwu_status *status);
 const char *kfsw_fwu_state_name(enum kfsw_fwu_state state);
 
 /** @} */
+
+#if CONFIG_KFSW_PARAM
+/** Parameter table owned by this service, in the service band. */
+#define KFSW_FWU_PARAM_TABLE_ID 30U
+/** Stable logical name paired with KFSW_FWU_PARAM_TABLE_ID. */
+#define KFSW_FWU_PARAM_TABLE_NAME "fwu"
+
+/** Firmware update state and lifetime counters. */
+extern const struct kfsw_param_definition_set kfsw_fwu_param_definitions;
+#endif
 
 #ifdef __cplusplus
 }

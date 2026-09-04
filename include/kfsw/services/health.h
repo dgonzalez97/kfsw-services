@@ -5,6 +5,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#if CONFIG_KFSW_PARAM
+#include <kfsw/services/parameter.h>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -192,7 +196,52 @@ int kfsw_health_get_component(uint8_t index, struct kfsw_health_component *compo
  */
 const char *kfsw_health_state_name(enum kfsw_health_state state);
 
+/** Milliseconds between deadline checks. */
+uint32_t kfsw_health_get_interval_ms(void);
+
+/**
+ * @brief Whether an interval is safe to use, without applying it.
+ *
+ * Exposed so an owner can refuse the value before it is stored. A change
+ * callback cannot refuse: by the time one runs the value is already written,
+ * and rolling back afterwards still reports success for something rejected.
+ *
+ * @param interval_ms Milliseconds between checks.
+ *
+ * @retval 0 Safe, or no watchdog is armed for it to outlast.
+ * @retval -EINVAL @p interval_ms is zero.
+ * @retval -ERANGE The interval is slower than the watchdog's feed interval.
+ */
+int kfsw_health_check_interval_ms(uint32_t interval_ms);
+
+/**
+ * @brief Change how often deadlines are checked.
+ *
+ * Refused when the interval is slower than the watchdog's feed interval,
+ * checked against the watchdog the system is actually running with rather
+ * than a compiled constant. The watchdog is fed only by a check that finds
+ * every component healthy, so a check slower than that resets a board where
+ * nothing is wrong.
+ *
+ * @param interval_ms Milliseconds between checks.
+ *
+ * @retval 0 Applied from the next cycle.
+ * @retval -EINVAL @p interval_ms is zero.
+ * @retval -ERANGE The interval would outlast the watchdog.
+ */
+int kfsw_health_set_interval_ms(uint32_t interval_ms);
+
 /** @} */
+
+#if CONFIG_KFSW_PARAM
+/** Parameter table owned by this service, in the service band. */
+#define KFSW_HEALTH_PARAM_TABLE_ID 31U
+/** Stable logical name paired with KFSW_HEALTH_PARAM_TABLE_ID. */
+#define KFSW_HEALTH_PARAM_TABLE_NAME "health"
+
+/** Health supervision state and the live check interval. */
+extern const struct kfsw_param_definition_set kfsw_health_param_definitions;
+#endif
 
 #ifdef __cplusplus
 }
