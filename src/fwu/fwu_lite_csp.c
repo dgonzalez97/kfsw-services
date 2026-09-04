@@ -31,7 +31,7 @@ static K_THREAD_STACK_DEFINE(server_stack, CONFIG_KFSW_FWU_LITE_STACK_SIZE);
 static struct k_thread server_thread;
 static bool server_running;
 
-static void serve_packet(csp_packet_t *packet, csp_socket_t *socket)
+static void serve_packet(csp_conn_t *connection, csp_packet_t *packet)
 {
 	struct kfsw_fwu_lite_message request;
 	struct kfsw_fwu_lite_message reply;
@@ -60,9 +60,9 @@ static void serve_packet(csp_packet_t *packet, csp_socket_t *socket)
 	}
 
 	response->length = (uint16_t)encoded;
-	csp_sendto_reply(packet, response, CONNECTION_OPTIONS);
 	csp_buffer_free(packet);
-	ARG_UNUSED(socket);
+	/* csp_send() takes ownership, including on transmit failure. */
+	csp_send(connection, response);
 }
 
 static void server_entry(void *first, void *second, void *third)
@@ -94,12 +94,17 @@ static void server_entry(void *first, void *second, void *third)
 		}
 
 		while (true) {
-			csp_packet_t *packet = csp_read(connection, 1000);
+			/* The same timeout the sender waits for a reply with. A
+			 * shorter one would drop a connection between blocks on a
+			 * slow link, where one block and its turnaround can take
+			 * longer than a second. */
+			csp_packet_t *packet =
+				csp_read(connection, CONFIG_KFSW_FWU_LITE_TIMEOUT_MS);
 
 			if (packet == NULL) {
 				break;
 			}
-			serve_packet(packet, &socket);
+			serve_packet(connection, packet);
 		}
 		csp_close(connection);
 	}
