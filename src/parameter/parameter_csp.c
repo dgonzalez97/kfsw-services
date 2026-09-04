@@ -16,6 +16,7 @@
 #include <param/param_server.h>
 
 #include <kfsw/comms/csp.h>
+#include <kfsw/services/log.h>
 #include <kfsw/services/parameter.h>
 
 #include "parameter_internal.h"
@@ -25,6 +26,15 @@
 
 #define KFSW_PARAM_PROTOCOL_VERSION 2
 #define KFSW_PARAM_LIST_VERSION 3
+
+/* The list has no acknowledgement of its own, so a lost descriptor leaves a
+ * hole the caller cannot see. Reliable delivery is what makes a listing over a
+ * radio mean anything.
+ */
+#define KFSW_PARAM_LIST_CONNECTION_OPTIONS                                                         \
+	(CSP_O_CRC32 | (IS_ENABLED(CONFIG_KFSW_PARAM_LIST_RDP) ? CSP_O_RDP : 0))
+#define KFSW_PARAM_LIST_SOCKET_OPTIONS                                                             \
+	(CSP_SO_CRC32REQ | (IS_ENABLED(CONFIG_KFSW_PARAM_LIST_RDP) ? CSP_SO_RDPREQ : 0))
 
 static param_t local_parameters[KFSW_PARAM_MAX_DEFINITIONS];
 static bool local_parameters_registered;
@@ -95,7 +105,11 @@ static int register_local_parameters(void)
 		descriptor->type = to_libparam_type(entry->info.type);
 		descriptor->name = (char *)entry->info.name;
 		descriptor->array_size = entry->info.array_size;
-		descriptor->array_step = scalar_size(entry->info.type);
+		/* libparam's own width for the type, not the scalar table's: a
+		 * string has no scalar width, and a step of zero makes the
+		 * serializer walk nowhere and send an empty value.
+		 */
+		descriptor->array_step = param_typesize(descriptor->type);
 		descriptor->mask = entry->info.flags;
 		descriptor->unit = (char *)entry->info.unit;
 		descriptor->callback = parameter_changed_from_csp;
@@ -200,6 +214,18 @@ static int validate_scalar(const param_t *param, const struct kfsw_param_value *
 	}
 
 	type = from_libparam_type((param_type_e)param->type);
+	if (type == KFSW_PARAM_STRING) {
+		if (value->type != type) {
+			return -EMSGSIZE;
+		}
+		/* size carries the terminator, so a value that exactly fills the
+		 * remote capacity is accepted and one byte more is not. */
+		if ((value->size == 0U) || (value->size > param->array_size)) {
+			return -EMSGSIZE;
+		}
+		return 0;
+	}
+
 	size = scalar_size(type);
 	if ((size == 0U) || (param->array_size != 1U)) {
 		return -ENOTSUP;
@@ -220,6 +246,27 @@ static int read_scalar(const param_t *param, struct kfsw_param_value *value)
 	}
 
 	type = from_libparam_type((param_type_e)param->type);
+
+	if (type == KFSW_PARAM_STRING) {
+		size_t length;
+
+		if ((param->array_size == 0U) || (param->array_size > sizeof(value->text))) {
+			return -ENOTSUP;
+		}
+		memset(value, 0, sizeof(*value));
+		value->type = type;
+		param_get_data(param, value->text, (int)param->array_size);
+		/* The remote store may not have terminated it, so the copy is
+		 * terminated here rather than trusted. */
+		value->text[param->array_size - 1U] = '\0';
+		length = 0U;
+		while (value->text[length] != '\0') {
+			length++;
+		}
+		value->size = length + 1U;
+		return 0;
+	}
+
 	size = scalar_size(type);
 	if ((size == 0U) || (param->array_size != 1U)) {
 		return -ENOTSUP;
@@ -236,6 +283,14 @@ static void fill_info(const param_t *param, struct kfsw_param_info *info)
 {
 	info->node = *param->node;
 	info->id = param->id;
+	/* The wire identifier carries the table in its high byte and the offset
+	 * in its low byte, so a remote parameter is addressable the same way a
+	 * local one is. The table's name is not on the wire, which is why the
+	 * listing shows the number for a remote node.
+	 */
+	info->table = (uint8_t)(param->id >> 8);
+	info->offset = (uint8_t)(param->id & 0xFFU);
+	info->table_name = NULL;
 	info->array_size = param->array_size;
 	info->type = from_libparam_type((param_type_e)param->type);
 	info->flags = param->mask;
@@ -318,6 +373,10 @@ static void param_server_callback(csp_packet_t *packet)
 
 	kfsw_param_table_lock();
 	if (push_allowed(packet)) {
+		/* libparam serves from the backing storage without going through
+		 * the read path, so anything sampled has to be refreshed first
+		 * or the answer is the value the storage happened to hold. */
+		kfsw_param_sample_all();
 		param_serve(packet);
 	} else {
 		csp_buffer_free(packet);
@@ -325,10 +384,19 @@ static void param_server_callback(csp_packet_t *packet)
 	kfsw_param_table_unlock();
 }
 
+/* How long to wait for a buffer before giving up on the rest of the table.
+ * Generous because listing a table is a deliberate operator action on a slow
+ * link: taking several seconds is fine, and returning half a table is not.
+ */
+#define KFSW_PARAM_LIST_PACE_MS 5
+#define KFSW_PARAM_LIST_MAX_WAITS 2000U
+
 static void serve_list(csp_conn_t *connection)
 {
 	param_list_iterator iterator = {0};
 	const param_t *param;
+	uint32_t waits = 0U;
+	uint32_t sent = 0U;
 
 	kfsw_param_table_lock();
 	while ((param = param_list_iterate(&iterator)) != NULL) {
@@ -340,10 +408,35 @@ static void serve_list(csp_conn_t *connection)
 			continue;
 		}
 
+		/* One descriptor per packet, so a table of any size becomes a
+		 * burst. The buffer pool is shared with everything else on the
+		 * node, so running it dry here would stall traffic that has
+		 * nothing to do with parameters. Waiting for a buffer rather
+		 * than abandoning the walk keeps the list complete: a listing
+		 * that stops half way is worse than one that takes longer,
+		 * because the caller cannot tell it was truncated.
+		 */
 		packet = csp_buffer_get(CSP_BUFFER_SIZE);
 		if (packet == NULL) {
-			break;
+			if (waits >= KFSW_PARAM_LIST_MAX_WAITS) {
+				/* Said out loud: a caller cannot tell a short
+				 * list from a complete one, so a truncation
+				 * that is never reported is a silent wrong
+				 * answer. */
+				kfsw_log_warning(
+					"PARAM: list truncated at %u of %u; no buffer for the rest",
+					(unsigned int)sent, (unsigned int)kfsw_param_entry_count());
+				break;
+			}
+			waits++;
+			kfsw_param_table_unlock();
+			k_sleep(K_MSEC(KFSW_PARAM_LIST_PACE_MS));
+			kfsw_param_table_lock();
+			/* The table cannot change while a node is up, so the
+			 * iterator stays valid across the pause. */
+			continue;
 		}
+		waits = 0U;
 		memset(packet->data, 0, CSP_BUFFER_SIZE);
 		wire = (param_transfer3_t *)packet->data;
 		wire->id = htobe16(param->id);
@@ -365,6 +458,17 @@ static void serve_list(csp_conn_t *connection)
 
 		packet->length = offsetof(param_transfer3_t, help) + help_length + 1U;
 		csp_send(connection, packet);
+		sent++;
+
+		/* Give the link and the reader a chance between descriptors.
+		 * Without this the whole table is queued faster than a client
+		 * can drain it, and a client with a small buffer pool starves:
+		 * every buffer sits on its receive queue while the interface
+		 * has none left to assemble the next frame.
+		 */
+		kfsw_param_table_unlock();
+		k_yield();
+		kfsw_param_table_lock();
 	}
 	kfsw_param_table_unlock();
 }
@@ -413,6 +517,7 @@ int kfsw_param_server_start(void)
 		return result;
 	}
 
+	list_socket.opts = KFSW_PARAM_LIST_SOCKET_OPTIONS;
 	result = csp_bind(&list_socket, CONFIG_KFSW_PARAM_LIST_PORT);
 	if (result != CSP_ERR_NONE) {
 		return -EADDRINUSE;
@@ -482,7 +587,8 @@ int kfsw_param_remote_refresh(uint16_t node)
 	}
 	kfsw_param_table_unlock();
 
-	connection = csp_connect(CSP_PRIO_HIGH, node, CONFIG_KFSW_PARAM_LIST_PORT, 0, CSP_O_CRC32);
+	connection = csp_connect(CSP_PRIO_HIGH, node, CONFIG_KFSW_PARAM_LIST_PORT,
+				 CONFIG_KFSW_PARAM_TIMEOUT_MS, KFSW_PARAM_LIST_CONNECTION_OPTIONS);
 	if (connection == NULL) {
 		k_mutex_unlock(&kfsw_param_remote_lock);
 		return -ECONNREFUSED;
@@ -689,7 +795,11 @@ int kfsw_param_remote_set(uint16_t node, const char *name, const struct kfsw_par
 	result = push_remote(param, node, value);
 	if (result == 0) {
 		kfsw_param_table_lock();
-		param_set(param, 0U, (void *)&value->scalar);
+		if (value->type == KFSW_PARAM_STRING) {
+			param_set_string(param, value->text, (int)value->size);
+		} else {
+			param_set(param, 0U, (void *)&value->scalar);
+		}
 		kfsw_param_table_unlock();
 	}
 	return result;
@@ -699,6 +809,9 @@ int kfsw_param_remote_visit(uint16_t node, kfsw_param_visitor_t visitor, void *c
 {
 	param_list_iterator iterator = {0};
 	const param_t *param;
+	struct kfsw_param_info info;
+	uint16_t previous_id = 0U;
+	bool emitted = false;
 	int result;
 
 	if (visitor == NULL) {
@@ -709,14 +822,36 @@ int kfsw_param_remote_visit(uint16_t node, kfsw_param_visitor_t visitor, void *c
 		return result;
 	}
 
+	/* Emitted in ascending identifier order, which is table then offset.
+	 * The cache iterates in registration order, so a listing taken straight
+	 * from it comes out backwards and does not read as a table. Selecting
+	 * the next smallest each pass keeps that ordering without a second copy
+	 * of the descriptors: the tables are bounded and this is an operator
+	 * command, so the extra passes cost nothing worth saving.
+	 */
 	kfsw_param_table_lock();
-	while ((param = param_list_iterate(&iterator)) != NULL) {
-		struct kfsw_param_info info;
+	for (;;) {
+		const param_t *next = NULL;
 
-		if (*param->node != node) {
-			continue;
+		iterator = (param_list_iterator){0};
+		while ((param = param_list_iterate(&iterator)) != NULL) {
+			if (*param->node != node) {
+				continue;
+			}
+			if (emitted && (param->id <= previous_id)) {
+				continue;
+			}
+			if ((next == NULL) || (param->id < next->id)) {
+				next = param;
+			}
 		}
-		fill_info(param, &info);
+		if (next == NULL) {
+			break;
+		}
+
+		previous_id = next->id;
+		emitted = true;
+		fill_info(next, &info);
 		if (!visitor(&info, context)) {
 			break;
 		}

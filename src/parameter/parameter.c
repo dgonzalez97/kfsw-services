@@ -65,6 +65,35 @@ static size_t scalar_size(enum kfsw_param_type type)
 	}
 }
 
+/* A scalar's width comes from its type; a string's comes from the capacity its
+ * owner declared, because that is the storage a write has to fit inside.
+ */
+static size_t entry_capacity(const struct kfsw_param_entry *entry)
+{
+	if (entry->info.type == KFSW_PARAM_STRING) {
+		return entry->info.array_size;
+	}
+	return scalar_size(entry->info.type);
+}
+
+/* Bounded copy that always terminates. The source is owner storage which a
+ * previous write kept terminated, but a corrupted snapshot or a bad pointer
+ * must not be able to run off the end of it.
+ */
+static size_t copy_text(char *destination, size_t destination_size, const char *source,
+			size_t source_size)
+{
+	size_t length = 0U;
+
+	while ((length < source_size) && (length + 1U < destination_size) &&
+	       (source[length] != '\0')) {
+		destination[length] = source[length];
+		length++;
+	}
+	destination[length] = '\0';
+	return length;
+}
+
 void kfsw_param_table_lock(void)
 {
 	k_mutex_lock(&kfsw_param_lock, K_FOREVER);
@@ -116,8 +145,8 @@ int kfsw_param_read_entry(const struct kfsw_param_entry *entry, struct kfsw_para
 	if ((entry == NULL) || (value == NULL)) {
 		return -EINVAL;
 	}
-	size = scalar_size(entry->info.type);
-	if ((size == 0U) || (entry->info.array_size != 1U)) {
+	size = entry_capacity(entry);
+	if (size == 0U) {
 		return -ENOTSUP;
 	}
 
@@ -132,6 +161,14 @@ int kfsw_param_read_entry(const struct kfsw_param_entry *entry, struct kfsw_para
 
 	memset(value, 0, sizeof(*value));
 	value->type = entry->info.type;
+
+	if (entry->info.type == KFSW_PARAM_STRING) {
+		value->size = copy_text(value->text, sizeof(value->text), entry->definition->value,
+					size) +
+			      1U;
+		return 0;
+	}
+
 	value->size = size;
 	memcpy(&value->scalar, entry->definition->value, size);
 	return 0;
@@ -140,15 +177,32 @@ int kfsw_param_read_entry(const struct kfsw_param_entry *entry, struct kfsw_para
 int kfsw_param_validate_entry(const struct kfsw_param_entry *entry,
 			      const struct kfsw_param_value *value)
 {
-	const size_t size = (entry == NULL) ? 0U : scalar_size(entry->info.type);
+	size_t size;
 
 	if ((entry == NULL) || (value == NULL)) {
 		return -EINVAL;
 	}
-	if ((size == 0U) || (entry->info.array_size != 1U)) {
+	size = entry_capacity(entry);
+	if (size == 0U) {
 		return -ENOTSUP;
 	}
-	if ((value->type != entry->info.type) || (value->size != size)) {
+	if (value->type != entry->info.type) {
+		return -EMSGSIZE;
+	}
+
+	if (entry->info.type == KFSW_PARAM_STRING) {
+		/* size carries the terminator, so a value that exactly fills the
+		 * declared capacity is accepted and one byte more is not. */
+		if ((value->size == 0U) || (value->size > size)) {
+			return -EMSGSIZE;
+		}
+		if (entry->definition->validate_text != NULL) {
+			return entry->definition->validate_text(value->text);
+		}
+		return 0;
+	}
+
+	if (value->size != size) {
 		return -EMSGSIZE;
 	}
 	if (entry->definition->validate != NULL) {
@@ -168,6 +222,29 @@ void kfsw_param_write_entry(const struct kfsw_param_entry *entry,
 	}
 }
 
+void kfsw_param_write_text_entry(const struct kfsw_param_entry *entry, const char *text)
+{
+	(void)copy_text(entry->definition->value, entry->info.array_size, text,
+			entry->info.array_size);
+	if (entry->definition->changed_text != NULL) {
+		entry->definition->changed_text(entry->definition->value);
+	}
+}
+
+/* Writing a default is the one place both kinds meet, so it is worth having
+ * once rather than repeated at every caller that resets a table.
+ */
+void kfsw_param_write_default(const struct kfsw_param_entry *entry)
+{
+	if (entry->info.type == KFSW_PARAM_STRING) {
+		kfsw_param_write_text_entry(entry, (entry->definition->default_text != NULL)
+							   ? entry->definition->default_text
+							   : "");
+		return;
+	}
+	kfsw_param_write_entry(entry, &entry->definition->default_value);
+}
+
 void kfsw_param_value_changed(uint16_t id)
 {
 	const struct kfsw_param_entry *entry = kfsw_param_find_id(id);
@@ -177,7 +254,15 @@ void kfsw_param_value_changed(uint16_t id)
 		return;
 	}
 	if (kfsw_param_validate_entry(entry, &value) != 0) {
-		kfsw_param_write_entry(entry, &entry->definition->default_value);
+		/* The write already reached owner storage, so the only way back
+		 * to a value the owner would accept is the compiled default. */
+		kfsw_param_write_default(entry);
+		return;
+	}
+	if (entry->info.type == KFSW_PARAM_STRING) {
+		if (entry->definition->changed_text != NULL) {
+			entry->definition->changed_text(value.text);
+		}
 		return;
 	}
 	if (entry->definition->changed != NULL) {
@@ -254,13 +339,31 @@ static int add_definition(const struct kfsw_param_definition_set *set,
 	struct kfsw_param_value default_value;
 	struct kfsw_param_table_info *table;
 	size_t insert_at = parameter_count;
-	const size_t size = (definition == NULL) ? 0U : scalar_size(definition->type);
+	size_t size;
 	uint16_t wire_id;
 	uint32_t flags;
 
 	if ((definition == NULL) || (definition->name == NULL) || (definition->name[0] == '\0') ||
-	    (definition->value == NULL) || (size == 0U)) {
+	    (definition->value == NULL)) {
 		return -EINVAL;
+	}
+
+	/* A string declares the storage it owns; a scalar's width comes from
+	 * its type. A string without a capacity, or one larger than a value can
+	 * carry, is refused here rather than overrunning owner storage later.
+	 */
+	if (definition->type == KFSW_PARAM_STRING) {
+		if ((definition->capacity < 2U) || (definition->capacity > KFSW_PARAM_STRING_MAX)) {
+			kfsw_log_error("PARAM: %s declares a capacity of %u", definition->name,
+				       definition->capacity);
+			return -EINVAL;
+		}
+		size = definition->capacity;
+	} else {
+		size = scalar_size(definition->type);
+		if (size == 0U) {
+			return -EINVAL;
+		}
 	}
 	if (!name_is_within_limit(definition->name)) {
 		kfsw_log_error("PARAM: name '%s' is longer than %u characters", definition->name,
@@ -279,12 +382,33 @@ static int add_definition(const struct kfsw_param_definition_set *set,
 	}
 	wire_id = KFSW_PARAM_WIRE_ID(set->table, definition->offset);
 
-	default_value.type = definition->type;
-	default_value.size = size;
-	default_value.scalar = definition->default_value;
-	if ((definition->validate != NULL) && (definition->validate(&default_value.scalar) != 0)) {
-		kfsw_log_error("PARAM: %s refuses its own default", definition->name);
-		return -ERANGE;
+	/* A definition that refuses its own default would leave the table in a
+	 * state its owner never sanctioned, so it is caught at registration.
+	 */
+	if (definition->type == KFSW_PARAM_STRING) {
+		const char *text =
+			(definition->default_text != NULL) ? definition->default_text : "";
+
+		if (copy_text(default_value.text, sizeof(default_value.text), text,
+			      sizeof(default_value.text) - 1U) >= definition->capacity) {
+			kfsw_log_error("PARAM: the default for %s does not fit its capacity",
+				       definition->name);
+			return -ERANGE;
+		}
+		if ((definition->validate_text != NULL) &&
+		    (definition->validate_text(default_value.text) != 0)) {
+			kfsw_log_error("PARAM: %s refuses its own default", definition->name);
+			return -ERANGE;
+		}
+	} else {
+		default_value.type = definition->type;
+		default_value.size = size;
+		default_value.scalar = definition->default_value;
+		if ((definition->validate != NULL) &&
+		    (definition->validate(&default_value.scalar) != 0)) {
+			kfsw_log_error("PARAM: %s refuses its own default", definition->name);
+			return -ERANGE;
+		}
 	}
 
 	/* Offsets are unique inside a table and names across the whole node:
@@ -327,7 +451,9 @@ static int add_definition(const struct kfsw_param_definition_set *set,
 				.id = wire_id,
 				.table = set->table,
 				.offset = definition->offset,
-				.array_size = 1U,
+				.array_size = (definition->type == KFSW_PARAM_STRING)
+						      ? definition->capacity
+						      : 1U,
 				.type = definition->type,
 				.flags = flags,
 				.table_name = set->name,
@@ -392,7 +518,7 @@ int kfsw_param_init(const struct kfsw_param_definition_set *const *sets, size_t 
 		for (size_t index = 0U; index < parameter_count; index++) {
 			const struct kfsw_param_entry *entry = &parameter_table[index];
 
-			kfsw_param_write_entry(entry, &entry->definition->default_value);
+			kfsw_param_write_default(entry);
 		}
 		initialized = true;
 		kfsw_log_info("PARAM: %u parameters in %u tables", (unsigned int)parameter_count,
@@ -450,7 +576,11 @@ int kfsw_param_set(const char *name, const struct kfsw_param_value *value)
 	} else {
 		result = kfsw_param_validate_entry(entry, value);
 		if (result == 0) {
-			kfsw_param_write_entry(entry, &value->scalar);
+			if (entry->info.type == KFSW_PARAM_STRING) {
+				kfsw_param_write_text_entry(entry, value->text);
+			} else {
+				kfsw_param_write_entry(entry, &value->scalar);
+			}
 		}
 	}
 	kfsw_param_table_unlock();
@@ -479,7 +609,7 @@ int kfsw_param_restore_defaults(void)
 		const struct kfsw_param_entry *entry = &parameter_table[index];
 
 		if ((entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) != 0U) {
-			kfsw_param_write_entry(entry, &entry->definition->default_value);
+			kfsw_param_write_default(entry);
 		}
 	}
 	kfsw_param_table_unlock();
@@ -504,6 +634,24 @@ int kfsw_param_visit(kfsw_param_visitor_t visitor, void *context)
 	}
 	kfsw_param_table_unlock();
 	return 0;
+}
+
+void kfsw_param_sample_all(void)
+{
+	/* The CSP server hands libparam the backing storage directly, so it
+	 * never goes through the read path that refreshes a sampled value. A
+	 * remote read would otherwise report whatever was last written locally,
+	 * which for a value nothing writes is its compiled default forever: an
+	 * uptime that is always zero, an identity that is always empty. Caller
+	 * holds the table lock.
+	 */
+	for (size_t index = 0U; index < parameter_count; index++) {
+		const struct kfsw_param_entry *entry = &parameter_table[index];
+
+		if (entry->definition->sample != NULL) {
+			entry->definition->sample(entry->definition->value);
+		}
+	}
 }
 
 int kfsw_param_get_info(const char *name, struct kfsw_param_info *info)

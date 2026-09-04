@@ -42,10 +42,21 @@ union kfsw_param_scalar {
 	double f64;
 };
 
+/**
+ * Longest string parameter, including the terminator.
+ *
+ * Bounded rather than allocated: a value travels on the caller's stack, and a
+ * parameter service that allocated would have to fail at the worst moment.
+ */
+#define KFSW_PARAM_STRING_MAX CONFIG_KFSW_PARAM_STRING_MAX
+
 struct kfsw_param_value {
 	enum kfsw_param_type type;
+	/** Bytes carried: the scalar width, or the string length with its terminator. */
 	size_t size;
 	union kfsw_param_scalar scalar;
+	/** Value for KFSW_PARAM_STRING; always terminated, unused otherwise. */
+	char text[KFSW_PARAM_STRING_MAX];
 };
 
 /**
@@ -140,8 +151,18 @@ struct kfsw_param_table_info {
 
 /** Validate a proposed scalar value; return zero to accept it. */
 typedef int (*kfsw_param_validator_t)(const union kfsw_param_scalar *value);
+/**
+ * Validate a proposed string value; return zero to accept it.
+ *
+ * Separate from the scalar validator because a string cannot be passed through
+ * the scalar union, and an owner that could not refuse a malformed string --
+ * a route table, say -- would store one that the next boot cannot parse.
+ */
+typedef int (*kfsw_param_text_validator_t)(const char *text);
 /** Apply owner behavior after the backing scalar changes. */
 typedef void (*kfsw_param_changed_t)(const union kfsw_param_scalar *value);
+/** Apply owner behavior after the backing string changes. */
+typedef void (*kfsw_param_text_changed_t)(const char *text);
 /**
  * Refresh backing storage from live state immediately before it is read.
  *
@@ -164,14 +185,23 @@ struct kfsw_param_definition {
 	/** Byte offset within the owning table; unique inside that table. */
 	uint8_t offset;
 	enum kfsw_param_type type;
+	/**
+	 * Storage capacity in bytes for a KFSW_PARAM_STRING, terminator
+	 * included. Left zero for a scalar, whose width comes from its type.
+	 */
+	uint16_t capacity;
 	uint32_t flags;
 	const char *name;
 	const char *unit;
 	const char *description;
 	void *value;
 	union kfsw_param_scalar default_value;
+	/** Compiled default for a KFSW_PARAM_STRING; NULL means empty. */
+	const char *default_text;
 	kfsw_param_validator_t validate;
 	kfsw_param_changed_t changed;
+	kfsw_param_text_validator_t validate_text;
+	kfsw_param_text_changed_t changed_text;
 	kfsw_param_sample_t sample;
 };
 
