@@ -228,6 +228,18 @@ int kfsw_command_invoke_remote(uint16_t node, const char *name, const struct kfs
 		return -EINVAL;
 	}
 	kfsw_csp_get_info(&csp_info);
+
+	/* A command addressed to this node is run here rather than sent into
+	 * the network and back. It is the same command against the same
+	 * registry, so the answer is identical, and not involving the link
+	 * means it still works when every link is down.
+	 *
+	 * The file transfer service already does this for its own local node.
+	 */
+	if (node == csp_info.address) {
+		return kfsw_command_invoke(name, args, arg_count, result);
+	}
+
 	if (!csp_info.initialized || !csp_info.router_running) {
 		return -EACCES;
 	}
