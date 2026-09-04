@@ -93,6 +93,12 @@ endif()
 
 if(CONFIG_KFSW_FWU)
     list(APPEND kfsw_services_sources src/fwu/fwu.c)
+    if(CONFIG_KFSW_FWU_LITE)
+        list(APPEND kfsw_services_sources src/fwu/fwu_lite_protocol.c)
+        if(CONFIG_KFSW_FWU_LITE_CSP)
+            list(APPEND kfsw_services_sources src/fwu/fwu_lite_csp.c)
+        endif()
+    endif()
 endif()
 
 if(CONFIG_KFSW_COMMAND)
@@ -122,7 +128,8 @@ target_link_libraries(kfsw_services
         kernel
 )
 
-if(CONFIG_KFSW_PARAM_CSP OR CONFIG_KFSW_FTP OR CONFIG_KFSW_COMMAND_CSP)
+if(CONFIG_KFSW_PARAM_CSP OR CONFIG_KFSW_FTP OR CONFIG_KFSW_COMMAND_CSP
+   OR CONFIG_KFSW_FWU_LITE_CSP)
     target_link_libraries(kfsw_services
         PRIVATE
             kfsw::comms
