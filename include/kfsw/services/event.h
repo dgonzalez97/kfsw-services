@@ -5,6 +5,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#if CONFIG_KFSW_PARAM
+#include <kfsw/services/parameter.h>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -109,6 +113,16 @@ const char *kfsw_event_severity_name(enum kfsw_event_severity severity);
 
 /** Short name for a source, for shell output. */
 const char *kfsw_event_source_name(enum kfsw_event_source source);
+
+#if CONFIG_KFSW_PARAM
+/** Parameter table owned by this service, in the service band. */
+#define KFSW_EVENT_PARAM_TABLE_ID 27U
+/** Stable logical name paired with KFSW_EVENT_PARAM_TABLE_ID. */
+#define KFSW_EVENT_PARAM_TABLE_NAME "event"
+
+/** Event record counters. */
+extern const struct kfsw_param_definition_set kfsw_event_param_definitions;
+#endif
 
 #ifdef __cplusplus
 }

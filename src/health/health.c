@@ -26,6 +26,11 @@ struct health_entry {
 	bool warned;
 };
 
+/* Live rather than compiled in, because the right check interval depends on
+ * what the watchdog was armed with, and that is a runtime fact.
+ */
+static uint32_t health_interval_ms = CONFIG_KFSW_HEALTH_INTERVAL_MS;
+
 static K_MUTEX_DEFINE(health_lock);
 static struct health_entry health_entries[KFSW_HEALTH_MAX_COMPONENTS];
 static struct kfsw_health_status health_state = {
@@ -236,7 +241,8 @@ static void health_work_handler(struct k_work *work)
 	ARG_UNUSED(work);
 
 	(void)kfsw_health_evaluate();
-	(void)k_work_reschedule(&health_work, K_MSEC(CONFIG_KFSW_HEALTH_INTERVAL_MS));
+	/* Read every cycle so a change takes effect on the next one. */
+	(void)k_work_reschedule(&health_work, K_MSEC(health_interval_ms));
 }
 
 int kfsw_health_start(void)
@@ -273,10 +279,10 @@ int kfsw_health_start(void)
 	health_state.state = KFSW_HEALTH_OK;
 	k_mutex_unlock(&health_lock);
 
-	(void)k_work_reschedule(&health_work, K_MSEC(CONFIG_KFSW_HEALTH_INTERVAL_MS));
+	(void)k_work_reschedule(&health_work, K_MSEC(health_interval_ms));
 
-	kfsw_log_info("Health supervising %u component(s) every %d ms", health_state.count,
-		      CONFIG_KFSW_HEALTH_INTERVAL_MS);
+	kfsw_log_info("Health supervising %u component(s) every %u ms", health_state.count,
+		      health_interval_ms);
 	kfsw_log_debug("Health took the watchdog over from the platform keep-alive");
 	return 0;
 }
@@ -321,6 +327,66 @@ int kfsw_health_get_component(uint8_t index, struct kfsw_health_component *compo
 	component->overdue = component->since_report_ms > component->deadline_ms;
 
 	k_mutex_unlock(&health_lock);
+	return 0;
+}
+
+uint32_t kfsw_health_get_interval_ms(void)
+{
+	return health_interval_ms;
+}
+
+int kfsw_health_check_interval_ms(uint32_t interval_ms)
+{
+	struct kfsw_platform_watchdog_info watchdog;
+	uint32_t feed_interval;
+
+	if (interval_ms == 0U) {
+		return -EINVAL;
+	}
+
+	/* Checked against the watchdog the system is actually running with,
+	 * not a compiled constant. The watchdog is fed only by a check that
+	 * finds every component healthy, so a check slower than the feed
+	 * interval resets a board where nothing is wrong. This is the one value
+	 * here that can do that by being set to a number that looks perfectly
+	 * reasonable.
+	 *
+	 * Separate from applying it because a change callback cannot refuse:
+	 * by the time one runs the value is already stored, and rolling back
+	 * afterwards still reports success for a value that was rejected.
+	 */
+	if (kfsw_platform_watchdog_get_info(&watchdog) != 0) {
+		return 0;
+	}
+	if (watchdog.timeout_ms == 0U) {
+		/* No watchdog is armed, so there is nothing for a slow check to
+		 * outlast. Refusing here would refuse on every target that has
+		 * no watchdog hardware, which is most of the test matrix. */
+		return 0;
+	}
+
+	feed_interval = kfsw_platform_watchdog_feed_interval_ms(watchdog.timeout_ms);
+	if (interval_ms > feed_interval) {
+		kfsw_log_warning("Health: a %u ms check is slower than the %u ms feed interval",
+				 interval_ms, feed_interval);
+		return -ERANGE;
+	}
+	return 0;
+}
+
+int kfsw_health_set_interval_ms(uint32_t interval_ms)
+{
+	int result = kfsw_health_check_interval_ms(interval_ms);
+
+	if (result != 0) {
+		return result;
+	}
+
+	k_mutex_lock(&health_lock, K_FOREVER);
+	health_interval_ms = interval_ms;
+	k_mutex_unlock(&health_lock);
+
+	kfsw_log_info("Health: checking every %u ms", interval_ms);
 	return 0;
 }
 
