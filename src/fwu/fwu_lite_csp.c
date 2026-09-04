@@ -10,9 +10,14 @@
 #include <zephyr/sys/crc.h>
 #include <zephyr/sys/util.h>
 
+#include <kfsw/platform/storage.h>
 #include <kfsw/services/fwu.h>
 #include <kfsw/services/fwu_lite.h>
 #include <kfsw/services/log.h>
+
+#if CONFIG_KFSW_FWU_LITE_HOST_FILES
+#include <nsi_host_trampolines.h>
+#endif
 
 /* The only unit here that speaks CSP. Everything above it works on decoded
  * messages, which is why the protocol can be tested without a link at all.
@@ -160,23 +165,89 @@ static int exchange(csp_conn_t *connection, const struct kfsw_fwu_lite_message *
 	return result;
 }
 
+/*
+ * An image can come from the node's own filesystem or, where the node is a
+ * process on a host, straight from the host. A ground station has the image on
+ * the machine it runs on; requiring it to be copied into a simulated flash
+ * partition first adds a step and a size limit for no benefit.
+ *
+ * The rule is positional and not a guess: a path under the node's mount point
+ * is a node file, anything else is a host path. Nothing on a real board can
+ * take the host branch, because it is not compiled there.
+ */
+struct image_source {
+	bool host;
+#if CONFIG_KFSW_FWU_LITE_HOST_FILES
+	int host_fd;
+#endif
+	struct fs_file_t file;
+};
+
+static bool path_is_host(const char *path)
+{
+#if CONFIG_KFSW_FWU_LITE_HOST_FILES
+	return strncmp(path, KFSW_STORAGE_MOUNT_POINT "/", sizeof(KFSW_STORAGE_MOUNT_POINT)) != 0;
+#else
+	ARG_UNUSED(path);
+	return false;
+#endif
+}
+
+static int source_open(struct image_source *source, const char *path)
+{
+	source->host = path_is_host(path);
+
+#if CONFIG_KFSW_FWU_LITE_HOST_FILES
+	if (source->host) {
+		/* O_RDONLY is zero on every host this runs on. */
+		source->host_fd = nsi_host_open(path, 0);
+		return (source->host_fd < 0) ? -ENOENT : 0;
+	}
+#endif
+
+	fs_file_t_init(&source->file);
+	return fs_open(&source->file, path, FS_O_READ);
+}
+
+static ssize_t source_read(struct image_source *source, void *buffer, size_t size)
+{
+#if CONFIG_KFSW_FWU_LITE_HOST_FILES
+	if (source->host) {
+		long bytes = nsi_host_read(source->host_fd, buffer, size);
+
+		return (bytes < 0) ? -EIO : (ssize_t)bytes;
+	}
+#endif
+	return fs_read(&source->file, buffer, size);
+}
+
+static void source_close(struct image_source *source)
+{
+#if CONFIG_KFSW_FWU_LITE_HOST_FILES
+	if (source->host) {
+		(void)nsi_host_close(source->host_fd);
+		return;
+	}
+#endif
+	(void)fs_close(&source->file);
+}
+
 /* Whole-file checksum, computed by reading the file rather than holding it. */
 static int file_size_and_crc(const char *path, uint32_t *size, uint32_t *crc)
 {
 	uint8_t chunk[KFSW_FWU_LITE_MAX_BLOCK_SIZE];
-	struct fs_file_t file;
+	struct image_source source;
 	uint32_t total = 0U;
 	uint32_t running = 0U;
 	int result;
 
-	fs_file_t_init(&file);
-	result = fs_open(&file, path, FS_O_READ);
+	result = source_open(&source, path);
 	if (result != 0) {
 		return result;
 	}
 
 	while (true) {
-		ssize_t bytes = fs_read(&file, chunk, sizeof(chunk));
+		ssize_t bytes = source_read(&source, chunk, sizeof(chunk));
 
 		if (bytes < 0) {
 			result = (int)bytes;
@@ -189,7 +260,7 @@ static int file_size_and_crc(const char *path, uint32_t *size, uint32_t *crc)
 		total += (uint32_t)bytes;
 	}
 
-	(void)fs_close(&file);
+	source_close(&source);
 	if (result != 0) {
 		return result;
 	}
@@ -205,7 +276,7 @@ int kfsw_fwu_lite_send_file(uint16_t node, const char *path, uint32_t *blocks_re
 	struct kfsw_fwu_lite_message reply;
 	uint8_t reply_wire[WIRE_BUFFER_SIZE];
 	uint8_t block[KFSW_FWU_LITE_MAX_BLOCK_SIZE];
-	struct fs_file_t file;
+	struct image_source source;
 	csp_conn_t *connection;
 	uint32_t resent = 0U;
 	uint32_t size = 0U;
@@ -242,13 +313,14 @@ int kfsw_fwu_lite_send_file(uint16_t node, const char *path, uint32_t *blocks_re
 		result = -EIO;
 	}
 
-	fs_file_t_init(&file);
+	/* Opened a second time rather than rewound: the host interface offers no
+	 * seek, and reopening is the same cost at this size. */
 	if (result == 0) {
-		result = fs_open(&file, path, FS_O_READ);
+		result = source_open(&source, path);
 	}
 
 	while ((result == 0) && (sent < size)) {
-		ssize_t bytes = fs_read(&file, block, sizeof(block));
+		ssize_t bytes = source_read(&source, block, sizeof(block));
 		uint32_t attempt = 0U;
 
 		if (bytes <= 0) {
@@ -265,6 +337,27 @@ int kfsw_fwu_lite_send_file(uint16_t node, const char *path, uint32_t *blocks_re
 			request.data_size = (uint16_t)bytes;
 
 			result = exchange(connection, &request, &reply, reply_wire);
+
+			/* Silence is the ordinary way a block is lost. The
+			 * transport carries its own checksum, so a damaged
+			 * packet is discarded before it is ever delivered: what
+			 * the sender sees is not a bad block but no answer at
+			 * all. Treating that as fatal would end a transfer on
+			 * the first disturbance, which is the situation this
+			 * path exists to survive.
+			 */
+			if (result == -ETIMEDOUT) {
+				attempt++;
+				resent++;
+				if (attempt > CONFIG_KFSW_FWU_LITE_BLOCK_RETRIES) {
+					kfsw_log_error("Firmware upload block %u: no answer after "
+						       "%u tries",
+						       index, attempt);
+					break;
+				}
+				result = 0;
+				continue;
+			}
 			if (result != 0) {
 				break;
 			}
@@ -272,8 +365,19 @@ int kfsw_fwu_lite_send_file(uint16_t node, const char *path, uint32_t *blocks_re
 				break;
 			}
 
-			/* Only a damaged or missed block is worth repeating.
-			 * Anything else is a disagreement that resending will
+			/* A block can be written and its reply still be lost. The
+			 * resend then arrives for a block the node has moved past,
+			 * and the node says which one it wants instead. If that is
+			 * the block after this one, the write did happen and only
+			 * the acknowledgement went missing, so the sender moves on
+			 * rather than resending forever.
+			 */
+			if ((reply.status == KFSW_FWU_LITE_STATUS_OUT_OF_ORDER) &&
+			    (reply.block_index == (uint16_t)(index + 1U))) {
+				break;
+			}
+
+			/* Anything else is a disagreement that resending will
 			 * not resolve.
 			 */
 			if ((reply.status != KFSW_FWU_LITE_STATUS_BAD_BLOCK) &&
@@ -299,7 +403,7 @@ int kfsw_fwu_lite_send_file(uint16_t node, const char *path, uint32_t *blocks_re
 			index++;
 		}
 	}
-	(void)fs_close(&file);
+	source_close(&source);
 
 	if (result == 0) {
 		request.opcode = KFSW_FWU_LITE_OP_VERIFY;

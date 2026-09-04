@@ -106,12 +106,31 @@ int kfsw_ftp_transfer_open_sink(struct kfsw_ftp_transfer *transfer, const char *
 }
 
 #if CONFIG_KFSW_FWU
-bool kfsw_ftp_path_is_firmware(const char *path)
+bool kfsw_ftp_path_is_firmware(const uint8_t *path, uint16_t path_size)
 {
-	if (path == NULL) {
+	static const char reserved[] = CONFIG_KFSW_FTP_FIRMWARE_PATH;
+	const size_t reserved_size = sizeof(reserved) - 1U;
+
+	/* The path on the wire carries its own length and is not terminated, so
+	 * it is compared by length rather than as a string. Treating it as one
+	 * reads whatever follows it in the packet.
+	 */
+	if ((path == NULL) || (path_size == 0U)) {
 		return false;
 	}
-	return strcmp(path, CONFIG_KFSW_FTP_FIRMWARE_PATH) == 0;
+
+	/* A leading separator is how the same path is often written, and the
+	 * transfer root makes both mean the same file. */
+	if (path[0] == (uint8_t)'/') {
+		path++;
+		path_size--;
+	}
+
+	if (path_size != reserved_size) {
+		return false;
+	}
+
+	return memcmp(path, reserved, reserved_size) == 0;
 }
 
 int kfsw_ftp_transfer_open_firmware_sink(struct kfsw_ftp_transfer *transfer)

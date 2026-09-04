@@ -138,8 +138,12 @@ int kfsw_ftp_transfer_open_sink(struct kfsw_ftp_transfer *transfer, const char *
  */
 int kfsw_ftp_transfer_open_firmware_sink(struct kfsw_ftp_transfer *transfer);
 
-/** True when a virtual path names the reserved firmware upload target. */
-bool kfsw_ftp_path_is_firmware(const char *path);
+/**
+ * True when a wire path names the reserved firmware upload target.
+ *
+ * Takes the length because the path on the wire is not terminated.
+ */
+bool kfsw_ftp_path_is_firmware(const uint8_t *path, uint16_t path_size);
 #endif
 int kfsw_ftp_transfer_receive(struct kfsw_ftp_transfer *transfer);
 int kfsw_ftp_transfer_finish(struct kfsw_ftp_transfer *transfer, const char *target_path,
