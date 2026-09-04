@@ -157,6 +157,8 @@ int kfsw_fwu_begin(uint32_t total_size, uint32_t expected_crc32)
 
 	maximum = kfsw_fwu_max_image_size();
 	if (total_size > maximum) {
+		kfsw_log_error("Firmware update: %u bytes exceeds the %u the slot holds",
+			       total_size, maximum);
 		return -EFBIG;
 	}
 
@@ -169,6 +171,9 @@ int kfsw_fwu_begin(uint32_t total_size, uint32_t expected_crc32)
 
 	result = fwu_erase_slot();
 	if (result != 0) {
+		/* A refusal that says nothing leaves an operator with a failed
+		 * upload and no way to tell a full slot from a broken one. */
+		kfsw_log_error("Firmware update: could not erase the slot (%d)", result);
 		fwu_state.state = KFSW_FWU_FAILED;
 		fwu_state.failed++;
 		k_mutex_unlock(&fwu_lock);
@@ -179,16 +184,29 @@ int kfsw_fwu_begin(uint32_t total_size, uint32_t expected_crc32)
 
 	result = flash_area_open(KFSW_FWU_PARTITION_ID, &fwu_area);
 	if (result != 0) {
+		kfsw_log_error("Firmware update: could not open the slot (%d)", result);
 		fwu_state.state = KFSW_FWU_FAILED;
 		fwu_state.failed++;
 		k_mutex_unlock(&fwu_lock);
 		return result;
 	}
 
+	/* The region handed to the streaming writer is the space it may use, not
+	 * the length of this image. It must be a whole number of write blocks,
+	 * and an image is whatever length the linker produced: passing the image
+	 * length rejects every image whose byte count is not a multiple of the
+	 * write block, for a reason that has nothing to do with the image.
+	 *
+	 * How much of the region this image occupies is tracked here, and a
+	 * write past its declared size is refused, so the bound does not depend
+	 * on the region being tight.
+	 */
 	result = stream_flash_init(&fwu_stream, flash_area_get_device(fwu_area), fwu_stream_buffer,
 				   sizeof(fwu_stream_buffer), fwu_area->fa_off + write_offset,
-				   total_size, NULL);
+				   maximum, NULL);
 	if (result != 0) {
+		kfsw_log_error("Firmware update: could not prepare the slot for writing (%d)",
+			       result);
 		fwu_close_stream();
 		fwu_state.state = KFSW_FWU_FAILED;
 		fwu_state.failed++;
