@@ -21,6 +21,9 @@ struct health_entry {
 	uint64_t last_report_ms;
 	uint32_t reports;
 	bool used;
+	/* True once this component has been warned about, so the warning is
+	 * issued on crossing rather than on every check. */
+	bool warned;
 };
 
 static K_MUTEX_DEFINE(health_lock);
@@ -70,6 +73,7 @@ int kfsw_health_register(const char *name, uint32_t deadline_ms, uint8_t *handle
 		entry->last_report_ms = kfsw_time_monotonic_ms();
 		entry->reports = 0U;
 		entry->used = true;
+		entry->warned = false;
 
 		health_state.count++;
 		*handle = index;
@@ -109,6 +113,7 @@ int kfsw_health_unregister(uint8_t handle)
 	health_state.count--;
 
 	k_mutex_unlock(&health_lock);
+	kfsw_log_info("Health stopped watching handle %u", handle);
 	return 0;
 }
 
@@ -138,6 +143,7 @@ int kfsw_health_evaluate(void)
 {
 	struct health_entry *overdue = NULL;
 	uint64_t now;
+	uint32_t elapsed;
 	bool was_ok;
 
 	k_mutex_lock(&health_lock, K_FOREVER);
@@ -156,13 +162,30 @@ int kfsw_health_evaluate(void)
 		if (!entry->used) {
 			continue;
 		}
-		if ((now - entry->last_report_ms) > entry->deadline_ms) {
+		elapsed = (uint32_t)(now - entry->last_report_ms);
+		if (elapsed > entry->deadline_ms) {
 			overdue = entry;
 			break;
+		}
+
+		/* A component well into its deadline is not yet a fault, but it
+		 * is the only warning anyone gets before one. Said once per
+		 * crossing rather than on every check, so a component that sits
+		 * near its limit does not fill the log.
+		 */
+		if ((elapsed > ((entry->deadline_ms * 3U) / 4U)) && !entry->warned) {
+			entry->warned = true;
+			kfsw_log_warning("Health: %s is %u ms into a %u ms deadline", entry->name,
+					 elapsed, entry->deadline_ms);
+		} else if (elapsed <= (entry->deadline_ms / 2U)) {
+			entry->warned = false;
 		}
 	}
 
 	if (overdue == NULL) {
+		if (!was_ok) {
+			kfsw_log_info("Health: every component is reporting again");
+		}
 		health_state.state = KFSW_HEALTH_OK;
 		health_state.faulted_by[0] = '\0';
 		k_mutex_unlock(&health_lock);
@@ -254,6 +277,7 @@ int kfsw_health_start(void)
 
 	kfsw_log_info("Health supervising %u component(s) every %d ms", health_state.count,
 		      CONFIG_KFSW_HEALTH_INTERVAL_MS);
+	kfsw_log_debug("Health took the watchdog over from the platform keep-alive");
 	return 0;
 }
 

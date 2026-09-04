@@ -351,6 +351,9 @@ int kfsw_fwu_lite_send_file(uint16_t node, const char *path, uint32_t *blocks_re
 			if (result == -ETIMEDOUT) {
 				attempt++;
 				resent++;
+				kfsw_log_warning("Firmware upload block %u: no answer, sending it "
+						 "again (%u)",
+						 index, attempt);
 				if (attempt > CONFIG_KFSW_FWU_LITE_BLOCK_RETRIES) {
 					kfsw_log_error("Firmware upload block %u: no answer after "
 						       "%u tries",
@@ -392,6 +395,8 @@ int kfsw_fwu_lite_send_file(uint16_t node, const char *path, uint32_t *blocks_re
 
 			attempt++;
 			resent++;
+			kfsw_log_warning("Firmware upload block %u: %s, sending it again (%u)",
+					 index, kfsw_fwu_lite_status_name(reply.status), attempt);
 			if (attempt > CONFIG_KFSW_FWU_LITE_BLOCK_RETRIES) {
 				kfsw_log_error("Firmware upload block %u failed after %u tries",
 					       index, attempt);
