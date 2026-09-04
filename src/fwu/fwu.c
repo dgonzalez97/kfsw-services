@@ -215,6 +215,8 @@ int kfsw_fwu_begin(uint32_t total_size, uint32_t expected_crc32)
 	}
 
 	fwu_stream_open = true;
+	kfsw_log_debug("Firmware update slot ready: offset %u, %u bytes usable", write_offset,
+		       maximum);
 	fwu_state.total_size = total_size;
 	fwu_state.expected_crc32 = expected_crc32;
 	fwu_state.received = 0U;
