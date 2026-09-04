@@ -212,7 +212,7 @@ static int serve_put(struct kfsw_ftp_link *link, const struct kfsw_ftp_message *
 	 * needs no protocol change and works with the existing client on both
 	 * ends.
 	 */
-	if ((result == 0) && kfsw_ftp_path_is_firmware(request->path)) {
+	if ((result == 0) && kfsw_ftp_path_is_firmware(request->path, request->path_size)) {
 		result = kfsw_ftp_transfer_open_firmware_sink(&transfer);
 		if (result != 0) {
 			return send_status(link, KFSW_FTP_OP_PUT_RESULT, request->request_id,
