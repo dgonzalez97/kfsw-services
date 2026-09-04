@@ -232,6 +232,41 @@ config KFSW_FWU_SLOT_OFFSET_SECTORS
 	  Set to 0 only for a bootloader whose swap mode places the image at the
 	  slot start.
 
+config KFSW_HEALTH
+	bool "K-FSW health monitoring"
+	depends on KFSW_WATCHDOG
+	help
+	  Decide whether the system is still working, and stop feeding the
+	  watchdog when it is not.
+
+	  The platform feeds the watchdog on a timer, which keeps a board alive
+	  but proves only that a timer is running. This takes the feeding over
+	  and makes it conditional on registered components saying they are
+	  still running.
+
+	  That is what closes the recovery chain: a component that stops
+	  reporting stops the feed, the watchdog resets the part, and the
+	  bootloader replaces an image that was still on trial.
+
+config KFSW_HEALTH_MAX_COMPONENTS
+	int "Components that can be watched"
+	depends on KFSW_HEALTH
+	default 8
+	range 1 32
+	help
+	  Fixed table, sized at build time. Registration is explicit, so this is
+	  the number of components a composition actually watches.
+
+config KFSW_HEALTH_INTERVAL_MS
+	int "How often deadlines are checked, in milliseconds"
+	depends on KFSW_HEALTH
+	default 1000
+	range 50 60000
+	help
+	  Must be well below the watchdog feed interval, since the watchdog is
+	  fed only by a check that finds everything healthy. A check slower than
+	  the feed interval resets the board even when nothing is wrong.
+
 config KFSW_FWU_LITE
 	bool "K-FSW lightweight firmware upload"
 	depends on KFSW_FWU
@@ -245,6 +280,41 @@ config KFSW_FWU_LITE
 	  Blocks carry their own checksum and are checked before anything is
 	  written. A whole-image checksum tells you an eight minute upload
 	  failed; a per-block one tells you which block to send again.
+
+config KFSW_HEALTH
+	bool "K-FSW health monitoring"
+	depends on KFSW_WATCHDOG
+	help
+	  Decide whether the system is still working, and stop feeding the
+	  watchdog when it is not.
+
+	  The platform feeds the watchdog on a timer, which keeps a board alive
+	  but proves only that a timer is running. This takes the feeding over
+	  and makes it conditional on registered components saying they are
+	  still running.
+
+	  That is what closes the recovery chain: a component that stops
+	  reporting stops the feed, the watchdog resets the part, and the
+	  bootloader replaces an image that was still on trial.
+
+config KFSW_HEALTH_MAX_COMPONENTS
+	int "Components that can be watched"
+	depends on KFSW_HEALTH
+	default 8
+	range 1 32
+	help
+	  Fixed table, sized at build time. Registration is explicit, so this is
+	  the number of components a composition actually watches.
+
+config KFSW_HEALTH_INTERVAL_MS
+	int "How often deadlines are checked, in milliseconds"
+	depends on KFSW_HEALTH
+	default 1000
+	range 50 60000
+	help
+	  Must be well below the watchdog feed interval, since the watchdog is
+	  fed only by a check that finds everything healthy. A check slower than
+	  the feed interval resets the board even when nothing is wrong.
 
 config KFSW_FWU_LITE_BLOCK_SIZE
 	int "Image block size in bytes"
@@ -261,6 +331,41 @@ config KFSW_FWU_LITE_BLOCK_SIZE
 	  short block in the middle would desynchronise the two without either
 	  noticing.
 
+config KFSW_HEALTH
+	bool "K-FSW health monitoring"
+	depends on KFSW_WATCHDOG
+	help
+	  Decide whether the system is still working, and stop feeding the
+	  watchdog when it is not.
+
+	  The platform feeds the watchdog on a timer, which keeps a board alive
+	  but proves only that a timer is running. This takes the feeding over
+	  and makes it conditional on registered components saying they are
+	  still running.
+
+	  That is what closes the recovery chain: a component that stops
+	  reporting stops the feed, the watchdog resets the part, and the
+	  bootloader replaces an image that was still on trial.
+
+config KFSW_HEALTH_MAX_COMPONENTS
+	int "Components that can be watched"
+	depends on KFSW_HEALTH
+	default 8
+	range 1 32
+	help
+	  Fixed table, sized at build time. Registration is explicit, so this is
+	  the number of components a composition actually watches.
+
+config KFSW_HEALTH_INTERVAL_MS
+	int "How often deadlines are checked, in milliseconds"
+	depends on KFSW_HEALTH
+	default 1000
+	range 50 60000
+	help
+	  Must be well below the watchdog feed interval, since the watchdog is
+	  fed only by a check that finds everything healthy. A check slower than
+	  the feed interval resets the board even when nothing is wrong.
+
 config KFSW_FWU_LITE_CSP
 	bool "Serve lightweight firmware upload over CSP"
 	depends on KFSW_FWU_LITE
@@ -271,6 +376,41 @@ config KFSW_FWU_LITE_CSP
 	  Turn this off to build the protocol without a transport, which is what
 	  the unit tests do.
 
+config KFSW_HEALTH
+	bool "K-FSW health monitoring"
+	depends on KFSW_WATCHDOG
+	help
+	  Decide whether the system is still working, and stop feeding the
+	  watchdog when it is not.
+
+	  The platform feeds the watchdog on a timer, which keeps a board alive
+	  but proves only that a timer is running. This takes the feeding over
+	  and makes it conditional on registered components saying they are
+	  still running.
+
+	  That is what closes the recovery chain: a component that stops
+	  reporting stops the feed, the watchdog resets the part, and the
+	  bootloader replaces an image that was still on trial.
+
+config KFSW_HEALTH_MAX_COMPONENTS
+	int "Components that can be watched"
+	depends on KFSW_HEALTH
+	default 8
+	range 1 32
+	help
+	  Fixed table, sized at build time. Registration is explicit, so this is
+	  the number of components a composition actually watches.
+
+config KFSW_HEALTH_INTERVAL_MS
+	int "How often deadlines are checked, in milliseconds"
+	depends on KFSW_HEALTH
+	default 1000
+	range 50 60000
+	help
+	  Must be well below the watchdog feed interval, since the watchdog is
+	  fed only by a check that finds everything healthy. A check slower than
+	  the feed interval resets the board even when nothing is wrong.
+
 config KFSW_FWU_LITE_CSP_PORT
 	int "CSP port for firmware upload"
 	depends on KFSW_FWU_LITE_CSP
@@ -279,6 +419,41 @@ config KFSW_FWU_LITE_CSP_PORT
 	help
 	  Ports in use: 9 file transfer, 10 parameter transactions, 11 commands,
 	  12 parameter list.
+
+config KFSW_HEALTH
+	bool "K-FSW health monitoring"
+	depends on KFSW_WATCHDOG
+	help
+	  Decide whether the system is still working, and stop feeding the
+	  watchdog when it is not.
+
+	  The platform feeds the watchdog on a timer, which keeps a board alive
+	  but proves only that a timer is running. This takes the feeding over
+	  and makes it conditional on registered components saying they are
+	  still running.
+
+	  That is what closes the recovery chain: a component that stops
+	  reporting stops the feed, the watchdog resets the part, and the
+	  bootloader replaces an image that was still on trial.
+
+config KFSW_HEALTH_MAX_COMPONENTS
+	int "Components that can be watched"
+	depends on KFSW_HEALTH
+	default 8
+	range 1 32
+	help
+	  Fixed table, sized at build time. Registration is explicit, so this is
+	  the number of components a composition actually watches.
+
+config KFSW_HEALTH_INTERVAL_MS
+	int "How often deadlines are checked, in milliseconds"
+	depends on KFSW_HEALTH
+	default 1000
+	range 50 60000
+	help
+	  Must be well below the watchdog feed interval, since the watchdog is
+	  fed only by a check that finds everything healthy. A check slower than
+	  the feed interval resets the board even when nothing is wrong.
 
 config KFSW_FWU_LITE_RDP
 	bool "Use reliable delivery for firmware upload"
@@ -290,11 +465,81 @@ config KFSW_FWU_LITE_RDP
 	  connection state and timeouts that can stall a transfer on a marginal
 	  link instead of reporting the block that needs resending.
 
+config KFSW_HEALTH
+	bool "K-FSW health monitoring"
+	depends on KFSW_WATCHDOG
+	help
+	  Decide whether the system is still working, and stop feeding the
+	  watchdog when it is not.
+
+	  The platform feeds the watchdog on a timer, which keeps a board alive
+	  but proves only that a timer is running. This takes the feeding over
+	  and makes it conditional on registered components saying they are
+	  still running.
+
+	  That is what closes the recovery chain: a component that stops
+	  reporting stops the feed, the watchdog resets the part, and the
+	  bootloader replaces an image that was still on trial.
+
+config KFSW_HEALTH_MAX_COMPONENTS
+	int "Components that can be watched"
+	depends on KFSW_HEALTH
+	default 8
+	range 1 32
+	help
+	  Fixed table, sized at build time. Registration is explicit, so this is
+	  the number of components a composition actually watches.
+
+config KFSW_HEALTH_INTERVAL_MS
+	int "How often deadlines are checked, in milliseconds"
+	depends on KFSW_HEALTH
+	default 1000
+	range 50 60000
+	help
+	  Must be well below the watchdog feed interval, since the watchdog is
+	  fed only by a check that finds everything healthy. A check slower than
+	  the feed interval resets the board even when nothing is wrong.
+
 config KFSW_FWU_LITE_TIMEOUT_MS
 	int "Reply timeout in milliseconds"
 	depends on KFSW_FWU_LITE_CSP
 	default 8000
 	range 100 60000
+
+config KFSW_HEALTH
+	bool "K-FSW health monitoring"
+	depends on KFSW_WATCHDOG
+	help
+	  Decide whether the system is still working, and stop feeding the
+	  watchdog when it is not.
+
+	  The platform feeds the watchdog on a timer, which keeps a board alive
+	  but proves only that a timer is running. This takes the feeding over
+	  and makes it conditional on registered components saying they are
+	  still running.
+
+	  That is what closes the recovery chain: a component that stops
+	  reporting stops the feed, the watchdog resets the part, and the
+	  bootloader replaces an image that was still on trial.
+
+config KFSW_HEALTH_MAX_COMPONENTS
+	int "Components that can be watched"
+	depends on KFSW_HEALTH
+	default 8
+	range 1 32
+	help
+	  Fixed table, sized at build time. Registration is explicit, so this is
+	  the number of components a composition actually watches.
+
+config KFSW_HEALTH_INTERVAL_MS
+	int "How often deadlines are checked, in milliseconds"
+	depends on KFSW_HEALTH
+	default 1000
+	range 50 60000
+	help
+	  Must be well below the watchdog feed interval, since the watchdog is
+	  fed only by a check that finds everything healthy. A check slower than
+	  the feed interval resets the board even when nothing is wrong.
 
 config KFSW_FWU_LITE_HOST_FILES
 	bool "Read images straight from the host filesystem"
@@ -312,16 +557,121 @@ config KFSW_FWU_LITE_HOST_FILES
 	  is a host path. The distinction is positional rather than guessed, and
 	  no board can take the host branch because it is not compiled there.
 
+config KFSW_HEALTH
+	bool "K-FSW health monitoring"
+	depends on KFSW_WATCHDOG
+	help
+	  Decide whether the system is still working, and stop feeding the
+	  watchdog when it is not.
+
+	  The platform feeds the watchdog on a timer, which keeps a board alive
+	  but proves only that a timer is running. This takes the feeding over
+	  and makes it conditional on registered components saying they are
+	  still running.
+
+	  That is what closes the recovery chain: a component that stops
+	  reporting stops the feed, the watchdog resets the part, and the
+	  bootloader replaces an image that was still on trial.
+
+config KFSW_HEALTH_MAX_COMPONENTS
+	int "Components that can be watched"
+	depends on KFSW_HEALTH
+	default 8
+	range 1 32
+	help
+	  Fixed table, sized at build time. Registration is explicit, so this is
+	  the number of components a composition actually watches.
+
+config KFSW_HEALTH_INTERVAL_MS
+	int "How often deadlines are checked, in milliseconds"
+	depends on KFSW_HEALTH
+	default 1000
+	range 50 60000
+	help
+	  Must be well below the watchdog feed interval, since the watchdog is
+	  fed only by a check that finds everything healthy. A check slower than
+	  the feed interval resets the board even when nothing is wrong.
+
 config KFSW_FWU_LITE_STACK_SIZE
 	int "Upload server stack size in bytes"
 	depends on KFSW_FWU_LITE_CSP
 	default 2048
 	range 1024 8192
 
+config KFSW_HEALTH
+	bool "K-FSW health monitoring"
+	depends on KFSW_WATCHDOG
+	help
+	  Decide whether the system is still working, and stop feeding the
+	  watchdog when it is not.
+
+	  The platform feeds the watchdog on a timer, which keeps a board alive
+	  but proves only that a timer is running. This takes the feeding over
+	  and makes it conditional on registered components saying they are
+	  still running.
+
+	  That is what closes the recovery chain: a component that stops
+	  reporting stops the feed, the watchdog resets the part, and the
+	  bootloader replaces an image that was still on trial.
+
+config KFSW_HEALTH_MAX_COMPONENTS
+	int "Components that can be watched"
+	depends on KFSW_HEALTH
+	default 8
+	range 1 32
+	help
+	  Fixed table, sized at build time. Registration is explicit, so this is
+	  the number of components a composition actually watches.
+
+config KFSW_HEALTH_INTERVAL_MS
+	int "How often deadlines are checked, in milliseconds"
+	depends on KFSW_HEALTH
+	default 1000
+	range 50 60000
+	help
+	  Must be well below the watchdog feed interval, since the watchdog is
+	  fed only by a check that finds everything healthy. A check slower than
+	  the feed interval resets the board even when nothing is wrong.
+
 config KFSW_FWU_LITE_PRIORITY
 	int "Upload server thread priority"
 	depends on KFSW_FWU_LITE_CSP
 	default 3
+
+config KFSW_HEALTH
+	bool "K-FSW health monitoring"
+	depends on KFSW_WATCHDOG
+	help
+	  Decide whether the system is still working, and stop feeding the
+	  watchdog when it is not.
+
+	  The platform feeds the watchdog on a timer, which keeps a board alive
+	  but proves only that a timer is running. This takes the feeding over
+	  and makes it conditional on registered components saying they are
+	  still running.
+
+	  That is what closes the recovery chain: a component that stops
+	  reporting stops the feed, the watchdog resets the part, and the
+	  bootloader replaces an image that was still on trial.
+
+config KFSW_HEALTH_MAX_COMPONENTS
+	int "Components that can be watched"
+	depends on KFSW_HEALTH
+	default 8
+	range 1 32
+	help
+	  Fixed table, sized at build time. Registration is explicit, so this is
+	  the number of components a composition actually watches.
+
+config KFSW_HEALTH_INTERVAL_MS
+	int "How often deadlines are checked, in milliseconds"
+	depends on KFSW_HEALTH
+	default 1000
+	range 50 60000
+	help
+	  Must be well below the watchdog feed interval, since the watchdog is
+	  fed only by a check that finds everything healthy. A check slower than
+	  the feed interval resets the board even when nothing is wrong.
 
 config KFSW_FWU_LITE_BLOCK_RETRIES
 	int "Times to repeat a block the node did not accept"
