@@ -296,6 +296,22 @@ config KFSW_FWU_LITE_TIMEOUT_MS
 	default 8000
 	range 100 60000
 
+config KFSW_FWU_LITE_HOST_FILES
+	bool "Read images straight from the host filesystem"
+	depends on KFSW_FWU_LITE_CSP
+	depends on ARCH_POSIX
+	default y
+	help
+	  Where a node runs as a process on a host, let it send an image from a
+	  host path rather than requiring the image to be copied into its
+	  simulated flash first. A ground station already has the image on the
+	  machine it runs on, and a firmware image is larger than the storage
+	  partition it would otherwise have to be staged in.
+
+	  A path under the node's own mount point is a node file; anything else
+	  is a host path. The distinction is positional rather than guessed, and
+	  no board can take the host branch because it is not compiled there.
+
 config KFSW_FWU_LITE_STACK_SIZE
 	int "Upload server stack size in bytes"
 	depends on KFSW_FWU_LITE_CSP
