@@ -23,16 +23,26 @@
 #define KFSW_PARAM_PERSIST_HEADER_SIZE 20U
 #define KFSW_PARAM_PERSIST_CRC_OFFSET 16U
 #define KFSW_PARAM_PERSIST_ENTRY_HEADER_SIZE 4U
-#define KFSW_PARAM_PERSIST_MAX_NAME_SIZE 31U
-#define KFSW_PARAM_PERSIST_MAX_VALUE_SIZE 8U
-#define KFSW_PARAM_PERSIST_MAX_ENTRY_COUNT 16U
-#define KFSW_PARAM_PERSIST_MAX_SNAPSHOT_SIZE 256U
+#define KFSW_PARAM_PERSIST_MAX_NAME_SIZE KFSW_PARAM_NAME_MAX
+#define KFSW_PARAM_PERSIST_MAX_VALUE_SIZE KFSW_PARAM_STRING_MAX
+#define KFSW_PARAM_PERSIST_MAX_ENTRY_COUNT 32U
+#define KFSW_PARAM_PERSIST_MAX_SNAPSHOT_SIZE 2048U
 
 enum persist_type {
 	PERSIST_TYPE_U8 = 1,
 	PERSIST_TYPE_U32 = 2,
 	PERSIST_TYPE_I32 = 3,
 	PERSIST_TYPE_FLOAT = 4,
+	/* Added after the first snapshots were written. A reader that does not
+	 * know a type code refuses the entry rather than guessing at its width,
+	 * so an older reader meeting one fails safe instead of misdecoding the
+	 * rest of the snapshot.
+	 */
+	PERSIST_TYPE_U16 = 5,
+	PERSIST_TYPE_I16 = 6,
+	/* Stored with its terminator, so value_size carries the whole thing and
+	 * a shorter string does not have to be padded. */
+	PERSIST_TYPE_STRING = 7,
 };
 
 _Static_assert(sizeof(float) == sizeof(uint32_t),
@@ -68,6 +78,14 @@ static int persistent_type(const struct kfsw_param_entry *entry, uint8_t *type,
 		*type = PERSIST_TYPE_U8;
 		*value_size = sizeof(uint8_t);
 		return 0;
+	case KFSW_PARAM_U16:
+		*type = PERSIST_TYPE_U16;
+		*value_size = sizeof(uint16_t);
+		return 0;
+	case KFSW_PARAM_I16:
+		*type = PERSIST_TYPE_I16;
+		*value_size = sizeof(int16_t);
+		return 0;
 	case KFSW_PARAM_U32:
 		*type = PERSIST_TYPE_U32;
 		*value_size = sizeof(uint32_t);
@@ -80,12 +98,23 @@ static int persistent_type(const struct kfsw_param_entry *entry, uint8_t *type,
 		*type = PERSIST_TYPE_FLOAT;
 		*value_size = sizeof(float);
 		return 0;
+	case KFSW_PARAM_STRING:
+		*type = PERSIST_TYPE_STRING;
+		/* The stored length is the current value's, not the capacity: a
+		 * snapshot should not grow with storage a parameter is not
+		 * using. Filled in by the encoder, which has read the value. */
+		*value_size = 0U;
+		return 0;
 	default:
 		return -ENOTSUP;
 	}
 }
 
-static int encode_value(const struct kfsw_param_entry *entry, uint8_t *output, size_t output_size)
+/* Reports how many bytes it wrote, because a string's length is its own and is
+ * only known once the value has been read.
+ */
+static int encode_value(const struct kfsw_param_entry *entry, uint8_t *output, size_t output_size,
+			uint16_t *written)
 {
 	struct kfsw_param_value value = {0};
 	uint16_t value_size;
@@ -97,17 +126,26 @@ static int encode_value(const struct kfsw_param_entry *entry, uint8_t *output, s
 	if (result != 0) {
 		return result;
 	}
-	if (output_size < value_size) {
-		return -ENOSPC;
-	}
 
 	result = kfsw_param_read_entry(entry, &value);
 	if (result != 0) {
 		return result;
 	}
+	if (type == PERSIST_TYPE_STRING) {
+		value_size = (uint16_t)value.size;
+	}
+	if (output_size < value_size) {
+		return -ENOSPC;
+	}
 	switch (type) {
 	case PERSIST_TYPE_U8:
 		output[0] = value.scalar.u8;
+		break;
+	case PERSIST_TYPE_U16:
+		sys_put_be16(value.scalar.u16, output);
+		break;
+	case PERSIST_TYPE_I16:
+		sys_put_be16((uint16_t)value.scalar.i16, output);
 		break;
 	case PERSIST_TYPE_U32:
 		sys_put_be32(value.scalar.u32, output);
@@ -119,10 +157,14 @@ static int encode_value(const struct kfsw_param_entry *entry, uint8_t *output, s
 		memcpy(&raw_value, &value.scalar.f32, sizeof(raw_value));
 		sys_put_be32(raw_value, output);
 		break;
+	case PERSIST_TYPE_STRING:
+		memcpy(output, value.text, value_size);
+		break;
 	default:
 		return -ENOTSUP;
 	}
 
+	*written = value_size;
 	return 0;
 }
 
@@ -137,6 +179,7 @@ static int build_snapshot(size_t *snapshot_size)
 	for (size_t index = 0U; index < kfsw_param_entry_count(); index++) {
 		const struct kfsw_param_entry *entry = kfsw_param_entry_at(index);
 		size_t name_size;
+		size_t header_offset;
 		uint16_t value_size;
 		uint8_t type;
 
@@ -156,6 +199,12 @@ static int build_snapshot(size_t *snapshot_size)
 		if (result != 0) {
 			break;
 		}
+		/* Checked against the capacity rather than the current length,
+		 * because a later save of a longer string must not be the one
+		 * that discovers there was never room for it. */
+		if (entry->info.type == KFSW_PARAM_STRING) {
+			value_size = entry->info.array_size;
+		}
 		if ((entry_count >= KFSW_PARAM_PERSIST_MAX_ENTRY_COUNT) ||
 		    (offset + KFSW_PARAM_PERSIST_ENTRY_HEADER_SIZE + name_size + value_size >
 		     sizeof(snapshot))) {
@@ -165,14 +214,18 @@ static int build_snapshot(size_t *snapshot_size)
 
 		snapshot[offset] = (uint8_t)name_size;
 		snapshot[offset + 1U] = type;
-		sys_put_be16(value_size, &snapshot[offset + 2U]);
+		header_offset = offset;
 		offset += KFSW_PARAM_PERSIST_ENTRY_HEADER_SIZE;
 		memcpy(&snapshot[offset], entry->info.name, name_size);
 		offset += name_size;
-		result = encode_value(entry, &snapshot[offset], sizeof(snapshot) - offset);
+		result = encode_value(entry, &snapshot[offset], sizeof(snapshot) - offset,
+				      &value_size);
 		if (result != 0) {
 			break;
 		}
+		/* Written once the value is encoded: only then is a string's
+		 * length known. */
+		sys_put_be16(value_size, &snapshot[header_offset + 2U]);
 		offset += value_size;
 		entry_count++;
 	}
@@ -324,6 +377,12 @@ static int decode_and_set(const struct kfsw_param_entry *param_entry,
 	case PERSIST_TYPE_U8:
 		value.scalar.u8 = persist_entry->value[0];
 		break;
+	case PERSIST_TYPE_U16:
+		value.scalar.u16 = sys_get_be16(persist_entry->value);
+		break;
+	case PERSIST_TYPE_I16:
+		value.scalar.i16 = (int16_t)sys_get_be16(persist_entry->value);
+		break;
 	case PERSIST_TYPE_U32:
 		value.scalar.u32 = sys_get_be32(persist_entry->value);
 		break;
@@ -334,12 +393,27 @@ static int decode_and_set(const struct kfsw_param_entry *param_entry,
 		raw_value = sys_get_be32(persist_entry->value);
 		memcpy(&value.scalar.f32, &raw_value, sizeof(value.scalar.f32));
 		break;
+	case PERSIST_TYPE_STRING:
+		/* A stored string that lost its terminator is a corrupt entry,
+		 * not one to repair by guessing where it ended. */
+		if ((persist_entry->value_size == 0U) ||
+		    (persist_entry->value_size > sizeof(value.text)) ||
+		    (persist_entry->value[persist_entry->value_size - 1U] != '\0')) {
+			return -EBADMSG;
+		}
+		memcpy(value.text, persist_entry->value, persist_entry->value_size);
+		value.size = persist_entry->value_size;
+		break;
 	default:
 		return -ENOTSUP;
 	}
 	result = kfsw_param_validate_entry(param_entry, &value);
 	if (result == 0) {
-		kfsw_param_write_entry(param_entry, &value.scalar);
+		if (value.type == KFSW_PARAM_STRING) {
+			kfsw_param_write_text_entry(param_entry, value.text);
+		} else {
+			kfsw_param_write_entry(param_entry, &value.scalar);
+		}
 	}
 	return result;
 }

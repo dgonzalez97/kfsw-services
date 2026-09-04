@@ -25,6 +25,11 @@ int kfsw_log_set_level(uint8_t level);
 uint8_t kfsw_log_get_level(void);
 
 #if CONFIG_KFSW_PARAM
+/** Parameter table owned by the log service, in the service band. */
+#define KFSW_LOG_PARAM_TABLE_ID 25U
+/** Stable logical name paired with KFSW_LOG_PARAM_TABLE_ID. */
+#define KFSW_LOG_PARAM_TABLE_NAME "log"
+
 /** Logging-owned runtime policy parameter definitions. */
 extern const struct kfsw_param_definition_set kfsw_log_param_definitions;
 #endif

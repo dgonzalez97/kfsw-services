@@ -33,7 +33,7 @@ static void apply_log_level(const union kfsw_param_scalar *value)
 
 static const struct kfsw_param_definition log_param_definitions[] = {
 	{
-		.id = 1U,
+		.offset = 0x00U,
 		.type = KFSW_PARAM_U8,
 		.flags = KFSW_PARAM_FLAG_CONFIGURATION | KFSW_PARAM_FLAG_PERSISTENT,
 		.name = "log_level",
@@ -46,6 +46,8 @@ static const struct kfsw_param_definition log_param_definitions[] = {
 };
 
 const struct kfsw_param_definition_set kfsw_log_param_definitions = {
+	.table = KFSW_LOG_PARAM_TABLE_ID,
+	.name = KFSW_LOG_PARAM_TABLE_NAME,
 	.definitions = log_param_definitions,
 	.count = ARRAY_SIZE(log_param_definitions),
 };

@@ -17,6 +17,33 @@ config KFSW_PARAM
 
 if KFSW_PARAM
 
+config KFSW_PARAM_MAX_DEFINITIONS
+	int "Parameters the local table can hold"
+	default 64
+	range 1 512
+	help
+	  Total parameters across every registered table. Registration is
+	  refused once the table is full rather than overrunning it, so this
+	  must cover every composed component.
+
+config KFSW_PARAM_STRING_MAX
+	int "Longest string parameter, including the terminator"
+	default 104
+	range 8 256
+	help
+	  Bounds every string parameter and the value buffer callers pass on the
+	  stack. The largest value in use is the libcsp route table, which the
+	  pinned parser caps at 99 characters.
+
+config KFSW_PARAM_MAX_TABLES
+	int "Parameter tables the node can register"
+	default 16
+	range 1 100
+	help
+	  Distinct tables across every composed component. A table is owned by
+	  exactly one component, so this is the number of components that
+	  publish parameters.
+
 config KFSW_PARAM_PERSISTENCE
 	bool "Explicit LittleFS parameter snapshots"
 	depends on KFSW_STORAGE
@@ -54,15 +81,40 @@ config KFSW_PARAM_LIST_PORT
 
 config KFSW_PARAM_REMOTE_POOL_SIZE
 	int "Preallocated remote parameter descriptors"
-	range 5 64
-	default 16
+	range 5 512
+	default KFSW_PARAM_MAX_DEFINITIONS
 	help
 	  Number of remote parameter descriptions cached without dynamic memory.
+
+	  This must be at least as large as the biggest table set a node will be
+	  asked to list, which is why it follows the local bound by default: a
+	  pool smaller than the remote node's table makes the download fail part
+	  way through with -ENOSPC, and the descriptors that did arrive are of no
+	  use because the ones after them are missing.
 
 config KFSW_PARAM_TIMEOUT_MS
 	int "Remote parameter timeout in milliseconds"
 	range 10 60000
 	default 1000
+
+config KFSW_PARAM_LIST_RDP
+	bool "Use reliable delivery for the parameter list"
+	depends on KFSW_PARAM_CSP
+	default y
+	help
+	  The list is one packet per parameter with no acknowledgement of its
+	  own, so a single lost descriptor leaves a hole the caller cannot see:
+	  a short list looks exactly like a small table. Over a radio that
+	  happens on nearly every transfer. Reliable delivery retransmits the
+	  losses instead, at the cost of a connection handshake.
+
+	  Unlike the firmware upload, this has no per-item checksum and repeat
+	  of its own to fall back on, which is why it is on by default here and
+	  off there.
+
+	  Requires the CSP_USE_RDP CMake option, which the K-FSW compositions
+	  set. RDP is a build option of the vendored libcsp rather than a
+	  Kconfig symbol, so it cannot be expressed as a dependency here.
 
 config KFSW_PARAM_LIST_STACK_SIZE
 	int "Parameter-list server thread stack size"
