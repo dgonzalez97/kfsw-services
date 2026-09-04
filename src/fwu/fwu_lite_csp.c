@@ -277,6 +277,7 @@ int kfsw_fwu_lite_send_file(uint16_t node, const char *path, uint32_t *blocks_re
 	uint8_t reply_wire[WIRE_BUFFER_SIZE];
 	uint8_t block[KFSW_FWU_LITE_MAX_BLOCK_SIZE];
 	struct image_source source;
+	bool source_opened = false;
 	csp_conn_t *connection;
 	uint32_t resent = 0U;
 	uint32_t size = 0U;
@@ -317,6 +318,7 @@ int kfsw_fwu_lite_send_file(uint16_t node, const char *path, uint32_t *blocks_re
 	 * seek, and reopening is the same cost at this size. */
 	if (result == 0) {
 		result = source_open(&source, path);
+		source_opened = (result == 0);
 	}
 
 	while ((result == 0) && (sent < size)) {
@@ -403,7 +405,13 @@ int kfsw_fwu_lite_send_file(uint16_t node, const char *path, uint32_t *blocks_re
 			index++;
 		}
 	}
-	source_close(&source);
+	/* Closing what was never opened reads a structure that was never filled
+	 * in, and this is the path taken whenever the node refuses the transfer
+	 * before a single block is sent.
+	 */
+	if (source_opened) {
+		source_close(&source);
+	}
 
 	if (result == 0) {
 		request.opcode = KFSW_FWU_LITE_OP_VERIFY;
