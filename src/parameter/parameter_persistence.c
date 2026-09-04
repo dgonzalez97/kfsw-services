@@ -23,16 +23,23 @@
 #define KFSW_PARAM_PERSIST_HEADER_SIZE 20U
 #define KFSW_PARAM_PERSIST_CRC_OFFSET 16U
 #define KFSW_PARAM_PERSIST_ENTRY_HEADER_SIZE 4U
-#define KFSW_PARAM_PERSIST_MAX_NAME_SIZE 31U
+#define KFSW_PARAM_PERSIST_MAX_NAME_SIZE KFSW_PARAM_NAME_MAX
 #define KFSW_PARAM_PERSIST_MAX_VALUE_SIZE 8U
-#define KFSW_PARAM_PERSIST_MAX_ENTRY_COUNT 16U
-#define KFSW_PARAM_PERSIST_MAX_SNAPSHOT_SIZE 256U
+#define KFSW_PARAM_PERSIST_MAX_ENTRY_COUNT 32U
+#define KFSW_PARAM_PERSIST_MAX_SNAPSHOT_SIZE 512U
 
 enum persist_type {
 	PERSIST_TYPE_U8 = 1,
 	PERSIST_TYPE_U32 = 2,
 	PERSIST_TYPE_I32 = 3,
 	PERSIST_TYPE_FLOAT = 4,
+	/* Added after the first snapshots were written. A reader that does not
+	 * know a type code refuses the entry rather than guessing at its width,
+	 * so an older reader meeting one fails safe instead of misdecoding the
+	 * rest of the snapshot.
+	 */
+	PERSIST_TYPE_U16 = 5,
+	PERSIST_TYPE_I16 = 6,
 };
 
 _Static_assert(sizeof(float) == sizeof(uint32_t),
@@ -67,6 +74,14 @@ static int persistent_type(const struct kfsw_param_entry *entry, uint8_t *type,
 	case KFSW_PARAM_U8:
 		*type = PERSIST_TYPE_U8;
 		*value_size = sizeof(uint8_t);
+		return 0;
+	case KFSW_PARAM_U16:
+		*type = PERSIST_TYPE_U16;
+		*value_size = sizeof(uint16_t);
+		return 0;
+	case KFSW_PARAM_I16:
+		*type = PERSIST_TYPE_I16;
+		*value_size = sizeof(int16_t);
 		return 0;
 	case KFSW_PARAM_U32:
 		*type = PERSIST_TYPE_U32;
@@ -108,6 +123,12 @@ static int encode_value(const struct kfsw_param_entry *entry, uint8_t *output, s
 	switch (type) {
 	case PERSIST_TYPE_U8:
 		output[0] = value.scalar.u8;
+		break;
+	case PERSIST_TYPE_U16:
+		sys_put_be16(value.scalar.u16, output);
+		break;
+	case PERSIST_TYPE_I16:
+		sys_put_be16((uint16_t)value.scalar.i16, output);
 		break;
 	case PERSIST_TYPE_U32:
 		sys_put_be32(value.scalar.u32, output);
@@ -323,6 +344,12 @@ static int decode_and_set(const struct kfsw_param_entry *param_entry,
 	switch (persist_entry->type) {
 	case PERSIST_TYPE_U8:
 		value.scalar.u8 = persist_entry->value[0];
+		break;
+	case PERSIST_TYPE_U16:
+		value.scalar.u16 = sys_get_be16(persist_entry->value);
+		break;
+	case PERSIST_TYPE_I16:
+		value.scalar.i16 = (int16_t)sys_get_be16(persist_entry->value);
 		break;
 	case PERSIST_TYPE_U32:
 		value.scalar.u32 = sys_get_be32(persist_entry->value);

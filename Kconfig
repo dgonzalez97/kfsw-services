@@ -17,6 +17,24 @@ config KFSW_PARAM
 
 if KFSW_PARAM
 
+config KFSW_PARAM_MAX_DEFINITIONS
+	int "Parameters the local table can hold"
+	default 64
+	range 1 512
+	help
+	  Total parameters across every registered table. Registration is
+	  refused once the table is full rather than overrunning it, so this
+	  must cover every composed component.
+
+config KFSW_PARAM_MAX_TABLES
+	int "Parameter tables the node can register"
+	default 16
+	range 1 100
+	help
+	  Distinct tables across every composed component. A table is owned by
+	  exactly one component, so this is the number of components that
+	  publish parameters.
+
 config KFSW_PARAM_PERSISTENCE
 	bool "Explicit LittleFS parameter snapshots"
 	depends on KFSW_STORAGE

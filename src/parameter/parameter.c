@@ -1,10 +1,12 @@
 #include <errno.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
 
 #include <zephyr/kernel.h>
 
+#include <kfsw/services/log.h>
 #include <kfsw/services/parameter.h>
 
 #include "parameter_internal.h"
@@ -12,9 +14,25 @@
 static struct kfsw_param_entry parameter_table[KFSW_PARAM_MAX_DEFINITIONS];
 static size_t parameter_count;
 
+static struct kfsw_param_table_info parameter_tables[KFSW_PARAM_MAX_TABLES];
+static size_t table_count;
+
 K_MUTEX_DEFINE(kfsw_param_lock);
 
 static bool initialized;
+
+/* strnlen is not visible under the C17 profile these builds use, and a plain
+ * strlen on a name that is not terminated would read past it.
+ */
+static bool name_is_within_limit(const char *name)
+{
+	for (size_t index = 0U; index <= KFSW_PARAM_NAME_MAX; index++) {
+		if (name[index] == '\0') {
+			return true;
+		}
+	}
+	return false;
+}
 
 static size_t scalar_size(enum kfsw_param_type type)
 {
@@ -103,6 +121,15 @@ int kfsw_param_read_entry(const struct kfsw_param_entry *entry, struct kfsw_para
 		return -ENOTSUP;
 	}
 
+	/* Sampled parameters hold live state that nothing else writes, so the
+	 * backing store is refreshed here rather than on a timer: a value read
+	 * over a link is worth having only if it is current at the moment it
+	 * was asked for.
+	 */
+	if (entry->definition->sample != NULL) {
+		entry->definition->sample(entry->definition->value);
+	}
+
 	memset(value, 0, sizeof(*value));
 	value->type = entry->info.type;
 	value->size = size;
@@ -158,37 +185,135 @@ void kfsw_param_value_changed(uint16_t id)
 	}
 }
 
-static int add_definition(const struct kfsw_param_definition *definition)
+static struct kfsw_param_table_info *find_table(uint8_t id)
+{
+	for (size_t index = 0U; index < table_count; index++) {
+		if (parameter_tables[index].id == id) {
+			return &parameter_tables[index];
+		}
+	}
+	return NULL;
+}
+
+/* A table identifier must fall inside an allocated band. Zero is reserved so
+ * that an uninitialised field cannot address a real table, and anything above
+ * the module band is left for mission payloads that this build does not own.
+ */
+static bool table_is_allocated(uint8_t table)
+{
+	return (table >= KFSW_PARAM_TABLE_CORE_FIRST) && (table <= KFSW_PARAM_TABLE_MODULE_LAST);
+}
+
+static int add_table(const struct kfsw_param_definition_set *set)
+{
+	size_t insert_at;
+
+	if ((set->name == NULL) || (set->name[0] == '\0') || !name_is_within_limit(set->name)) {
+		kfsw_log_error("PARAM: table %u has no usable name", set->table);
+		return -EINVAL;
+	}
+	if (!table_is_allocated(set->table)) {
+		kfsw_log_error("PARAM: table %u is outside every allocated band", set->table);
+		return -EINVAL;
+	}
+	if (find_table(set->table) != NULL) {
+		kfsw_log_error("PARAM: table %u (%s) is already registered", set->table, set->name);
+		return -EEXIST;
+	}
+	if (table_count >= KFSW_PARAM_MAX_TABLES) {
+		kfsw_log_error("PARAM: no room for table %u (%s)", set->table, set->name);
+		return -ENOSPC;
+	}
+
+	/* Kept in ascending identifier order so a listing reads as one table
+	 * regardless of the order the composition happens to register in.
+	 */
+	insert_at = table_count;
+	for (size_t index = 0U; index < table_count; index++) {
+		if (parameter_tables[index].id > set->table) {
+			insert_at = index;
+			break;
+		}
+	}
+	if (insert_at < table_count) {
+		memmove(&parameter_tables[insert_at + 1U], &parameter_tables[insert_at],
+			(table_count - insert_at) * sizeof(parameter_tables[0]));
+	}
+	parameter_tables[insert_at] = (struct kfsw_param_table_info){
+		.id = set->table,
+		.name = set->name,
+		.count = 0U,
+	};
+	table_count++;
+	return 0;
+}
+
+static int add_definition(const struct kfsw_param_definition_set *set,
+			  const struct kfsw_param_definition *definition)
 {
 	struct kfsw_param_value default_value;
+	struct kfsw_param_table_info *table;
 	size_t insert_at = parameter_count;
 	const size_t size = (definition == NULL) ? 0U : scalar_size(definition->type);
+	uint16_t wire_id;
+	uint32_t flags;
 
 	if ((definition == NULL) || (definition->name == NULL) || (definition->name[0] == '\0') ||
 	    (definition->value == NULL) || (size == 0U)) {
 		return -EINVAL;
 	}
+	if (!name_is_within_limit(definition->name)) {
+		kfsw_log_error("PARAM: name '%s' is longer than %u characters", definition->name,
+			       KFSW_PARAM_NAME_MAX);
+		return -ENAMETOOLONG;
+	}
 	if (parameter_count >= KFSW_PARAM_MAX_DEFINITIONS) {
+		kfsw_log_error("PARAM: no room for %s; the table holds %u", definition->name,
+			       (unsigned int)KFSW_PARAM_MAX_DEFINITIONS);
 		return -ENOSPC;
 	}
+
+	table = find_table(set->table);
+	if (table == NULL) {
+		return -ENOENT;
+	}
+	wire_id = KFSW_PARAM_WIRE_ID(set->table, definition->offset);
 
 	default_value.type = definition->type;
 	default_value.size = size;
 	default_value.scalar = definition->default_value;
 	if ((definition->validate != NULL) && (definition->validate(&default_value.scalar) != 0)) {
+		kfsw_log_error("PARAM: %s refuses its own default", definition->name);
 		return -ERANGE;
 	}
 
+	/* Offsets are unique inside a table and names across the whole node:
+	 * the wire identifier is what a remote list is keyed by, and the name
+	 * is what an operator types.
+	 */
 	for (size_t index = 0U; index < parameter_count; index++) {
 		const struct kfsw_param_entry *entry = &parameter_table[index];
 
-		if ((entry->info.id == definition->id) ||
-		    (strcmp(entry->info.name, definition->name) == 0)) {
+		if (entry->info.id == wire_id) {
+			kfsw_log_error("PARAM: table %u offset 0x%02x is taken by %s", set->table,
+				       definition->offset, entry->info.name);
 			return -EEXIST;
 		}
-		if ((insert_at == parameter_count) && (entry->info.id > definition->id)) {
+		if (strcmp(entry->info.name, definition->name) == 0) {
+			kfsw_log_error("PARAM: name '%s' is already registered", definition->name);
+			return -EEXIST;
+		}
+		if ((insert_at == parameter_count) && (entry->info.id > wire_id)) {
 			insert_at = index;
 		}
+	}
+
+	/* The service sets LIVE, never the definition: a parameter cannot claim
+	 * a write takes effect immediately without the callback that applies it.
+	 */
+	flags = definition->flags;
+	if (definition->changed != NULL) {
+		flags |= KFSW_PARAM_FLAG_LIVE;
 	}
 
 	if (insert_at < parameter_count) {
@@ -199,18 +324,22 @@ static int add_definition(const struct kfsw_param_definition *definition)
 		.info =
 			{
 				.node = 0U,
-				.id = definition->id,
+				.id = wire_id,
+				.table = set->table,
+				.offset = definition->offset,
 				.array_size = 1U,
 				.type = definition->type,
-				.flags = definition->flags,
+				.flags = flags,
+				.table_name = set->name,
 				.name = definition->name,
 				.unit = definition->unit,
 				.description = definition->description,
-				.read_only = (definition->flags & KFSW_PARAM_FLAG_READ_ONLY) != 0U,
+				.read_only = (flags & KFSW_PARAM_FLAG_READ_ONLY) != 0U,
 			},
 		.definition = definition,
 	};
 	parameter_count++;
+	table->count++;
 	return 0;
 }
 
@@ -229,6 +358,7 @@ int kfsw_param_init(const struct kfsw_param_definition_set *const *sets, size_t 
 	}
 
 	parameter_count = 0U;
+	table_count = 0U;
 	for (size_t set_index = 0U; set_index < set_count; set_index++) {
 		const struct kfsw_param_definition_set *set = sets[set_index];
 
@@ -236,10 +366,17 @@ int kfsw_param_init(const struct kfsw_param_definition_set *const *sets, size_t 
 			result = -EINVAL;
 			break;
 		}
+		result = add_table(set);
+		if (result != 0) {
+			break;
+		}
 		for (size_t definition_index = 0U; definition_index < set->count;
 		     definition_index++) {
-			result = add_definition(&set->definitions[definition_index]);
+			result = add_definition(set, &set->definitions[definition_index]);
 			if (result != 0) {
+				kfsw_log_error("PARAM: table %u (%s) rejected %s: %d", set->table,
+					       set->name, set->definitions[definition_index].name,
+					       result);
 				break;
 			}
 		}
@@ -258,8 +395,11 @@ int kfsw_param_init(const struct kfsw_param_definition_set *const *sets, size_t 
 			kfsw_param_write_entry(entry, &entry->definition->default_value);
 		}
 		initialized = true;
+		kfsw_log_info("PARAM: %u parameters in %u tables", (unsigned int)parameter_count,
+			      (unsigned int)table_count);
 	} else {
 		parameter_count = 0U;
+		table_count = 0U;
 	}
 	kfsw_param_table_unlock();
 	return result;
@@ -314,6 +454,16 @@ int kfsw_param_set(const char *name, const struct kfsw_param_value *value)
 		}
 	}
 	kfsw_param_table_unlock();
+
+	/* A parameter change is an operator action on a spacecraft, so both the
+	 * acceptance and the refusal have to be reconstructible afterwards from
+	 * the log alone.
+	 */
+	if (result == 0) {
+		kfsw_log_info("PARAM: %s set (%s)", name, kfsw_param_mode_name(entry->info.flags));
+	} else {
+		kfsw_log_warning("PARAM: %s refused: %d", name, result);
+	}
 	return result;
 }
 
@@ -354,6 +504,85 @@ int kfsw_param_visit(kfsw_param_visitor_t visitor, void *context)
 	}
 	kfsw_param_table_unlock();
 	return 0;
+}
+
+int kfsw_param_get_info(const char *name, struct kfsw_param_info *info)
+{
+	const struct kfsw_param_entry *entry;
+	int result;
+
+	if ((name == NULL) || (info == NULL)) {
+		return -EINVAL;
+	}
+	if (!initialized) {
+		return -EACCES;
+	}
+
+	kfsw_param_table_lock();
+	entry = kfsw_param_find_name(name);
+	if (entry == NULL) {
+		result = -ENOENT;
+	} else {
+		*info = entry->info;
+		result = 0;
+	}
+	kfsw_param_table_unlock();
+	return result;
+}
+
+int kfsw_param_visit_tables(kfsw_param_table_visitor_t visitor, void *context)
+{
+	if (visitor == NULL) {
+		return -EINVAL;
+	}
+	if (!initialized) {
+		return -EACCES;
+	}
+
+	kfsw_param_table_lock();
+	for (size_t index = 0U; index < table_count; index++) {
+		if (!visitor(&parameter_tables[index], context)) {
+			break;
+		}
+	}
+	kfsw_param_table_unlock();
+	return 0;
+}
+
+size_t kfsw_param_table_count(void)
+{
+	return table_count;
+}
+
+const char *kfsw_param_band_name(uint8_t table)
+{
+	if ((table >= KFSW_PARAM_TABLE_CORE_FIRST) && (table <= KFSW_PARAM_TABLE_CORE_LAST)) {
+		return "core";
+	}
+	if ((table >= KFSW_PARAM_TABLE_SERVICE_FIRST) && (table <= KFSW_PARAM_TABLE_SERVICE_LAST)) {
+		return "service";
+	}
+	if ((table >= KFSW_PARAM_TABLE_MODULE_FIRST) && (table <= KFSW_PARAM_TABLE_MODULE_LAST)) {
+		return "module";
+	}
+	return "invalid";
+}
+
+const char *kfsw_param_mode_name(uint32_t flags)
+{
+	const bool live = (flags & KFSW_PARAM_FLAG_LIVE) != 0U;
+	const bool stored = (flags & KFSW_PARAM_FLAG_PERSISTENT) != 0U;
+
+	if ((flags & KFSW_PARAM_FLAG_READ_ONLY) != 0U) {
+		return "r";
+	}
+	if (live && stored) {
+		return "wb";
+	}
+	if (stored) {
+		return "b";
+	}
+	return "w";
 }
 
 const char *kfsw_param_type_name(enum kfsw_param_type type)

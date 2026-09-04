@@ -6,12 +6,16 @@
 
 #include <kfsw/services/parameter.h>
 
-#define KFSW_PARAM_MAX_DEFINITIONS 16U
+#define KFSW_PARAM_MAX_DEFINITIONS CONFIG_KFSW_PARAM_MAX_DEFINITIONS
+#define KFSW_PARAM_MAX_TABLES CONFIG_KFSW_PARAM_MAX_TABLES
 
 struct kfsw_param_entry {
 	struct kfsw_param_info info;
 	const struct kfsw_param_definition *definition;
 };
+
+/** Compose the wire identifier from a table and an offset inside it. */
+#define KFSW_PARAM_WIRE_ID(table, offset) ((uint16_t)(((uint16_t)(table) << 8) | (offset)))
 
 void kfsw_param_table_lock(void);
 void kfsw_param_table_unlock(void);
