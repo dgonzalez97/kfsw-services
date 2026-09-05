@@ -369,6 +369,10 @@ static void report_transfer(struct kfsw_ftp_transfer_result *transfer_result, ui
 static void record_transfer_event(uint16_t event_id, uint16_t node, uint32_t bytes,
 				  uint32_t crc32_or_errno, bool failed)
 {
+	/* Outside the event guard: a composition without the event record still
+	 * needs to know how many transfers have run. */
+	kfsw_ftp_count_transfer(bytes, failed);
+
 #if CONFIG_KFSW_EVENT
 	uint8_t payload[10];
 

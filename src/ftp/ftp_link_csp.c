@@ -64,7 +64,7 @@ int kfsw_ftp_link_connect(struct kfsw_ftp_link *link, uint16_t node)
 		return -EINVAL;
 	}
 	link->connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_FTP_CSP_PORT,
-				       CONFIG_KFSW_FTP_TIMEOUT_MS, CSP_O_RDP | CSP_O_CRC32);
+				       kfsw_ftp_get_timeout_ms(), CSP_O_RDP | CSP_O_CRC32);
 	return (link->connection != NULL) ? 0 : -ECONNREFUSED;
 }
 
@@ -102,7 +102,7 @@ int kfsw_ftp_link_receive(struct kfsw_ftp_link *link, struct kfsw_ftp_link_frame
 		return -EINVAL;
 	}
 	frame->buffer = NULL;
-	packet = csp_read(link->connection, CONFIG_KFSW_FTP_TIMEOUT_MS);
+	packet = csp_read(link->connection, kfsw_ftp_get_timeout_ms());
 	if (packet == NULL) {
 		return -ETIMEDOUT;
 	}

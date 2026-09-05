@@ -70,6 +70,54 @@ static void serve_packet(csp_conn_t *connection, csp_packet_t *packet)
 	csp_send(connection, response);
 }
 
+/* Read at each use rather than captured, so a change takes effect on the next
+ * block. These are the two values you most want to change on a bad link, and a
+ * bad link is exactly when rebuilding the image is not an option.
+ */
+static uint32_t fwu_lite_timeout_ms = CONFIG_KFSW_FWU_LITE_TIMEOUT_MS;
+static uint8_t fwu_lite_retries = CONFIG_KFSW_FWU_LITE_BLOCK_RETRIES;
+
+uint32_t kfsw_fwu_lite_get_timeout_ms(void)
+{
+	return fwu_lite_timeout_ms;
+}
+
+int kfsw_fwu_lite_check_timeout_ms(uint32_t timeout_ms)
+{
+	if ((timeout_ms < KFSW_FWU_LITE_TIMEOUT_MIN_MS) ||
+	    (timeout_ms > KFSW_FWU_LITE_TIMEOUT_MAX_MS)) {
+		return -ERANGE;
+	}
+	return 0;
+}
+
+int kfsw_fwu_lite_set_timeout_ms(uint32_t timeout_ms)
+{
+	int result = kfsw_fwu_lite_check_timeout_ms(timeout_ms);
+
+	if (result != 0) {
+		return result;
+	}
+	fwu_lite_timeout_ms = timeout_ms;
+	return 0;
+}
+
+uint8_t kfsw_fwu_lite_get_retries(void)
+{
+	return fwu_lite_retries;
+}
+
+int kfsw_fwu_lite_set_retries(uint8_t retries)
+{
+	/* Zero would abandon a transfer on the first lost block, which on a
+	 * radio is every transfer. */
+	if (retries == 0U) {
+		return -EINVAL;
+	}
+	fwu_lite_retries = retries;
+	return 0;
+}
+
 static void server_entry(void *first, void *second, void *third)
 {
 	static csp_socket_t socket;
@@ -103,8 +151,7 @@ static void server_entry(void *first, void *second, void *third)
 			 * shorter one would drop a connection between blocks on a
 			 * slow link, where one block and its turnaround can take
 			 * longer than a second. */
-			csp_packet_t *packet =
-				csp_read(connection, CONFIG_KFSW_FWU_LITE_TIMEOUT_MS);
+			csp_packet_t *packet = csp_read(connection, kfsw_fwu_lite_get_timeout_ms());
 
 			if (packet == NULL) {
 				break;
@@ -151,7 +198,7 @@ static int exchange(csp_conn_t *connection, const struct kfsw_fwu_lite_message *
 	packet->length = (uint16_t)encoded;
 	csp_send(connection, packet);
 
-	response = csp_read(connection, CONFIG_KFSW_FWU_LITE_TIMEOUT_MS);
+	response = csp_read(connection, kfsw_fwu_lite_get_timeout_ms());
 	if (response == NULL) {
 		return -ETIMEDOUT;
 	}
@@ -299,7 +346,7 @@ int kfsw_fwu_lite_send_file(uint16_t node, const char *path, uint32_t *blocks_re
 	}
 
 	connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_FWU_LITE_CSP_PORT,
-				 CONFIG_KFSW_FWU_LITE_TIMEOUT_MS, CONNECTION_OPTIONS);
+				 kfsw_fwu_lite_get_timeout_ms(), CONNECTION_OPTIONS);
 	if (connection == NULL) {
 		return -ENOTCONN;
 	}
@@ -354,7 +401,7 @@ int kfsw_fwu_lite_send_file(uint16_t node, const char *path, uint32_t *blocks_re
 				kfsw_log_warning("Firmware upload block %u: no answer, sending it "
 						 "again (%u)",
 						 index, attempt);
-				if (attempt > CONFIG_KFSW_FWU_LITE_BLOCK_RETRIES) {
+				if (attempt > kfsw_fwu_lite_get_retries()) {
 					kfsw_log_error("Firmware upload block %u: no answer after "
 						       "%u tries",
 						       index, attempt);
@@ -397,7 +444,7 @@ int kfsw_fwu_lite_send_file(uint16_t node, const char *path, uint32_t *blocks_re
 			resent++;
 			kfsw_log_warning("Firmware upload block %u: %s, sending it again (%u)",
 					 index, kfsw_fwu_lite_status_name(reply.status), attempt);
-			if (attempt > CONFIG_KFSW_FWU_LITE_BLOCK_RETRIES) {
+			if (attempt > kfsw_fwu_lite_get_retries()) {
 				kfsw_log_error("Firmware upload block %u failed after %u tries",
 					       index, attempt);
 				result = -EIO;
@@ -447,7 +494,7 @@ int kfsw_fwu_lite_start_flashing(uint16_t node)
 	int result;
 
 	connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_FWU_LITE_CSP_PORT,
-				 CONFIG_KFSW_FWU_LITE_TIMEOUT_MS, CONNECTION_OPTIONS);
+				 kfsw_fwu_lite_get_timeout_ms(), CONNECTION_OPTIONS);
 	if (connection == NULL) {
 		return -ENOTCONN;
 	}

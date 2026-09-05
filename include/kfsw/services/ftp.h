@@ -4,6 +4,10 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#if CONFIG_KFSW_PARAM
+#include <kfsw/services/parameter.h>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -11,6 +15,10 @@ extern "C" {
 #define KFSW_FTP_MAX_PATH_SIZE 96U
 #define KFSW_FTP_CHUNK_SIZE 192U
 #define KFSW_FTP_STORAGE_ROOT "/kfsw/ftp"
+/* Matches the Kconfig range, so a value accepted at runtime is one the
+ * composition could have been built with. */
+#define KFSW_FTP_TIMEOUT_MIN_MS 1000U
+#define KFSW_FTP_TIMEOUT_MAX_MS 120000U
 
 enum kfsw_ftp_entry_type {
 	KFSW_FTP_ENTRY_FILE = 1,
@@ -35,6 +43,18 @@ struct kfsw_ftp_transfer_result {
 	uint32_t duration_ms;
 };
 
+/** Lifetime totals for the service. Counters saturate and are never reset. */
+struct kfsw_ftp_stats {
+	/** Transfers that committed, in either direction. */
+	uint32_t transfers;
+	/** Transfers that failed or were abandoned. */
+	uint32_t failures;
+	/** Bytes moved by transfers that committed. */
+	uint32_t bytes;
+	/** True while the server is handling a transfer. */
+	bool busy;
+};
+
 typedef bool (*kfsw_ftp_list_visitor_t)(const struct kfsw_ftp_entry *entry, void *context);
 
 /**
@@ -51,6 +71,41 @@ enum kfsw_event_ftp_id {
 	/** A transfer failed. Payload: peer node u16, then the errno as i32. */
 	KFSW_EVENT_FTP_TRANSFER_FAILED = 3,
 };
+
+/** Read the lifetime totals. Returns -EINVAL for a NULL destination. */
+int kfsw_ftp_get_stats(struct kfsw_ftp_stats *stats);
+
+/** Reply timeout used by the next transfer; a running one keeps its value. */
+uint32_t kfsw_ftp_get_timeout_ms(void);
+
+/**
+ * @brief Change the reply timeout used by new transfers.
+ *
+ * @retval 0 Applied to the next transfer.
+ * @retval -ERANGE Outside the range the composition could have been built with.
+ */
+int kfsw_ftp_set_timeout_ms(uint32_t timeout_ms);
+
+/** Whether a timeout would be accepted, without applying it. */
+int kfsw_ftp_check_timeout_ms(uint32_t timeout_ms);
+
+/** Bytes of file data carried per message. */
+uint16_t kfsw_ftp_get_chunk_size(void);
+
+/**
+ * @brief Change how much file data each message carries.
+ *
+ * Shortening it is useful on a link that loses long frames. It can only be
+ * shortened: the workspace buffer is sized at build time and the protocol codec
+ * refuses anything larger.
+ *
+ * @retval 0 Applied to the next transfer.
+ * @retval -ERANGE Zero, or larger than KFSW_FTP_CHUNK_SIZE.
+ */
+int kfsw_ftp_set_chunk_size(uint16_t chunk_size);
+
+/** Whether a chunk size would be accepted, without applying it. */
+int kfsw_ftp_check_chunk_size(uint16_t chunk_size);
 
 /** Prepare the sandboxed local file-transfer root after storage is mounted. */
 int kfsw_ftp_init(void);
@@ -106,6 +161,16 @@ int kfsw_ftp_put(uint16_t node, const char *local_path, const char *remote_path,
  */
 int kfsw_ftp_get(uint16_t node, const char *remote_path, const char *local_path,
 		 struct kfsw_ftp_transfer_result *result);
+
+#if CONFIG_KFSW_PARAM
+/** Parameter table owned by this service, in the service band. */
+#define KFSW_FTP_PARAM_TABLE_ID 29U
+/** Stable logical name paired with KFSW_FTP_PARAM_TABLE_ID. */
+#define KFSW_FTP_PARAM_TABLE_NAME "ftp"
+
+/** File-transfer counters and the settings the service applies. */
+extern const struct kfsw_param_definition_set kfsw_ftp_param_definitions;
+#endif
 
 #ifdef __cplusplus
 }

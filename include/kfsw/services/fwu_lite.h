@@ -159,6 +159,26 @@ const char *kfsw_fwu_lite_status_name(uint8_t status);
  */
 int kfsw_fwu_lite_server_start(void);
 
+/* Matches the Kconfig range, so a value accepted at runtime is one the
+ * composition could have been built with. */
+#define KFSW_FWU_LITE_TIMEOUT_MIN_MS 100U
+#define KFSW_FWU_LITE_TIMEOUT_MAX_MS 60000U
+
+/** Reply timeout used by the next block. */
+uint32_t kfsw_fwu_lite_get_timeout_ms(void);
+
+/** Whether a timeout would be accepted, without applying it. */
+int kfsw_fwu_lite_check_timeout_ms(uint32_t timeout_ms);
+
+/** Change the reply timeout. -ERANGE outside the buildable range. */
+int kfsw_fwu_lite_set_timeout_ms(uint32_t timeout_ms);
+
+/** Times a block is repeated before the transfer is abandoned. */
+uint8_t kfsw_fwu_lite_get_retries(void);
+
+/** Change the block retry count. -EINVAL for zero, which abandons on first loss. */
+int kfsw_fwu_lite_set_retries(uint8_t retries);
+
 /**
  * @brief Send an image file to a node, block by block.
  *

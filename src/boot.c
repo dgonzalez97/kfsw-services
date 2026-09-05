@@ -1,3 +1,4 @@
+#include <errno.h>
 #include <stdint.h>
 
 #include <zephyr/sys/byteorder.h>
@@ -11,12 +12,38 @@
 #include <kfsw/services/event.h>
 #endif
 
+/*
+ * Latched once, because reading the cause clears it. The platform call wipes
+ * the hardware flags so the next boot reports a new event, and this service is
+ * the first reader; anything that called it again would be told the register is
+ * empty and report that as the cause of the reset.
+ */
+static uint32_t boot_reset_cause;
+static int boot_reset_rc = -EAGAIN;
+
+uint32_t kfsw_boot_get_reset_cause(void)
+{
+	return boot_reset_cause;
+}
+
+int kfsw_boot_get_reset_result(void)
+{
+	return boot_reset_rc;
+}
+
+const char *kfsw_boot_get_image_version(void)
+{
+	return KFSW_IMAGE_VERSION;
+}
+
 void kfsw_boot_service_start(void)
 {
 	uint32_t reset_cause = 0U;
 	int reset_rc;
 
 	reset_rc = kfsw_platform_get_reset_cause(&reset_cause);
+	boot_reset_cause = reset_cause;
+	boot_reset_rc = reset_rc;
 
 	if (reset_rc != 0) {
 		kfsw_log_warning("Reset cause unavailable: %d", reset_rc);
@@ -26,7 +53,7 @@ void kfsw_boot_service_start(void)
 	 * appended rather than replacing the raw mask: the mask can latch
 	 * several causes at once and the name reports only the first.
 	 */
-	printk("@BOOT sw=kfsw-dev board=%s reset=0x%08x reset_rc=%d reset_cause=%s\n",
+	printk("@BOOT sw=%s board=%s reset=0x%08x reset_rc=%d reset_cause=%s\n", KFSW_IMAGE_VERSION,
 	       CONFIG_BOARD_TARGET, (unsigned int)reset_cause, reset_rc,
 	       kfsw_platform_reset_cause_name(reset_cause));
 
@@ -48,12 +75,12 @@ void kfsw_boot_service_start(void)
 		/* A watchdog reset is not routine. It is raised above INFO so
 		 * that it survives a severity filter on the way to ground.
 		 */
-		kfsw_event_emit(KFSW_EVENT_SOURCE_BOOT, KFSW_EVENT_BOOT_READY,
-				((reset_rc != 0) ||
-				 kfsw_platform_reset_cause_is_watchdog(reset_cause))
-					? KFSW_EVENT_WARNING
-					: KFSW_EVENT_INFO,
-				payload, sizeof(payload));
+		kfsw_event_emit(
+			KFSW_EVENT_SOURCE_BOOT, KFSW_EVENT_BOOT_READY,
+			((reset_rc != 0) || kfsw_platform_reset_cause_is_watchdog(reset_cause))
+				? KFSW_EVENT_WARNING
+				: KFSW_EVENT_INFO,
+			payload, sizeof(payload));
 	}
 #endif
 

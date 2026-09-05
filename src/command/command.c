@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include <zephyr/kernel.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/util.h>
 
@@ -27,6 +28,37 @@ static bool registry_ready;
 
 /* Serializes invocation so a handler never runs concurrently with itself. */
 K_MUTEX_DEFINE(command_lock);
+
+/* Lifetime totals. Outcomes were recorded as events and counted nowhere, which
+ * answers "what happened" but not "how often"; a pass is too short to read a
+ * ring when a number would do.
+ */
+static atomic_t command_invoked;
+static atomic_t command_failed;
+static atomic_t command_unknown;
+static atomic_t command_rejected;
+
+#if CONFIG_KFSW_COMMAND_CSP
+/* Applied to the next remote invocation. A slow link is exactly when a caller
+ * needs to raise it, and exactly when it cannot rebuild the image. Only exists
+ * with the remote path: without it there is no invocation to time out. */
+static uint32_t command_timeout_ms = CONFIG_KFSW_COMMAND_TIMEOUT_MS;
+#endif
+
+/*
+ * Console echo, off by default. The shell prints every input byte back, so a
+ * session driven by a script shows each command twice: once as the sender
+ * typed it and once as the shell repeated it. That is noise on a console and
+ * unreadable in a recording.
+ *
+ * The console belongs to the composition, not to this service, so applying the
+ * change is handed back through a hook the composition fills in. Without that
+ * the value could only take effect at the next boot, and a setting you want to
+ * toggle while watching the console is exactly the wrong one to make a reboot
+ * of.
+ */
+static uint8_t command_echo_enabled;
+static kfsw_command_echo_handler_t command_echo_handler;
 
 static const struct kfsw_command_definition *find_by_id(uint16_t id)
 {
@@ -188,6 +220,19 @@ static void record_outcome(uint16_t event_id, uint16_t command_id,
 			   const struct kfsw_command_source *source,
 			   enum kfsw_command_status status)
 {
+	/* Outside the event guard: a composition without the event record still
+	 * needs to know how many commands have run and how many were refused.
+	 * Every outcome passes through here, which is why it is the one place
+	 * worth counting. */
+	(void)atomic_inc(&command_invoked);
+	if (status == KFSW_COMMAND_UNKNOWN) {
+		(void)atomic_inc(&command_unknown);
+	} else if (status == KFSW_COMMAND_DENIED) {
+		(void)atomic_inc(&command_rejected);
+	} else if (status != KFSW_COMMAND_OK) {
+		(void)atomic_inc(&command_failed);
+	}
+
 #if CONFIG_KFSW_EVENT
 	uint8_t payload[5];
 
@@ -279,6 +324,74 @@ int kfsw_command_lookup_id(const char *name, uint16_t *id)
 	}
 	*id = definition->id;
 	return 0;
+}
+
+int kfsw_command_get_stats(struct kfsw_command_stats *stats)
+{
+	if (stats == NULL) {
+		return -EINVAL;
+	}
+
+	stats->invoked = (uint32_t)atomic_get(&command_invoked);
+	stats->failed = (uint32_t)atomic_get(&command_failed);
+	stats->unknown = (uint32_t)atomic_get(&command_unknown);
+	stats->rejected = (uint32_t)atomic_get(&command_rejected);
+	stats->registered = (uint16_t)registry_count;
+	return 0;
+}
+
+#if CONFIG_KFSW_COMMAND_CSP
+uint32_t kfsw_command_get_timeout_ms(void)
+{
+	return command_timeout_ms;
+}
+
+int kfsw_command_check_timeout_ms(uint32_t timeout_ms)
+{
+	/* Matches the Kconfig range, so a value accepted here is one the
+	 * composition could have been built with. Separate from applying it
+	 * because a change callback cannot refuse. */
+	if ((timeout_ms < KFSW_COMMAND_TIMEOUT_MIN_MS) ||
+	    (timeout_ms > KFSW_COMMAND_TIMEOUT_MAX_MS)) {
+		return -ERANGE;
+	}
+	return 0;
+}
+
+int kfsw_command_set_timeout_ms(uint32_t timeout_ms)
+{
+	int result = kfsw_command_check_timeout_ms(timeout_ms);
+
+	if (result != 0) {
+		return result;
+	}
+	command_timeout_ms = timeout_ms;
+	return 0;
+}
+#endif
+
+bool kfsw_command_echo_enabled(void)
+{
+	return command_echo_enabled != 0U;
+}
+
+void kfsw_command_set_echo_handler(kfsw_command_echo_handler_t handler)
+{
+	command_echo_handler = handler;
+
+	/* Applied as soon as a console exists, so the default reaches the shell
+	 * without waiting for somebody to write the parameter. */
+	if (handler != NULL) {
+		handler(command_echo_enabled != 0U);
+	}
+}
+
+void kfsw_command_set_echo(bool enabled)
+{
+	command_echo_enabled = enabled ? 1U : 0U;
+	if (command_echo_handler != NULL) {
+		command_echo_handler(enabled);
+	}
 }
 
 const char *kfsw_command_status_name(enum kfsw_command_status status)

@@ -4,6 +4,11 @@
 
 #include <kfsw/services/fwu.h>
 #include <kfsw/services/parameter.h>
+#if CONFIG_KFSW_FWU_LITE_CSP
+#include <errno.h>
+
+#include <kfsw/services/fwu_lite.h>
+#endif
 
 /* Read-only throughout. The update state belongs to the update service: if an
  * operator could set it, an unverified image could be marked ready, which is
@@ -56,6 +61,42 @@ FWU_SAMPLE(failed, uint32_t)
 FWU_SAMPLE(state, uint8_t)
 FWU_SAMPLE(swap_scheduled, uint8_t)
 FWU_SAMPLE(target_bound, uint8_t)
+
+#if CONFIG_KFSW_FWU_LITE_CSP
+static uint32_t fwu_lite_timeout_ms = CONFIG_KFSW_FWU_LITE_TIMEOUT_MS;
+static uint8_t fwu_lite_retries = CONFIG_KFSW_FWU_LITE_BLOCK_RETRIES;
+static uint16_t fwu_lite_block_size = CONFIG_KFSW_FWU_LITE_BLOCK_SIZE;
+
+static void sample_lite_timeout(void *value)
+{
+	*(uint32_t *)value = kfsw_fwu_lite_get_timeout_ms();
+}
+
+static void sample_lite_retries(void *value)
+{
+	*(uint8_t *)value = kfsw_fwu_lite_get_retries();
+}
+
+static int validate_lite_timeout(const union kfsw_param_scalar *value)
+{
+	return kfsw_fwu_lite_check_timeout_ms(value->u32);
+}
+
+static void apply_lite_timeout(const union kfsw_param_scalar *value)
+{
+	(void)kfsw_fwu_lite_set_timeout_ms(value->u32);
+}
+
+static int validate_lite_retries(const union kfsw_param_scalar *value)
+{
+	return (value->u8 == 0U) ? -EINVAL : 0;
+}
+
+static void apply_lite_retries(const union kfsw_param_scalar *value)
+{
+	(void)kfsw_fwu_lite_set_retries(value->u8);
+}
+#endif
 
 static const struct kfsw_param_definition fwu_param_definitions[] = {
 	{
@@ -150,6 +191,46 @@ static const struct kfsw_param_definition fwu_param_definitions[] = {
 		.value = &fwu_target_bound,
 		.sample = sample_target_bound,
 	},
+#if CONFIG_KFSW_FWU_LITE_CSP
+	{
+		.offset = 0x20U,
+		.type = KFSW_PARAM_U32,
+		.flags = KFSW_PARAM_FLAG_CONFIGURATION,
+		.name = "fwu_lite_timeout_ms",
+		.unit = "ms",
+		.description = "Reply timeout for the next block",
+		.value = &fwu_lite_timeout_ms,
+		.default_value = {.u32 = CONFIG_KFSW_FWU_LITE_TIMEOUT_MS},
+		.validate = validate_lite_timeout,
+		.changed = apply_lite_timeout,
+		.sample = sample_lite_timeout,
+	},
+	{
+		.offset = 0x24U,
+		.type = KFSW_PARAM_U8,
+		.flags = KFSW_PARAM_FLAG_CONFIGURATION,
+		.name = "fwu_lite_retries",
+		.description = "Times a block is repeated before the transfer is abandoned",
+		.value = &fwu_lite_retries,
+		.default_value = {.u8 = CONFIG_KFSW_FWU_LITE_BLOCK_RETRIES},
+		.validate = validate_lite_retries,
+		.changed = apply_lite_retries,
+		.sample = sample_lite_retries,
+	},
+	{
+		.offset = 0x26U,
+		.type = KFSW_PARAM_U16,
+		/* Compile-time: it sizes the message buffers, so it cannot be
+		 * changed without rebuilding. Published because a transfer that
+		 * is failing on long frames is diagnosed by knowing it. */
+		.flags = KFSW_PARAM_FLAG_READ_ONLY,
+		.name = "fwu_lite_block_size",
+		.unit = "B",
+		.description = "Image bytes per block; fixed at build time",
+		.value = &fwu_lite_block_size,
+		.default_value = {.u16 = CONFIG_KFSW_FWU_LITE_BLOCK_SIZE},
+	},
+#endif
 };
 
 const struct kfsw_param_definition_set kfsw_fwu_param_definitions = {

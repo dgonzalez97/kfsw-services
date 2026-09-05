@@ -31,7 +31,7 @@ if KFSW_PARAM
 
 config KFSW_PARAM_MAX_DEFINITIONS
 	int "Parameters the local table can hold"
-	default 96
+	default 128
 	range 1 512
 	help
 	  Total parameters across every registered table. Registration is

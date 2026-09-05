@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include <zephyr/kernel.h>
+#include <zephyr/sys/atomic.h>
 
 #include <kfsw/services/log.h>
 #include <kfsw/services/parameter.h>
@@ -138,7 +139,8 @@ const struct kfsw_param_entry *kfsw_param_find_name(const char *name)
 	return NULL;
 }
 
-int kfsw_param_read_entry(const struct kfsw_param_entry *entry, struct kfsw_param_value *value)
+static int read_entry(const struct kfsw_param_entry *entry, struct kfsw_param_value *value,
+		      bool sample)
 {
 	size_t size;
 
@@ -155,7 +157,7 @@ int kfsw_param_read_entry(const struct kfsw_param_entry *entry, struct kfsw_para
 	 * over a link is worth having only if it is current at the moment it
 	 * was asked for.
 	 */
-	if (entry->definition->sample != NULL) {
+	if (sample && (entry->definition->sample != NULL)) {
 		entry->definition->sample(entry->definition->value);
 	}
 
@@ -172,6 +174,26 @@ int kfsw_param_read_entry(const struct kfsw_param_entry *entry, struct kfsw_para
 	value->size = size;
 	memcpy(&value->scalar, entry->definition->value, size);
 	return 0;
+}
+
+int kfsw_param_read_entry(const struct kfsw_param_entry *entry, struct kfsw_param_value *value)
+{
+	return read_entry(entry, value, true);
+}
+
+/*
+ * Reads what is in the backing store without refreshing it first.
+ *
+ * The distinction matters on exactly one path. A write that arrives over CSP
+ * lands in the store and is then handed back here to be applied; sampling at
+ * that moment would overwrite the value that just arrived with the one the
+ * owner still holds, and the change callback would be handed the old value.
+ * The write would report success and change nothing.
+ */
+int kfsw_param_read_stored_entry(const struct kfsw_param_entry *entry,
+				 struct kfsw_param_value *value)
+{
+	return read_entry(entry, value, false);
 }
 
 int kfsw_param_validate_entry(const struct kfsw_param_entry *entry,
@@ -250,7 +272,7 @@ void kfsw_param_value_changed(uint16_t id)
 	const struct kfsw_param_entry *entry = kfsw_param_find_id(id);
 	struct kfsw_param_value value;
 
-	if ((entry == NULL) || (kfsw_param_read_entry(entry, &value) != 0)) {
+	if ((entry == NULL) || (kfsw_param_read_stored_entry(entry, &value) != 0)) {
 		return;
 	}
 	if (kfsw_param_validate_entry(entry, &value) != 0) {
@@ -591,6 +613,16 @@ int kfsw_param_set(const char *name, const struct kfsw_param_value *value)
 	 */
 	if (result == 0) {
 		kfsw_log_info("PARAM: %s set (%s)", name, kfsw_param_mode_name(entry->info.flags));
+#if CONFIG_KFSW_PARAM_PERSISTENCE
+		/* Written after the lock is released, because saving reads every
+		 * entry and would otherwise re-enter the table lock. Only
+		 * persistent values are in a snapshot, so saving after a
+		 * volatile write costs a flash cycle for nothing. */
+		if (kfsw_param_autosave_enabled() &&
+		    ((entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) != 0U)) {
+			(void)kfsw_param_persist_save();
+		}
+#endif
 	} else {
 		kfsw_log_warning("PARAM: %s refused: %d", name, result);
 	}
@@ -633,6 +665,41 @@ int kfsw_param_visit(kfsw_param_visitor_t visitor, void *context)
 		}
 	}
 	kfsw_param_table_unlock();
+	return 0;
+}
+
+static atomic_t param_saves;
+static atomic_t param_load_failures;
+
+void kfsw_param_count_save(void)
+{
+	(void)atomic_inc(&param_saves);
+}
+
+void kfsw_param_count_load_failure(void)
+{
+	(void)atomic_inc(&param_load_failures);
+}
+
+int kfsw_param_get_stats(struct kfsw_param_stats *stats)
+{
+	if (stats == NULL) {
+		return -EINVAL;
+	}
+
+	kfsw_param_table_lock();
+	stats->count = (uint16_t)parameter_count;
+	stats->tables = (uint16_t)table_count;
+	stats->persistent = 0U;
+	for (size_t index = 0U; index < parameter_count; index++) {
+		if ((parameter_table[index].info.flags & KFSW_PARAM_FLAG_PERSISTENT) != 0U) {
+			stats->persistent++;
+		}
+	}
+	kfsw_param_table_unlock();
+
+	stats->saves = (uint32_t)atomic_get(&param_saves);
+	stats->load_failures = (uint32_t)atomic_get(&param_load_failures);
 	return 0;
 }
 

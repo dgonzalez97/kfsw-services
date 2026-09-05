@@ -258,6 +258,34 @@ int kfsw_param_visit_tables(kfsw_param_table_visitor_t visitor, void *context);
 /** Registered local tables. */
 size_t kfsw_param_table_count(void);
 
+/** What the parameter service knows about itself. */
+struct kfsw_param_stats {
+	/** Parameters registered across every table. */
+	uint16_t count;
+	/** Tables registered. */
+	uint16_t tables;
+	/** Of those parameters, the ones a snapshot carries. */
+	uint16_t persistent;
+	/** Snapshots written since boot. */
+	uint32_t saves;
+	/** Snapshot loads that failed for a reason other than absence. */
+	uint32_t load_failures;
+};
+
+/** Read what the service knows about itself. -EINVAL for a NULL destination. */
+int kfsw_param_get_stats(struct kfsw_param_stats *stats);
+
+/** Parameter table owned by the service itself, in the service band. */
+#define KFSW_PARAM_PARAM_TABLE_ID 26U
+/** Stable logical name paired with KFSW_PARAM_PARAM_TABLE_ID. */
+#define KFSW_PARAM_PARAM_TABLE_NAME "param"
+
+/** The parameter service describing itself. */
+extern const struct kfsw_param_definition_set kfsw_param_param_definitions;
+
+/** Whether an accepted change to a persistent value writes a snapshot. */
+bool kfsw_param_autosave_enabled(void);
+
 /**
  * @brief Name of the ownership band a table identifier falls in.
  *

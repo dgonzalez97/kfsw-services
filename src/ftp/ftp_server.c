@@ -391,6 +391,11 @@ K_THREAD_DEFINE(kfsw_ftp_worker_thread, CONFIG_KFSW_FTP_WORKER_STACK_SIZE, ftp_w
 K_THREAD_DEFINE(kfsw_ftp_acceptor_thread, CONFIG_KFSW_FTP_ACCEPTOR_STACK_SIZE, ftp_acceptor, NULL,
 		NULL, NULL, CONFIG_KFSW_FTP_ACCEPTOR_PRIORITY, 0, SYS_FOREVER_MS);
 
+bool kfsw_ftp_server_is_busy(void)
+{
+	return atomic_get(&server_busy) != 0;
+}
+
 int kfsw_ftp_init(void)
 {
 	int result;
