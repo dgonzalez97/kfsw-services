@@ -14,6 +14,30 @@
 #define KFSW_BOOT_IMAGE_SIZE 40U
 
 static char boot_image[KFSW_BOOT_IMAGE_SIZE];
+#if CONFIG_KFSW_LASTWORDS
+/* What the previous run said, published so a pass can read it without holding a
+ * console open. Zero for every one of them means the node lost power outright,
+ * which is itself an answer.
+ */
+static uint8_t boot_last_reason;
+static uint32_t boot_last_detail;
+static uint32_t boot_last_uptime_ms;
+
+static void sample_last_reason(void *value)
+{
+	*(uint8_t *)value = (uint8_t)kfsw_boot_get_lastwords()->reason;
+}
+
+static void sample_last_detail(void *value)
+{
+	*(uint32_t *)value = kfsw_boot_get_lastwords()->detail;
+}
+
+static void sample_last_uptime_ms(void *value)
+{
+	*(uint32_t *)value = kfsw_boot_get_lastwords()->uptime_ms;
+}
+#endif
 static uint32_t boot_count;
 static uint32_t boot_reset_cause;
 static uint8_t boot_confirmed;
@@ -121,6 +145,37 @@ static const struct kfsw_param_definition boot_param_definitions[] = {
 		.value = &boot_reset_cause,
 		.sample = sample_reset_cause,
 	},
+#if CONFIG_KFSW_LASTWORDS
+	{
+		.offset = 0x30U,
+		.type = KFSW_PARAM_U8,
+		.flags = KFSW_PARAM_FLAG_READ_ONLY,
+		.name = "last_reason",
+		.description = "Why the previous run ended: 0 said nothing, 1 commanded, "
+			       "2 brownout, 3 fatal, 4 starved, 5 unknown",
+		.value = &boot_last_reason,
+		.sample = sample_last_reason,
+	},
+	{
+		.offset = 0x34U,
+		.type = KFSW_PARAM_X32,
+		.flags = KFSW_PARAM_FLAG_READ_ONLY,
+		.name = "last_detail",
+		.description = "Meaningful with the reason: the faulting address for a fatal",
+		.value = &boot_last_detail,
+		.sample = sample_last_detail,
+	},
+	{
+		.offset = 0x38U,
+		.type = KFSW_PARAM_U32,
+		.flags = KFSW_PARAM_FLAG_READ_ONLY,
+		.name = "last_uptime_ms",
+		.unit = "ms",
+		.description = "How long the previous run had been up when it went away",
+		.value = &boot_last_uptime_ms,
+		.sample = sample_last_uptime_ms,
+	},
+#endif
 	{
 		.offset = 0x28U,
 		.type = KFSW_PARAM_U8,
