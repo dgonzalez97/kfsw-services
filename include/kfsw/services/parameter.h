@@ -25,6 +25,12 @@ enum kfsw_param_type {
 	KFSW_PARAM_FLOAT,
 	KFSW_PARAM_DOUBLE,
 	KFSW_PARAM_STRING,
+	/**
+	 * A fixed-length array of bytes. Useful where one setting is really a
+	 * value per something -- a log level per module, say -- and publishing
+	 * one parameter per element would make the table impossible to read
+	 * and its offsets impossible to keep stable.
+	 */
 	KFSW_PARAM_DATA,
 	KFSW_PARAM_INVALID,
 };
@@ -55,8 +61,12 @@ struct kfsw_param_value {
 	/** Bytes carried: the scalar width, or the string length with its terminator. */
 	size_t size;
 	union kfsw_param_scalar scalar;
-	/** Value for KFSW_PARAM_STRING; always terminated, unused otherwise. */
-	char text[KFSW_PARAM_STRING_MAX];
+	union {
+		/** Value for KFSW_PARAM_STRING; always terminated. */
+		char text[KFSW_PARAM_STRING_MAX];
+		/** Value for KFSW_PARAM_DATA; size gives the element count. */
+		uint8_t bytes[KFSW_PARAM_STRING_MAX];
+	};
 };
 
 /**
@@ -159,10 +169,19 @@ typedef int (*kfsw_param_validator_t)(const union kfsw_param_scalar *value);
  * a route table, say -- would store one that the next boot cannot parse.
  */
 typedef int (*kfsw_param_text_validator_t)(const char *text);
+/**
+ * Validate a proposed byte array; return zero to accept it.
+ *
+ * Given the whole array rather than one element, because the values in an
+ * array are usually only sensible together.
+ */
+typedef int (*kfsw_param_data_validator_t)(const uint8_t *data, size_t size);
 /** Apply owner behavior after the backing scalar changes. */
 typedef void (*kfsw_param_changed_t)(const union kfsw_param_scalar *value);
 /** Apply owner behavior after the backing string changes. */
 typedef void (*kfsw_param_text_changed_t)(const char *text);
+/** Apply owner behavior after the backing byte array changes. */
+typedef void (*kfsw_param_data_changed_t)(const uint8_t *data, size_t size);
 /**
  * Refresh backing storage from live state immediately before it is read.
  *
@@ -186,8 +205,9 @@ struct kfsw_param_definition {
 	uint8_t offset;
 	enum kfsw_param_type type;
 	/**
-	 * Storage capacity in bytes for a KFSW_PARAM_STRING, terminator
-	 * included. Left zero for a scalar, whose width comes from its type.
+	 * Storage in bytes: for a KFSW_PARAM_STRING the capacity with its
+	 * terminator, for a KFSW_PARAM_DATA the element count. Left zero for a
+	 * scalar, whose width comes from its type.
 	 */
 	uint16_t capacity;
 	uint32_t flags;
@@ -202,6 +222,10 @@ struct kfsw_param_definition {
 	kfsw_param_changed_t changed;
 	kfsw_param_text_validator_t validate_text;
 	kfsw_param_text_changed_t changed_text;
+	kfsw_param_data_validator_t validate_data;
+	kfsw_param_data_changed_t changed_data;
+	/** Compiled default for a KFSW_PARAM_DATA; NULL means all zero. */
+	const uint8_t *default_data;
 	kfsw_param_sample_t sample;
 };
 

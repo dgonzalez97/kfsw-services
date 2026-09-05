@@ -13,6 +13,8 @@
 #include <kfsw/platform/storage.h>
 #include <kfsw/services/fwu.h>
 #include <kfsw/services/fwu_lite.h>
+/* Attributes this file's messages, so its level can be raised alone. */
+#define KFSW_LOG_MODULE KFSW_LOG_MODULE_FWU
 #include <kfsw/services/log.h>
 
 #if CONFIG_KFSW_FWU_LITE_HOST_FILES

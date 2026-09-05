@@ -9,6 +9,8 @@
 #include <zephyr/sys/crc.h>
 
 #include <kfsw/platform/storage.h>
+/* Attributes this file's messages, so its level can be raised alone. */
+#define KFSW_LOG_MODULE KFSW_LOG_MODULE_PARAM
 #include <kfsw/services/log.h>
 #include <kfsw/services/parameter.h>
 
@@ -43,6 +45,10 @@ enum persist_type {
 	/* Stored with its terminator, so value_size carries the whole thing and
 	 * a shorter string does not have to be padded. */
 	PERSIST_TYPE_STRING = 7,
+	/* Fixed length, so value_size is the element count and a snapshot
+	 * written by a build with a different array size is refused rather
+	 * than half applied. */
+	PERSIST_TYPE_DATA = 8,
 };
 
 _Static_assert(sizeof(float) == sizeof(uint32_t),
@@ -97,6 +103,10 @@ static int persistent_type(const struct kfsw_param_entry *entry, uint8_t *type,
 	case KFSW_PARAM_FLOAT:
 		*type = PERSIST_TYPE_FLOAT;
 		*value_size = sizeof(float);
+		return 0;
+	case KFSW_PARAM_DATA:
+		*type = PERSIST_TYPE_DATA;
+		*value_size = entry->info.array_size;
 		return 0;
 	case KFSW_PARAM_STRING:
 		*type = PERSIST_TYPE_STRING;
@@ -160,6 +170,9 @@ static int encode_value(const struct kfsw_param_entry *entry, uint8_t *output, s
 	case PERSIST_TYPE_STRING:
 		memcpy(output, value.text, value_size);
 		break;
+	case PERSIST_TYPE_DATA:
+		memcpy(output, value.bytes, value_size);
+		break;
 	default:
 		return -ENOTSUP;
 	}
@@ -207,7 +220,8 @@ static int build_snapshot(size_t *snapshot_size)
 		/* Checked against the capacity rather than the current length,
 		 * because a later save of a longer string must not be the one
 		 * that discovers there was never room for it. */
-		if (entry->info.type == KFSW_PARAM_STRING) {
+		if ((entry->info.type == KFSW_PARAM_STRING) ||
+		    (entry->info.type == KFSW_PARAM_DATA)) {
 			value_size = entry->info.array_size;
 		}
 		if ((entry_count >= KFSW_PARAM_PERSIST_MAX_ENTRY_COUNT) ||
@@ -398,6 +412,18 @@ static int decode_and_set(const struct kfsw_param_entry *param_entry,
 		raw_value = sys_get_be32(persist_entry->value);
 		memcpy(&value.scalar.f32, &raw_value, sizeof(value.scalar.f32));
 		break;
+	case PERSIST_TYPE_DATA:
+		/* Length must match exactly: an array from a build with a
+		 * different element count is a different parameter, and applying
+		 * part of it would leave the rest at values nobody chose. */
+		if ((persist_entry->value_size == 0U) ||
+		    (persist_entry->value_size != param_entry->info.array_size) ||
+		    (persist_entry->value_size > sizeof(value.bytes))) {
+			return -EBADMSG;
+		}
+		memcpy(value.bytes, persist_entry->value, persist_entry->value_size);
+		value.size = persist_entry->value_size;
+		break;
 	case PERSIST_TYPE_STRING:
 		/* A stored string that lost its terminator is a corrupt entry,
 		 * not one to repair by guessing where it ended. */
@@ -416,6 +442,8 @@ static int decode_and_set(const struct kfsw_param_entry *param_entry,
 	if (result == 0) {
 		if (value.type == KFSW_PARAM_STRING) {
 			kfsw_param_write_text_entry(param_entry, value.text);
+		} else if (value.type == KFSW_PARAM_DATA) {
+			kfsw_param_write_data_entry(param_entry, value.bytes, value.size);
 		} else {
 			kfsw_param_write_entry(param_entry, &value.scalar);
 		}

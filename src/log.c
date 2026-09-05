@@ -15,6 +15,47 @@
 
 static atomic_t kfsw_log_level = ATOMIC_INIT(CONFIG_KFSW_LOG_MIN_LEVEL);
 
+/*
+ * One minimum level per module, so a component that has become noisy can be
+ * quietened without going blind everywhere else. The global level still
+ * applies: a message has to clear both, which keeps `log_level` meaning what
+ * it always did rather than becoming a floor nobody expects.
+ */
+static uint8_t kfsw_log_module_levels[KFSW_LOG_MODULE_COUNT];
+
+static const char *const kfsw_log_module_names[KFSW_LOG_MODULE_COUNT] = {
+	"app", "boot", "log",    "param",   "storage", "csp",   "uart",
+	"ftp", "fwu",  "health", "command", "event",   "radio",
+};
+
+const char *kfsw_log_module_name(enum kfsw_log_module module)
+{
+	if ((unsigned int)module >= KFSW_LOG_MODULE_COUNT) {
+		return "unknown";
+	}
+	return kfsw_log_module_names[module];
+}
+
+uint8_t kfsw_log_get_module_level(enum kfsw_log_module module)
+{
+	if ((unsigned int)module >= KFSW_LOG_MODULE_COUNT) {
+		return 0U;
+	}
+	return kfsw_log_module_levels[module];
+}
+
+int kfsw_log_set_module_level(enum kfsw_log_module module, uint8_t level)
+{
+	if ((unsigned int)module >= KFSW_LOG_MODULE_COUNT) {
+		return -EINVAL;
+	}
+	if (level > 4U) {
+		return -ERANGE;
+	}
+	kfsw_log_module_levels[module] = level;
+	return 0;
+}
+
 /* Used by the write path, which is compiled whatever the parameter service is
  * doing, so these cannot live behind the parameter guard.
  */
@@ -66,6 +107,37 @@ static int validate_log_color(const union kfsw_param_scalar *value)
 	return (value->u8 > 1U) ? -ERANGE : 0;
 }
 
+static uint8_t kfsw_log_levels_value[KFSW_LOG_MODULE_COUNT];
+
+static void sample_module_levels(void *value)
+{
+	uint8_t *levels = value;
+
+	for (unsigned int index = 0U; index < KFSW_LOG_MODULE_COUNT; index++) {
+		levels[index] = kfsw_log_module_levels[index];
+	}
+}
+
+static int validate_module_levels(const uint8_t *data, size_t size)
+{
+	/* Checked as a whole rather than per element, because a partially valid
+	 * array would be refused after some of it had already been judged
+	 * acceptable, and the caller could not tell which half. */
+	for (size_t index = 0U; index < size; index++) {
+		if (data[index] > 4U) {
+			return -ERANGE;
+		}
+	}
+	return 0;
+}
+
+static void apply_module_levels(const uint8_t *data, size_t size)
+{
+	for (size_t index = 0U; index < size; index++) {
+		(void)kfsw_log_set_module_level((enum kfsw_log_module)index, data[index]);
+	}
+}
+
 static const struct kfsw_param_definition log_param_definitions[] = {
 	{
 		.offset = 0x00U,
@@ -78,6 +150,21 @@ static const struct kfsw_param_definition log_param_definitions[] = {
 		.validate = validate_log_level,
 		.changed = apply_log_level,
 		.sample = sample_log_level,
+	},
+	{
+		.offset = 0x10U,
+		.type = KFSW_PARAM_DATA,
+		.capacity = KFSW_LOG_MODULE_COUNT,
+		/* One level per module, in the order of enum kfsw_log_module.
+		 * Persistent, because a console tuned for a mission should not
+		 * come back noisy after a reset. */
+		.flags = KFSW_PARAM_FLAG_CONFIGURATION | KFSW_PARAM_FLAG_PERSISTENT,
+		.name = "log_levels",
+		.description = "Minimum level per module, raising the global one for that module",
+		.value = kfsw_log_levels_value,
+		.validate_data = validate_module_levels,
+		.changed_data = apply_module_levels,
+		.sample = sample_module_levels,
 	},
 	{
 		.offset = 0x04U,
@@ -159,11 +246,19 @@ static const char *severity_color(uint8_t severity)
 }
 
 #if CONFIG_KFSW_LOG_MIN_LEVEL < 4
-static void kfsw_log_vwrite(uint8_t severity, const char *level, const char *format, va_list args)
+static void kfsw_log_vwrite(uint8_t module, uint8_t severity, const char *level, const char *format,
+			    va_list args)
 {
 	char message[KFSW_LOG_MESSAGE_SIZE];
 	size_t i;
 
+	/* Both levels apply. The global one is the floor everything clears, and
+	 * the module one raises it for that component alone; a module can be
+	 * quietened but not made louder than the console is set to. */
+	if ((module < KFSW_LOG_MODULE_COUNT) && (severity < kfsw_log_module_levels[module])) {
+		(void)atomic_inc(&kfsw_log_dropped);
+		return;
+	}
 	if (severity < kfsw_log_get_level()) {
 		/* Counted rather than passed over silently: a console that has
 		 * gone quiet because the level was raised looks exactly like one
@@ -192,46 +287,21 @@ static void kfsw_log_vwrite(uint8_t severity, const char *level, const char *for
 }
 #endif
 
-#if CONFIG_KFSW_LOG_MIN_LEVEL <= 3
-void kfsw_log_error(const char *format, ...)
+#if CONFIG_KFSW_LOG_MIN_LEVEL < 4
+/*
+ * One entry point. The macros in the header supply the module and severity, so
+ * a call site does not change and a file only has to say which module it is.
+ */
+void kfsw_log_write(uint8_t module, uint8_t severity, const char *format, ...)
 {
+	static const char *const names[] = {"DEBUG", "INFO", "WARNING", "ERROR"};
 	va_list args;
 
+	if (severity > 3U) {
+		return;
+	}
 	va_start(args, format);
-	kfsw_log_vwrite(3U, "ERROR", format, args);
-	va_end(args);
-}
-#endif
-
-#if CONFIG_KFSW_LOG_MIN_LEVEL <= 2
-void kfsw_log_warning(const char *format, ...)
-{
-	va_list args;
-
-	va_start(args, format);
-	kfsw_log_vwrite(2U, "WARNING", format, args);
-	va_end(args);
-}
-#endif
-
-#if CONFIG_KFSW_LOG_MIN_LEVEL <= 1
-void kfsw_log_info(const char *format, ...)
-{
-	va_list args;
-
-	va_start(args, format);
-	kfsw_log_vwrite(1U, "INFO", format, args);
-	va_end(args);
-}
-#endif
-
-#if CONFIG_KFSW_LOG_MIN_LEVEL <= 0
-void kfsw_log_debug(const char *format, ...)
-{
-	va_list args;
-
-	va_start(args, format);
-	kfsw_log_vwrite(0U, "DEBUG", format, args);
+	kfsw_log_vwrite(module, severity, names[severity], format, args);
 	va_end(args);
 }
 #endif

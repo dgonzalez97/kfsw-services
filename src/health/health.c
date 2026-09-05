@@ -10,6 +10,8 @@
 #include <kfsw/platform/time.h>
 #include <kfsw/platform/watchdog.h>
 #include <kfsw/services/health.h>
+/* Attributes this file's messages, so its level can be raised alone. */
+#define KFSW_LOG_MODULE KFSW_LOG_MODULE_HEALTH
 #include <kfsw/services/log.h>
 #if CONFIG_KFSW_EVENT
 #include <kfsw/services/event.h>

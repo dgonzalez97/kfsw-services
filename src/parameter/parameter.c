@@ -7,6 +7,8 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/atomic.h>
 
+/* Attributes this file's messages, so its level can be raised alone. */
+#define KFSW_LOG_MODULE KFSW_LOG_MODULE_PARAM
 #include <kfsw/services/log.h>
 #include <kfsw/services/parameter.h>
 
@@ -71,7 +73,7 @@ static size_t scalar_size(enum kfsw_param_type type)
  */
 static size_t entry_capacity(const struct kfsw_param_entry *entry)
 {
-	if (entry->info.type == KFSW_PARAM_STRING) {
+	if ((entry->info.type == KFSW_PARAM_STRING) || (entry->info.type == KFSW_PARAM_DATA)) {
 		return entry->info.array_size;
 	}
 	return scalar_size(entry->info.type);
@@ -171,6 +173,14 @@ static int read_entry(const struct kfsw_param_entry *entry, struct kfsw_param_va
 		return 0;
 	}
 
+	if (entry->info.type == KFSW_PARAM_DATA) {
+		/* Always the whole array: the elements of one are only sensible
+		 * together, so a partial read would be a different value. */
+		memcpy(value->bytes, entry->definition->value, size);
+		value->size = size;
+		return 0;
+	}
+
 	value->size = size;
 	memcpy(&value->scalar, entry->definition->value, size);
 	return 0;
@@ -224,6 +234,19 @@ int kfsw_param_validate_entry(const struct kfsw_param_entry *entry,
 		return 0;
 	}
 
+	if (entry->info.type == KFSW_PARAM_DATA) {
+		/* Exact length: an array is written whole or not at all, because
+		 * a short write would leave some elements at their old values
+		 * and the caller could not tell which. */
+		if (value->size != size) {
+			return -EMSGSIZE;
+		}
+		if (entry->definition->validate_data != NULL) {
+			return entry->definition->validate_data(value->bytes, value->size);
+		}
+		return 0;
+	}
+
 	if (value->size != size) {
 		return -EMSGSIZE;
 	}
@@ -244,6 +267,15 @@ void kfsw_param_write_entry(const struct kfsw_param_entry *entry,
 	}
 }
 
+void kfsw_param_write_data_entry(const struct kfsw_param_entry *entry, const uint8_t *data,
+				 size_t size)
+{
+	memcpy(entry->definition->value, data, size);
+	if (entry->definition->changed_data != NULL) {
+		entry->definition->changed_data(entry->definition->value, size);
+	}
+}
+
 void kfsw_param_write_text_entry(const struct kfsw_param_entry *entry, const char *text)
 {
 	(void)copy_text(entry->definition->value, entry->info.array_size, text,
@@ -258,6 +290,19 @@ void kfsw_param_write_text_entry(const struct kfsw_param_entry *entry, const cha
  */
 void kfsw_param_write_default(const struct kfsw_param_entry *entry)
 {
+	if (entry->info.type == KFSW_PARAM_DATA) {
+		const size_t size = entry->info.array_size;
+
+		if (entry->definition->default_data != NULL) {
+			kfsw_param_write_data_entry(entry, entry->definition->default_data, size);
+		} else {
+			(void)memset(entry->definition->value, 0, size);
+			if (entry->definition->changed_data != NULL) {
+				entry->definition->changed_data(entry->definition->value, size);
+			}
+		}
+		return;
+	}
 	if (entry->info.type == KFSW_PARAM_STRING) {
 		kfsw_param_write_text_entry(entry, (entry->definition->default_text != NULL)
 							   ? entry->definition->default_text
@@ -284,6 +329,12 @@ void kfsw_param_value_changed(uint16_t id)
 	if (entry->info.type == KFSW_PARAM_STRING) {
 		if (entry->definition->changed_text != NULL) {
 			entry->definition->changed_text(value.text);
+		}
+		return;
+	}
+	if (entry->info.type == KFSW_PARAM_DATA) {
+		if (entry->definition->changed_data != NULL) {
+			entry->definition->changed_data(value.bytes, value.size);
 		}
 		return;
 	}
@@ -370,11 +421,20 @@ static int add_definition(const struct kfsw_param_definition_set *set,
 		return -EINVAL;
 	}
 
-	/* A string declares the storage it owns; a scalar's width comes from
-	 * its type. A string without a capacity, or one larger than a value can
-	 * carry, is refused here rather than overrunning owner storage later.
+	/* A string or an array declares the storage it owns; a scalar's width
+	 * comes from its type. One without a capacity, or larger than a value
+	 * can carry, is refused here rather than overrunning owner storage
+	 * later.
 	 */
-	if (definition->type == KFSW_PARAM_STRING) {
+	if (definition->type == KFSW_PARAM_DATA) {
+		if ((definition->capacity == 0U) ||
+		    (definition->capacity > KFSW_PARAM_STRING_MAX)) {
+			kfsw_log_error("PARAM: %s declares %u elements", definition->name,
+				       definition->capacity);
+			return -EINVAL;
+		}
+		size = definition->capacity;
+	} else if (definition->type == KFSW_PARAM_STRING) {
 		if ((definition->capacity < 2U) || (definition->capacity > KFSW_PARAM_STRING_MAX)) {
 			kfsw_log_error("PARAM: %s declares a capacity of %u", definition->name,
 				       definition->capacity);
@@ -407,7 +467,20 @@ static int add_definition(const struct kfsw_param_definition_set *set,
 	/* A definition that refuses its own default would leave the table in a
 	 * state its owner never sanctioned, so it is caught at registration.
 	 */
-	if (definition->type == KFSW_PARAM_STRING) {
+	if (definition->type == KFSW_PARAM_DATA) {
+		if (definition->validate_data != NULL) {
+			static const uint8_t zero[KFSW_PARAM_STRING_MAX];
+			const uint8_t *data = (definition->default_data != NULL)
+						      ? definition->default_data
+						      : zero;
+
+			if (definition->validate_data(data, definition->capacity) != 0) {
+				kfsw_log_error("PARAM: %s refuses its own default",
+					       definition->name);
+				return -ERANGE;
+			}
+		}
+	} else if (definition->type == KFSW_PARAM_STRING) {
 		const char *text =
 			(definition->default_text != NULL) ? definition->default_text : "";
 
@@ -458,7 +531,8 @@ static int add_definition(const struct kfsw_param_definition_set *set,
 	 * a write takes effect immediately without the callback that applies it.
 	 */
 	flags = definition->flags;
-	if (definition->changed != NULL) {
+	if ((definition->changed != NULL) || (definition->changed_text != NULL) ||
+	    (definition->changed_data != NULL)) {
 		flags |= KFSW_PARAM_FLAG_LIVE;
 	}
 
@@ -473,7 +547,8 @@ static int add_definition(const struct kfsw_param_definition_set *set,
 				.id = wire_id,
 				.table = set->table,
 				.offset = definition->offset,
-				.array_size = (definition->type == KFSW_PARAM_STRING)
+				.array_size = ((definition->type == KFSW_PARAM_STRING) ||
+					       (definition->type == KFSW_PARAM_DATA))
 						      ? definition->capacity
 						      : 1U,
 				.type = definition->type,
@@ -600,6 +675,8 @@ int kfsw_param_set(const char *name, const struct kfsw_param_value *value)
 		if (result == 0) {
 			if (entry->info.type == KFSW_PARAM_STRING) {
 				kfsw_param_write_text_entry(entry, value->text);
+			} else if (entry->info.type == KFSW_PARAM_DATA) {
+				kfsw_param_write_data_entry(entry, value->bytes, value->size);
 			} else {
 				kfsw_param_write_entry(entry, &value->scalar);
 			}

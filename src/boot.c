@@ -7,6 +7,8 @@
 #include <kfsw/platform/reset.h>
 #include <kfsw/platform/time.h>
 #include <kfsw/services/boot.h>
+/* Attributes this file's messages, so its level can be raised alone. */
+#define KFSW_LOG_MODULE KFSW_LOG_MODULE_BOOT
 #include <kfsw/services/log.h>
 #if CONFIG_KFSW_EVENT
 #include <kfsw/services/event.h>
