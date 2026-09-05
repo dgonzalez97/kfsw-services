@@ -67,6 +67,7 @@ if(CONFIG_KFSW_PARAM_CSP)
 
     set(kfsw_libparam_sources
         src/parameter/libparam_compat.c
+        src/parameter/libparam_print.c
         "${KFSW_LIBPARAM_ROOT}/src/mpack/mpack.c"
         "${KFSW_LIBPARAM_ROOT}/src/param/list/param_list.c"
         "${KFSW_LIBPARAM_ROOT}/src/param/param.c"
@@ -82,12 +83,22 @@ if(CONFIG_KFSW_PARAM_CSP)
         PROPERTIES COMPILE_OPTIONS "-Wno-double-promotion"
     )
 
+    # libparam prints its diagnostics with printf, one line per parameter while
+    # a descriptor list downloads. That buries the value an operator asked for.
+    # The library is vendored at an upstream revision west manages, so it is not
+    # edited; its printf is redirected here instead, into a debug-level log line
+    # attributed to the parameter module. See src/parameter/libparam_print.c.
+    target_compile_definitions(kfsw_libparam
+        PRIVATE printf=kfsw_libparam_printf
+    )
+
     target_include_directories(kfsw_libparam
         PUBLIC
             "${KFSW_LIBPARAM_GENERATED_INCLUDE}"
             "${KFSW_LIBPARAM_ROOT}/include"
         PRIVATE
             "${KFSW_LIBPARAM_ROOT}/src"
+            "${CMAKE_CURRENT_LIST_DIR}/include"
     )
 
     target_compile_definitions(kfsw_libparam
