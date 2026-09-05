@@ -9,6 +9,9 @@
 
 #include <kfsw/platform/time.h>
 #include <kfsw/platform/watchdog.h>
+#if CONFIG_KFSW_LASTWORDS
+#include <kfsw/platform/lastwords.h>
+#endif
 #include <kfsw/services/health.h>
 /* Attributes this file's messages, so its level can be raised alone. */
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_HEALTH
@@ -192,6 +195,14 @@ int kfsw_health_evaluate(void)
 	if (overdue == NULL) {
 		if (!was_ok) {
 			kfsw_log_info("Health: every component is reporting again");
+#if CONFIG_KFSW_LASTWORDS
+			/* Withdrawn, because the reset it predicted did not
+			 * come. Left in place, a later reset for an unrelated
+			 * cause would be blamed on a fault that had already
+			 * cleared. Only a note this service wrote is touched.
+			 */
+			(void)kfsw_lastwords_withdraw(KFSW_LASTWORDS_STARVED);
+#endif
 		}
 		health_state.state = KFSW_HEALTH_OK;
 		health_state.faulted_by[0] = '\0';
@@ -224,6 +235,15 @@ int kfsw_health_evaluate(void)
 	if (was_ok) {
 		kfsw_log_error("Health: %s is overdue; the watchdog will no longer be fed",
 			       overdue->name);
+#if CONFIG_KFSW_LASTWORDS
+		/* Written now rather than when the watchdog finally bites,
+		 * because by then nothing runs. The detail is how long the
+		 * component had been silent, which is what distinguishes a
+		 * thread that stopped from one that was merely late.
+		 */
+		kfsw_lastwords_write(KFSW_LASTWORDS_STARVED,
+				     (uint32_t)(now - overdue->last_report_ms), (uint32_t)now, 0U);
+#endif
 #if CONFIG_KFSW_EVENT
 		kfsw_event_emit(KFSW_EVENT_SOURCE_APP, KFSW_EVENT_HEALTH_FAULT, KFSW_EVENT_CRITICAL,
 				(const uint8_t *)overdue->name,
