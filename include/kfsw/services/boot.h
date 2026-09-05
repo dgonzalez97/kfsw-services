@@ -21,6 +21,11 @@ enum kfsw_event_boot_id {
 	/** Startup finished. Payload: reset cause big-endian u32, then a byte
 	 *  that is non-zero when the cause could not be read. */
 	KFSW_EVENT_BOOT_READY = 1,
+	/** The previous run left a note before it went away. Payload: reason
+	 *  byte, then detail, uptime in milliseconds and boot count, each a
+	 *  big-endian u32. Absent when the previous run said nothing, which is
+	 *  itself informative: the node lost power or was cut off mid-word. */
+	KFSW_EVENT_BOOT_LASTWORDS = 2,
 };
 
 /**
@@ -42,6 +47,19 @@ int kfsw_boot_get_reset_result(void);
 
 /** Version of the running image, from the build. */
 const char *kfsw_boot_get_image_version(void);
+
+#if CONFIG_KFSW_LASTWORDS
+#include <kfsw/platform/lastwords.h>
+
+/**
+ * @brief What the previous run said on its way down, if anything.
+ *
+ * Taken once during start-up and kept here, so several readers can ask without
+ * the first one consuming it. Reason is KFSW_LASTWORDS_NONE when nothing valid
+ * was left behind.
+ */
+const struct kfsw_lastwords *kfsw_boot_get_lastwords(void);
+#endif
 
 #if CONFIG_KFSW_PARAM
 /** Parameter table owned by this service, in the service band. */
