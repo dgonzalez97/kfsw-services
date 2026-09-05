@@ -26,6 +26,27 @@ if(NOT DEFINED KFSW_IMAGE_VERSION)
         if(kfsw_git_result EQUAL 0 AND kfsw_git_describe)
             set(KFSW_IMAGE_VERSION "${kfsw_git_describe}")
         endif()
+
+        # Resolved once, at configure time, so an incremental build after a
+        # commit or a checkout would otherwise keep reporting the commit that
+        # was current when the build directory was first configured. Watching
+        # HEAD and the ref it names makes CMake reconfigure when either moves.
+        # The "-dirty" suffix still only reflects the tree as it was then;
+        # naming the commit is what a build record is compared against.
+        set(kfsw_git_dir "${CMAKE_CURRENT_LIST_DIR}/../k-fsw/.git")
+        if(EXISTS "${kfsw_git_dir}/HEAD")
+            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                "${kfsw_git_dir}/HEAD")
+            file(READ "${kfsw_git_dir}/HEAD" kfsw_git_head)
+            string(STRIP "${kfsw_git_head}" kfsw_git_head)
+            if(kfsw_git_head MATCHES "^ref: (.+)$")
+                set(kfsw_git_ref "${kfsw_git_dir}/${CMAKE_MATCH_1}")
+                if(EXISTS "${kfsw_git_ref}")
+                    set_property(DIRECTORY APPEND PROPERTY
+                        CMAKE_CONFIGURE_DEPENDS "${kfsw_git_ref}")
+                endif()
+            endif()
+        endif()
     endif()
 endif()
 message(STATUS "K-FSW image version: ${KFSW_IMAGE_VERSION}")

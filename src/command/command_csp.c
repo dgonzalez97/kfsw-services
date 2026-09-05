@@ -264,6 +264,19 @@ int kfsw_command_invoke_remote(uint16_t node, const char *name, const struct kfs
 		return outcome;
 	}
 
+	/* No RDP here, deliberately. FTP and the parameter list use it because
+	 * they carry a stream, where one lost packet silently truncates the
+	 * result. A command is one packet out and one back, so RDP would add a
+	 * handshake and a teardown around a two-packet exchange, and on a slow
+	 * link that costs several round trips.
+	 *
+	 * The stronger reason is what a retransmission would mean. RDP makes
+	 * delivery at-least-once, and the server does not deduplicate: the
+	 * request identifier correlates the reply and nothing more. A resent
+	 * "reboot" would run twice. Without RDP a lost packet is a clean
+	 * timeout, the caller decides whether to repeat it, and a command runs
+	 * at most once.
+	 */
 	connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_COMMAND_CSP_PORT,
 				 kfsw_command_get_timeout_ms(), CSP_O_CRC32);
 	if (connection == NULL) {
