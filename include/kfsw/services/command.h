@@ -5,6 +5,10 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#if CONFIG_KFSW_PARAM
+#include <kfsw/services/parameter.h>
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -32,6 +36,25 @@ enum kfsw_command_type {
 	KFSW_COMMAND_TYPE_U32 = 1,
 	KFSW_COMMAND_TYPE_I32 = 2,
 	KFSW_COMMAND_TYPE_TEXT = 3,
+};
+
+/* Matches the Kconfig range, so a value accepted at runtime is one the
+ * composition could have been built with. */
+#define KFSW_COMMAND_TIMEOUT_MIN_MS 1000U
+#define KFSW_COMMAND_TIMEOUT_MAX_MS 120000U
+
+/** Lifetime totals for the service. Counters saturate and are never reset. */
+struct kfsw_command_stats {
+	/** Invocations that reached a handler or were refused before one. */
+	uint32_t invoked;
+	/** Invocations whose handler reported a failure. */
+	uint32_t failed;
+	/** Invocations naming a command that is not registered. */
+	uint32_t unknown;
+	/** Invocations refused before the handler ran. */
+	uint32_t rejected;
+	/** Commands in the frozen registry. */
+	uint16_t registered;
 };
 
 /** Outcome of one command invocation. */
@@ -168,6 +191,44 @@ int kfsw_command_invoke_id(uint16_t id, const struct kfsw_command_arg *args, siz
 /** Human-readable name for a status, for shell output and logs. */
 const char *kfsw_command_status_name(enum kfsw_command_status status);
 
+/** Read the lifetime totals. Returns -EINVAL for a NULL destination. */
+int kfsw_command_get_stats(struct kfsw_command_stats *stats);
+
+#if CONFIG_KFSW_COMMAND_CSP
+/** Timeout used by the next remote invocation. */
+uint32_t kfsw_command_get_timeout_ms(void);
+
+/** Whether a timeout would be accepted, without applying it. */
+int kfsw_command_check_timeout_ms(uint32_t timeout_ms);
+
+/**
+ * @brief Change the timeout used by new remote invocations.
+ *
+ * @retval 0 Applied to the next invocation.
+ * @retval -ERANGE Outside the range the composition could have been built with.
+ */
+int kfsw_command_set_timeout_ms(uint32_t timeout_ms);
+#endif
+
+/** Applies console echo. Provided by the composition, which owns the console. */
+typedef void (*kfsw_command_echo_handler_t)(bool enabled);
+
+/**
+ * @brief Register what applies console echo.
+ *
+ * The console belongs to the composition rather than to this service, so the
+ * service holds the setting and the composition applies it. Registering also
+ * applies the current value, so the default reaches the shell without waiting
+ * for anyone to write the parameter.
+ */
+void kfsw_command_set_echo_handler(kfsw_command_echo_handler_t handler);
+
+/** Whether the console repeats what is typed at it. Off by default. */
+bool kfsw_command_echo_enabled(void);
+
+/** Change console echo and apply it through the registered handler. */
+void kfsw_command_set_echo(bool enabled);
+
 #if defined(CONFIG_KFSW_COMMAND_CSP)
 
 /** Bind the command port and start serving remote requests. */
@@ -187,6 +248,16 @@ int kfsw_command_invoke_remote(uint16_t node, const char *name, const struct kfs
 			       size_t arg_count, struct kfsw_command_result *result);
 
 #endif /* CONFIG_KFSW_COMMAND_CSP */
+
+#if CONFIG_KFSW_PARAM
+/** Parameter table owned by this service, in the service band. */
+#define KFSW_COMMAND_PARAM_TABLE_ID 28U
+/** Stable logical name paired with KFSW_COMMAND_PARAM_TABLE_ID. */
+#define KFSW_COMMAND_PARAM_TABLE_NAME "command"
+
+/** Command counters and the timeout the service applies. */
+extern const struct kfsw_param_definition_set kfsw_command_param_definitions;
+#endif
 
 #ifdef __cplusplus
 }

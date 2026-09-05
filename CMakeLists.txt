@@ -4,7 +4,35 @@ set(kfsw_services_sources
 )
 
 if(CONFIG_KFSW_PARAM)
+    list(APPEND kfsw_services_sources src/boot-parameters/boot_table.c)
+endif()
+
+# The image version an operator reads back has to name the source it was built
+# from, or comparing a node against a build record proves nothing. Resolved
+# from the composition repository rather than this one, because that is what
+# pins every other repository. The fallback keeps a source tarball buildable.
+if(NOT DEFINED KFSW_IMAGE_VERSION)
+    find_package(Git QUIET)
+    set(KFSW_IMAGE_VERSION "unknown")
+    if(GIT_FOUND)
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} describe --tags --always --dirty
+            WORKING_DIRECTORY "${CMAKE_CURRENT_LIST_DIR}/../k-fsw"
+            OUTPUT_VARIABLE kfsw_git_describe
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+            RESULT_VARIABLE kfsw_git_result
+        )
+        if(kfsw_git_result EQUAL 0 AND kfsw_git_describe)
+            set(KFSW_IMAGE_VERSION "${kfsw_git_describe}")
+        endif()
+    endif()
+endif()
+message(STATUS "K-FSW image version: ${KFSW_IMAGE_VERSION}")
+
+if(CONFIG_KFSW_PARAM)
     list(APPEND kfsw_services_sources src/parameter/parameter.c)
+    list(APPEND kfsw_services_sources src/param-parameters/param_table.c)
     if(CONFIG_KFSW_PARAM_PERSISTENCE)
         list(APPEND kfsw_services_sources src/parameter/parameter_persistence.c)
     endif()
@@ -82,9 +110,13 @@ if(CONFIG_KFSW_FTP)
         src/ftp/ftp_link_csp.c
         src/ftp/ftp_protocol.c
         src/ftp/ftp_server.c
+        src/ftp/ftp_state.c
         src/ftp/ftp_store.c
         src/ftp/ftp_transfer.c
     )
+    if(CONFIG_KFSW_PARAM)
+        list(APPEND kfsw_services_sources src/ftp-parameters/ftp_table.c)
+    endif()
 endif()
 
 if(CONFIG_KFSW_EVENT)
@@ -116,6 +148,9 @@ endif()
 
 if(CONFIG_KFSW_COMMAND)
     list(APPEND kfsw_services_sources src/command/command.c)
+    if(CONFIG_KFSW_PARAM)
+        list(APPEND kfsw_services_sources src/command-parameters/command_table.c)
+    endif()
     if(CONFIG_KFSW_COMMAND_CSP)
         list(APPEND kfsw_services_sources
             src/command/command_csp.c
@@ -131,6 +166,11 @@ add_library(kfsw::services ALIAS kfsw_services)
 target_include_directories(kfsw_services
     PUBLIC
         ${CMAKE_CURRENT_LIST_DIR}/include
+)
+
+target_compile_definitions(kfsw_services
+    PRIVATE
+        KFSW_IMAGE_VERSION="${KFSW_IMAGE_VERSION}"
 )
 
 target_link_libraries(kfsw_services

@@ -2,6 +2,7 @@
 #define KFSW_SERVICES_FTP_INTERNAL_H
 
 #include <stddef.h>
+#include <stdbool.h>
 #include <stdint.h>
 
 #include <zephyr/fs/fs.h>
@@ -72,6 +73,12 @@ struct kfsw_ftp_workspace {
 	char temporary_path[KFSW_FTP_FULL_PATH_SIZE];
 	uint8_t chunk[KFSW_FTP_CHUNK_SIZE];
 };
+
+/* Counted where an outcome is already known, in ftp_client.c. */
+void kfsw_ftp_count_transfer(uint32_t bytes, bool failed);
+
+/* Owned by the server, read by the stats getter in ftp_state.c. */
+bool kfsw_ftp_server_is_busy(void);
 
 /* Defined by the transport backend; see ftp_link.h. */
 struct kfsw_ftp_link;

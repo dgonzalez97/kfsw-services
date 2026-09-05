@@ -77,7 +77,7 @@ static void serve_request(csp_conn_t *connection, uint16_t source_node)
 	csp_packet_t *packet;
 	int decoded;
 
-	packet = csp_read(connection, CONFIG_KFSW_COMMAND_TIMEOUT_MS);
+	packet = csp_read(connection, kfsw_command_get_timeout_ms());
 	if (packet == NULL) {
 		return;
 	}
@@ -190,7 +190,7 @@ static int receive_result(csp_conn_t *connection, uint16_t request_id,
 	csp_packet_t *packet;
 	size_t detail_size;
 
-	packet = csp_read(connection, CONFIG_KFSW_COMMAND_TIMEOUT_MS);
+	packet = csp_read(connection, kfsw_command_get_timeout_ms());
 	if (packet == NULL) {
 		return -ETIMEDOUT;
 	}
@@ -265,7 +265,7 @@ int kfsw_command_invoke_remote(uint16_t node, const char *name, const struct kfs
 	}
 
 	connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_COMMAND_CSP_PORT,
-				 CONFIG_KFSW_COMMAND_TIMEOUT_MS, CSP_O_CRC32);
+				 kfsw_command_get_timeout_ms(), CSP_O_CRC32);
 	if (connection == NULL) {
 		k_mutex_unlock(&command_client_lock);
 		return -ECONNREFUSED;

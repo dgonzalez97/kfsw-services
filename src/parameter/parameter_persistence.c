@@ -183,9 +183,14 @@ static int build_snapshot(size_t *snapshot_size)
 		uint16_t value_size;
 		uint8_t type;
 
+		/* Read-only means an operator cannot write it, not that it
+		 * cannot be kept. A boot counter is exactly that: the service
+		 * owns the value and nobody should be able to rewrite the
+		 * history of how many times the node has restarted, but losing
+		 * the count on every restart would defeat the point of it.
+		 */
 		if ((entry->info.node != 0U) ||
-		    ((entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) == 0U) ||
-		    entry->info.read_only) {
+		    ((entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) == 0U)) {
 			continue;
 		}
 
@@ -437,8 +442,7 @@ static int apply_snapshot(size_t size, uint16_t entry_count)
 		name[entry.name_size] = '\0';
 		param_entry = kfsw_param_find_name(name);
 		if ((param_entry == NULL) ||
-		    ((param_entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) == 0U) ||
-		    param_entry->info.read_only) {
+		    ((param_entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) == 0U)) {
 			kfsw_log_warning("Ignoring unknown persistent parameter '%s'", name);
 			continue;
 		}
@@ -454,7 +458,7 @@ static int apply_snapshot(size_t size, uint16_t entry_count)
 	return 0;
 }
 
-int kfsw_param_persist_save(void)
+static int persist_save(void)
 {
 	struct fs_file_t file;
 	size_t snapshot_size;
@@ -503,7 +507,7 @@ out:
 	return result;
 }
 
-int kfsw_param_persist_load(void)
+static int persist_load(void)
 {
 	struct fs_dirent entry;
 	struct fs_file_t file;
@@ -567,4 +571,30 @@ int kfsw_param_persist_clear(void)
 		return active_result;
 	}
 	return ((temp_result == 0) || (temp_result == -ENOENT)) ? 0 : temp_result;
+}
+
+/*
+ * Counted at one exit each rather than at every return inside. A snapshot that
+ * fails to load is the difference between running on stored settings and
+ * running on compiled defaults, and nothing else records which happened.
+ */
+int kfsw_param_persist_save(void)
+{
+	int result = persist_save();
+
+	if (result == 0) {
+		kfsw_param_count_save();
+	}
+	return result;
+}
+
+int kfsw_param_persist_load(void)
+{
+	int result = persist_load();
+
+	/* A missing snapshot is the ordinary first boot, not a failure. */
+	if ((result != 0) && (result != -ENOENT)) {
+		kfsw_param_count_load_failure();
+	}
+	return result;
 }

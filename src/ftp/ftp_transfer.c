@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include <zephyr/fs/fs.h>
+#include <zephyr/sys/util.h>
 #include <zephyr/sys/crc.h>
 
 #if CONFIG_KFSW_FWU
@@ -72,8 +73,12 @@ int kfsw_ftp_transfer_send(struct kfsw_ftp_transfer *transfer)
 		return -EINVAL;
 	}
 	while ((result == 0) && (transfer->offset < transfer->total_size)) {
-		ssize_t bytes_read = fs_read(&transfer->file, transfer->workspace->chunk,
-					     sizeof(transfer->workspace->chunk));
+		/* The buffer is sized at build time; the runtime value only ever
+		 * shortens what is put in it, which is what makes a smaller
+		 * chunk safe to set on a link that loses long frames. */
+		ssize_t bytes_read = fs_read(
+			&transfer->file, transfer->workspace->chunk,
+			MIN((size_t)kfsw_ftp_get_chunk_size(), sizeof(transfer->workspace->chunk)));
 		struct kfsw_ftp_message data_message = {
 			.opcode = transfer->data_opcode,
 			.request_id = transfer->request_id,
