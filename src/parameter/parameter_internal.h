@@ -32,6 +32,8 @@ int kfsw_param_validate_entry(const struct kfsw_param_entry *entry,
 void kfsw_param_write_entry(const struct kfsw_param_entry *entry,
 			    const union kfsw_param_scalar *value);
 void kfsw_param_write_text_entry(const struct kfsw_param_entry *entry, const char *text);
+void kfsw_param_write_data_entry(const struct kfsw_param_entry *entry, const uint8_t *data,
+				 size_t size);
 void kfsw_param_write_default(const struct kfsw_param_entry *entry);
 void kfsw_param_value_changed(uint16_t id);
 void kfsw_param_sample_all(void);

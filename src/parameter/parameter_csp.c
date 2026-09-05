@@ -16,6 +16,8 @@
 #include <param/param_server.h>
 
 #include <kfsw/comms/csp.h>
+/* Attributes this file's messages, so its level can be raised alone. */
+#define KFSW_LOG_MODULE KFSW_LOG_MODULE_PARAM
 #include <kfsw/services/log.h>
 #include <kfsw/services/parameter.h>
 
@@ -214,6 +216,14 @@ static int validate_scalar(const param_t *param, const struct kfsw_param_value *
 	}
 
 	type = from_libparam_type((param_type_e)param->type);
+	if (type == KFSW_PARAM_DATA) {
+		/* Written whole or not at all: a short write would leave some
+		 * elements at their old values with no way to tell which. */
+		if ((value->type != type) || (value->size != param->array_size)) {
+			return -EMSGSIZE;
+		}
+		return 0;
+	}
 	if (type == KFSW_PARAM_STRING) {
 		if (value->type != type) {
 			return -EMSGSIZE;
@@ -246,6 +256,17 @@ static int read_scalar(const param_t *param, struct kfsw_param_value *value)
 	}
 
 	type = from_libparam_type((param_type_e)param->type);
+
+	if (type == KFSW_PARAM_DATA) {
+		if ((param->array_size == 0U) || (param->array_size > sizeof(value->bytes))) {
+			return -ENOTSUP;
+		}
+		memset(value, 0, sizeof(*value));
+		value->type = type;
+		param_get_data(param, value->bytes, (int)param->array_size);
+		value->size = param->array_size;
+		return 0;
+	}
 
 	if (type == KFSW_PARAM_STRING) {
 		size_t length;
@@ -797,6 +818,8 @@ int kfsw_param_remote_set(uint16_t node, const char *name, const struct kfsw_par
 		kfsw_param_table_lock();
 		if (value->type == KFSW_PARAM_STRING) {
 			param_set_string(param, value->text, (int)value->size);
+		} else if (value->type == KFSW_PARAM_DATA) {
+			param_set_data(param, value->bytes, (int)value->size);
 		} else {
 			param_set(param, 0U, (void *)&value->scalar);
 		}

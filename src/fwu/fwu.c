@@ -16,6 +16,8 @@
 #endif
 
 #include <kfsw/services/fwu.h>
+/* Attributes this file's messages, so its level can be raised alone. */
+#define KFSW_LOG_MODULE KFSW_LOG_MODULE_FWU
 #include <kfsw/services/log.h>
 
 #define KFSW_FWU_PARTITION_NODE DT_CHOSEN(kfsw_fwu_partition)
