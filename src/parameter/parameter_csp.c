@@ -755,14 +755,26 @@ static int push_remote(const param_t *param, uint16_t node, const struct kfsw_pa
 	return result;
 }
 
-int kfsw_param_remote_get(uint16_t node, const char *name, struct kfsw_param_value *value)
+/*
+ * The descriptor list is one packet per parameter, so downloading it to read a
+ * single value costs as much as reading the whole table -- on exactly the link
+ * where that matters most. A node's descriptors do not change while it is up,
+ * so they are fetched once and reused; only a name this node has never seen
+ * pays for a refresh.
+ */
+static int find_remote(uint16_t node, const char *name, const param_t **found)
 {
 	const param_t *param;
 	int result;
 
-	if ((name == NULL) || (value == NULL)) {
-		return -EINVAL;
+	kfsw_param_table_lock();
+	param = param_list_find_name(node, name);
+	kfsw_param_table_unlock();
+	if (param != NULL) {
+		*found = param;
+		return 0;
 	}
+
 	result = kfsw_param_remote_refresh(node);
 	if (result != 0) {
 		return result;
@@ -773,6 +785,22 @@ int kfsw_param_remote_get(uint16_t node, const char *name, struct kfsw_param_val
 	kfsw_param_table_unlock();
 	if (param == NULL) {
 		return -ENOENT;
+	}
+	*found = param;
+	return 0;
+}
+
+int kfsw_param_remote_get(uint16_t node, const char *name, struct kfsw_param_value *value)
+{
+	const param_t *param;
+	int result;
+
+	if ((name == NULL) || (value == NULL)) {
+		return -EINVAL;
+	}
+	result = find_remote(node, name, &param);
+	if (result != 0) {
+		return result;
 	}
 
 	result = pull_remote(param, node);
@@ -794,13 +822,12 @@ int kfsw_param_remote_set(uint16_t node, const char *name, const struct kfsw_par
 	if ((name == NULL) || (value == NULL)) {
 		return -EINVAL;
 	}
-	result = kfsw_param_remote_refresh(node);
+	result = find_remote(node, name, &param);
 	if (result != 0) {
 		return result;
 	}
 
 	kfsw_param_table_lock();
-	param = param_list_find_name(node, name);
 	if (param == NULL) {
 		result = -ENOENT;
 	} else if ((param->mask & PM_READONLY) != 0U) {
