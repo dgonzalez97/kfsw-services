@@ -21,10 +21,12 @@
 static struct kfsw_hk_report reports[CONFIG_KFSW_HK_REPORTS];
 static struct kfsw_hk_stats stats;
 static bool initialized;
+#if CONFIG_KFSW_HK_PERSISTENCE
 /* Set while the saved set is being restored, so restoring does not rewrite the
  * file once per report as each one comes back.
  */
 static bool loading;
+#endif
 
 K_MUTEX_DEFINE(hk_lock);
 
