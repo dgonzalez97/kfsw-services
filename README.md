@@ -65,6 +65,10 @@ that exist to serve a write therefore skip the sample.
 [Space Inventor libparam](https://github.com/spaceinventor/libparam) wire
 codec, pinned as a separate west project. CSP itself stays in `kfsw-comms`.
 
+A write from a ground node reaching two flight nodes, and staying there:
+
+![Parameters read and written across a link](https://raw.githubusercontent.com/dgonzalez97/k-fsw/main/docs/media/param-over-a-link.gif)
+
 Descriptor listing runs over RDP by default. Without it a listing crossing a
 radio arrives short: the packets are independent, so a lost one silently
 removes a parameter from the list rather than failing the read.
@@ -155,6 +159,12 @@ Client and server over CSP, with RDP and CRC32 on every connection. RDP already
 provides flow control, retransmission and ordering, so the application protocol
 does not add a second retry layer on top. This is deliberately not TFTP, which
 carries all of that because it usually runs over UDP.
+
+Up, checked on the node, back down, and compared. The same CRC32 appears at
+every step — generated, uploaded, read back off the node, downloaded — and that
+repetition is what makes it a round trip rather than two separate transfers:
+
+![A file sent and fetched back](https://raw.githubusercontent.com/dgonzalez97/k-fsw/main/docs/media/file-transfer.gif)
 
 ### The layering rule
 
