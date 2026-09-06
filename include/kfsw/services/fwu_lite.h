@@ -18,22 +18,18 @@ extern "C" {
  * whichever starts a transfer first holds it, and the other is told the service
  * is busy.
  *
- * The difference is what each assumes about the link. The file transfer route
- * needs the image to exist as a file on the sending node and runs over a
- * reliable connection, which is convenient when there is somewhere to put a
- * file and the link is good. This route sends blocks straight from wherever
- * the sender has them, checks each block on arrival, and lets the sender repeat
- * a block that did not survive.
+ * They differ in what they assume about the link. File transfer needs the image
+ * to exist as a file and a reliable connection; this route sends blocks from
+ * wherever the sender has them and checks each one on arrival.
  *
- * Per-block checking is the point. A whole-image checksum tells you an eight
- * minute upload failed; a per-block one tells you which 192 bytes to send
- * again. A block that fails its check is not written and does not advance the
- * transfer, so repeating it is simply sending it once more.
+ * Per-block checking is the point: a whole-image checksum tells you an eight
+ * minute upload failed, a per-block one tells you which 192 bytes to send
+ * again. A failed block is not written and does not advance the transfer, so
+ * repeating it is just sending it once more.
  *
- * Reliable delivery is available but off by default. The per-block check and
- * repeat already recover losses, and layering a second retry mechanism
- * underneath adds connection state and timeouts that can stall a transfer on a
- * marginal link rather than reporting a block that needs resending.
+ * Reliable delivery is available but off by default. The per-block repeat
+ * already recovers losses, and a second retry layer underneath adds timeouts
+ * that stall a marginal link instead of naming the block to resend.
  *
  * @{
  */

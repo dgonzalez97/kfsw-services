@@ -20,21 +20,16 @@ extern "C" {
  * Decides whether the system is still working, and stops feeding the watchdog
  * when it is not.
  *
- * The platform owns the watchdog mechanism and knows nothing about health. It
- * feeds on a timer, which keeps a board alive but proves only that a timer is
- * running. This service takes the feeding over and makes it conditional: parts
- * of the system say they are still running, and the watchdog is fed only while
- * all of them have said so recently enough.
+ * Feeding a watchdog from a timer proves only that the timer runs. This service
+ * makes the feed conditional: components say they are still running, and the
+ * watchdog is fed only while all of them have said so recently enough.
  *
- * That is what closes the recovery chain. A component that stops checking in
- * stops the feed; the watchdog resets the part; the reset lands in the
- * bootloader; and an image still on trial is replaced by the one that worked.
- * Nothing in that sequence needs an operator, which is the point of it.
+ * That closes the recovery chain without an operator. A component stops
+ * checking in, the feed stops, the watchdog resets the board, and an image
+ * still on trial is replaced by the one that worked.
  *
- * A component is late, not dead, until its deadline passes. Deadlines are per
- * component because a radio worker and a storage worker do not run at the same
- * rate, and one deadline for both would either be too slow to catch the fast
- * one or too fast for the slow one.
+ * Deadlines are per component: a radio worker and a storage worker do not run
+ * at the same rate, and one deadline for both fits neither.
  *
  * @{
  */
@@ -93,9 +88,8 @@ struct kfsw_health_status {
 /**
  * @brief Register a component to be watched.
  *
- * Registration is deliberately explicit rather than automatic. A component
- * that is watched without knowing it will eventually be the reason a working
- * satellite resets itself.
+ * Explicit rather than automatic: a component watched without knowing it will
+ * eventually be the reason a working satellite resets itself.
  *
  * @param name Short name, truncated to @ref KFSW_HEALTH_NAME_SIZE.
  * @param deadline_ms How long this component may go without reporting. Must be

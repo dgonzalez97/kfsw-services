@@ -336,14 +336,11 @@ int kfsw_hk_get_definition(uint8_t report, struct kfsw_hk_entry *entries, size_t
 /*
  * One collection.
  *
- * The timestamp is taken once, at the start, and it is what the field is
- * called: local values are read in a tight loop and are coherent to within it,
- * but a remote value arrives over a radio and cannot be simultaneous with
- * anything. Claiming a snapshot would be a promise the protocol cannot keep.
+ * The timestamp is taken once, at the start, which is what the field is called:
+ * a remote value arrives over a radio and cannot be simultaneous with anything.
  *
- * An entry that cannot be read is zero-filled and flagged rather than dropped,
- * so the layout still matches the definition ground holds. A short frame that
- * silently shifted every later value would be worse than a marked absence.
+ * An unreadable entry is zero-filled and flagged, not dropped, so the layout
+ * still matches the definition ground holds.
  */
 int kfsw_hk_collect_report(struct kfsw_hk_report *entry, struct kfsw_hk_sample *sample)
 {

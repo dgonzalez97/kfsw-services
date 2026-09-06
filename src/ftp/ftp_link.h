@@ -10,10 +10,9 @@
  * @file
  * @brief Reliable message transport for the K-FSW file-transfer service.
  *
- * The transport supplies ordered, retransmitted, integrity-checked delivery of
- * whole protocol messages between two nodes. The file-transfer client, server
- * and transfer engine speak only this interface, so the backend is the only
- * place that knows which transport carries them.
+ * Ordered, retransmitted, integrity-checked delivery of whole messages. The
+ * client, server and transfer engine speak only this, so the backend is the
+ * only place that knows what carries them.
  *
  * The current backend is CSP with RDP and CRC32 (`ftp_link_csp.c`).
  */

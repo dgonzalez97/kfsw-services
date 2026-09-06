@@ -20,28 +20,18 @@ extern "C" {
  * Receives a firmware image into the secondary image slot and asks the
  * bootloader to try it on the next boot.
  *
- * The image is streamed straight into raw flash. It is never a file: an
- * application image is larger than the filesystem partition on the first
- * target, so staging it as a file is not merely wasteful but impossible.
+ * The image goes straight into raw flash, never a file: it is larger than the
+ * filesystem partition on the first target.
  *
- * Two properties are the reason this service exists rather than the caller
- * writing flash directly.
+ * Two traps are why this service exists rather than callers writing flash.
+ * MCUboot swaps using an offset, so an update must land one sector into the
+ * secondary slot; writing at the start is not rejected, the bootloader just
+ * finds nothing to swap. And finishing checks an upgrade was actually
+ * scheduled, because a request that quietly does nothing looks like success
+ * until the old image answers the next poll.
  *
- * The first is the write offset. MCUboot runs in swap-using-offset mode, where
- * an update must be written one sector into the secondary slot rather than at
- * its start. Writing at the start is not rejected: the bootloader simply finds
- * nothing to swap and carries on with the old image. Callers pass offsets from
- * zero and this service places them correctly, so the trap is expressible in
- * one place instead of in every caller.
- *
- * The second is that finishing does not merely request an upgrade, it checks
- * one was actually scheduled. A request that quietly achieves nothing looks
- * exactly like a successful update until the old image answers the next
- * telemetry poll.
- *
- * Integrity is a CRC32 over the whole image, which detects corruption in
- * transit. It is not authenticity: that is the bootloader's signature check,
- * performed before it will run anything.
+ * The CRC32 catches corruption in transit, not tampering. Authenticity is the
+ * bootloader's signature check.
  *
  * @{
  */
@@ -122,9 +112,8 @@ int kfsw_fwu_begin(uint32_t total_size, uint32_t expected_crc32);
  * @brief Accept the next span of image bytes.
  *
  * Spans must arrive in order and without gaps. An out-of-order write is
- * rejected rather than seeked to: a hole in a firmware image that still passes
- * a whole-image CRC would have to be a deliberate collision, but a hole that
- * is never noticed until the bootloader jumps into it is not worth the risk.
+ * rejected rather than seeked to: a hole nobody notices until the bootloader
+ * jumps into it is not worth the risk.
  *
  * @param offset Offset of this span within the image, from zero.
  * @param data Bytes to write.
