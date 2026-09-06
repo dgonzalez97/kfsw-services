@@ -117,11 +117,28 @@ const struct kfsw_param_entry *kfsw_param_entry_at(size_t index)
 	return (index < parameter_count) ? &parameter_table[index] : NULL;
 }
 
+/*
+ * Registration keeps the table in ascending identifier order, so this is a
+ * bisection rather than a scan. It matters because housekeeping resolves every
+ * entry of every report this way on each collection, and a linear walk over a
+ * hundred parameters is work done under the table lock.
+ */
 const struct kfsw_param_entry *kfsw_param_find_id(uint16_t id)
 {
-	for (size_t index = 0U; index < parameter_count; index++) {
-		if (parameter_table[index].info.id == id) {
-			return &parameter_table[index];
+	size_t low = 0U;
+	size_t high = parameter_count;
+
+	while (low < high) {
+		size_t middle = low + ((high - low) / 2U);
+		uint16_t found = parameter_table[middle].info.id;
+
+		if (found == id) {
+			return &parameter_table[middle];
+		}
+		if (found < id) {
+			low = middle + 1U;
+		} else {
+			high = middle;
 		}
 	}
 	return NULL;
@@ -647,6 +664,25 @@ int kfsw_param_get(const char *name, struct kfsw_param_value *value)
 
 	kfsw_param_table_lock();
 	entry = kfsw_param_find_name(name);
+	result = (entry == NULL) ? -ENOENT : kfsw_param_read_entry(entry, value);
+	kfsw_param_table_unlock();
+	return result;
+}
+
+int kfsw_param_get_by_id(uint16_t id, struct kfsw_param_value *value)
+{
+	const struct kfsw_param_entry *entry;
+	int result;
+
+	if (value == NULL) {
+		return -EINVAL;
+	}
+	if (!initialized) {
+		return -EACCES;
+	}
+
+	kfsw_param_table_lock();
+	entry = kfsw_param_find_id(id);
 	result = (entry == NULL) ? -ENOENT : kfsw_param_read_entry(entry, value);
 	kfsw_param_table_unlock();
 	return result;

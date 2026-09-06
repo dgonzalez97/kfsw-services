@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include <zephyr/kernel.h>
+#include <zephyr/sys/util.h>
 
 #include <csp/csp.h>
 #include <csp/csp_id.h>
@@ -662,11 +663,25 @@ close_connection:
 	return result;
 }
 
-static int pull_remote(const param_t *param, uint16_t node)
+/*
+ * One request asks for as many parameters as the queue will hold.
+ *
+ * Reading N values one at a time costs N round trips, each waiting up to
+ * CONFIG_KFSW_PARAM_TIMEOUT_MS. Over a radio that is the difference between a
+ * pass that reads a subsystem and one that reads a handful of values, and the
+ * wire format already allowed better: the queue is a list, and nothing but the
+ * caller was putting one entry in it.
+ *
+ * @p consumed reports how many the exchange took, so a caller with more than
+ * fits continues with the remainder rather than starting again.
+ */
+static int pull_remote_batch(uint16_t node, const param_t *const *params, size_t count,
+			     size_t *consumed)
 {
 	csp_conn_t *connection;
 	csp_packet_t *packet;
 	param_queue_t queue;
+	size_t added = 0U;
 	int result = -ETIMEDOUT;
 
 	packet = csp_buffer_get(PARAM_SERVER_MTU);
@@ -677,7 +692,20 @@ static int pull_remote(const param_t *param, uint16_t node)
 	packet->data[1] = 0U;
 	param_queue_init(&queue, &packet->data[2], PARAM_SERVER_MTU - 2, 0, PARAM_QUEUE_TYPE_GET,
 			 KFSW_PARAM_PROTOCOL_VERSION);
-	if (param_queue_add(&queue, param, -1, NULL) != 0) {
+
+	/* A refused add means the queue is full, and it leaves `used` alone, so
+	 * what has accumulated is still a valid request. Stop and send it.
+	 */
+	while (added < count) {
+		if (param_queue_add(&queue, params[added], -1, NULL) != 0) {
+			break;
+		}
+		added++;
+	}
+	if (added == 0U) {
+		/* One identifier did not fit an empty queue, so no smaller
+		 * request exists to fall back to.
+		 */
 		csp_buffer_free(packet);
 		return -EMSGSIZE;
 	}
@@ -711,7 +739,17 @@ static int pull_remote(const param_t *param, uint16_t node)
 		}
 	}
 	(void)csp_close(connection);
+	if (result == 0) {
+		*consumed = added;
+	}
 	return result;
+}
+
+static int pull_remote(const param_t *param, uint16_t node)
+{
+	size_t consumed = 0U;
+
+	return pull_remote_batch(node, &param, 1U, &consumed);
 }
 
 static int push_remote(const param_t *param, uint16_t node, const struct kfsw_param_value *value)
@@ -812,6 +850,65 @@ int kfsw_param_remote_get(uint16_t node, const char *name, struct kfsw_param_val
 	result = read_scalar(param, value);
 	kfsw_param_table_unlock();
 	return result;
+}
+
+/* Resolved a window at a time so nothing is allocated. Sixteen pointers is 64
+ * bytes of stack, and more than one request's worth of identifiers anyway.
+ */
+#define KFSW_PARAM_REMOTE_BATCH_MAX 16U
+
+int kfsw_param_remote_get_many(uint16_t node, const char *const *names, size_t count,
+			       struct kfsw_param_value *values)
+{
+	size_t done = 0U;
+
+	if ((names == NULL) || (values == NULL)) {
+		return -EINVAL;
+	}
+
+	while (done < count) {
+		const param_t *window[KFSW_PARAM_REMOTE_BATCH_MAX];
+		size_t window_count = MIN(count - done, ARRAY_SIZE(window));
+		size_t pulled = 0U;
+		size_t index;
+		int result = 0;
+
+		/* Every name is resolved before anything is asked for, so a
+		 * request that names something this node does not have fails
+		 * without spending a round trip on the ones that are fine.
+		 */
+		for (index = 0U; index < window_count; index++) {
+			result = find_remote(node, names[done + index], &window[index]);
+			if (result != 0) {
+				return result;
+			}
+		}
+
+		while (pulled < window_count) {
+			size_t consumed = 0U;
+
+			result = pull_remote_batch(node, &window[pulled], window_count - pulled,
+						   &consumed);
+			if (result != 0) {
+				return result;
+			}
+			pulled += consumed;
+		}
+
+		kfsw_param_table_lock();
+		for (index = 0U; index < window_count; index++) {
+			result = read_scalar(window[index], &values[done + index]);
+			if (result != 0) {
+				break;
+			}
+		}
+		kfsw_param_table_unlock();
+		if (result != 0) {
+			return result;
+		}
+		done += window_count;
+	}
+	return 0;
 }
 
 int kfsw_param_remote_set(uint16_t node, const char *name, const struct kfsw_param_value *value)

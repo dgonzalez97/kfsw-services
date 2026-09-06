@@ -58,7 +58,8 @@ union kfsw_param_scalar {
 
 struct kfsw_param_value {
 	enum kfsw_param_type type;
-	/** Bytes carried: the scalar width, or the string length with its terminator. */
+	/** Bytes carried: the scalar width, or the string length with its terminator.
+	 */
 	size_t size;
 	union kfsw_param_scalar scalar;
 	union {
@@ -261,6 +262,27 @@ int kfsw_param_get(const char *name, struct kfsw_param_value *value);
 int kfsw_param_set(const char *name, const struct kfsw_param_value *value);
 
 /**
+ * @brief Read a parameter by its wire identifier rather than its name.
+ *
+ * The identifier is the (table, offset) pair the wire already carries, so a
+ * caller holding a list of them -- a housekeeping report, a ground station
+ * replaying a definition -- does not have to keep the names as well. Names are
+ * up to 32 bytes each; an identifier is two.
+ *
+ * Samples exactly as kfsw_param_get() does, so a value that reads hardware is
+ * as fresh here as it would be for an operator.
+ */
+int kfsw_param_get_by_id(uint16_t id, struct kfsw_param_value *value);
+
+/**
+ * @brief Build the wire identifier for a table and offset.
+ *
+ * Ground and flight agree on this pair, and it is what kfsw_param_get_by_id()
+ * and the remote descriptor list are keyed by.
+ */
+#define KFSW_PARAM_ID(table, offset) ((uint16_t)(((uint16_t)(table) << 8) | (uint8_t)(offset)))
+
+/**
  * @brief Read one local parameter's description by name.
  *
  * @param name Parameter name.
@@ -348,6 +370,24 @@ int kfsw_param_remote_refresh(uint16_t node);
 
 /** Read a scalar parameter from a selected CSP node. */
 int kfsw_param_remote_get(uint16_t node, const char *name, struct kfsw_param_value *value);
+
+/**
+ * @brief Read several parameters from one node in as few exchanges as fit.
+ *
+ * The wire format carries a list, so asking for twelve values costs one or two
+ * round trips rather than twelve. Over a radio, where each one waits up to
+ * CONFIG_KFSW_PARAM_TIMEOUT_MS, that is the difference between reading a
+ * subsystem during a pass and reading a handful of values.
+ *
+ * @p values must hold @p count entries. Every name is resolved before anything
+ * is requested, so an unknown name fails without spending a round trip.
+ *
+ * Returns 0 with every value filled, or a negative errno with none of them
+ * guaranteed: a partial read is reported as a failure rather than handed back
+ * as a set that is only partly true.
+ */
+int kfsw_param_remote_get_many(uint16_t node, const char *const *names, size_t count,
+			       struct kfsw_param_value *values);
 
 /** Write a scalar parameter on a selected CSP node. */
 int kfsw_param_remote_set(uint16_t node, const char *name, const struct kfsw_param_value *value);

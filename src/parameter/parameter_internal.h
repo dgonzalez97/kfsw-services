@@ -15,7 +15,8 @@ struct kfsw_param_entry {
 };
 
 /** Compose the wire identifier from a table and an offset inside it. */
-#define KFSW_PARAM_WIRE_ID(table, offset) ((uint16_t)(((uint16_t)(table) << 8) | (offset)))
+/* The public spelling; kept as an alias so the two cannot drift apart. */
+#define KFSW_PARAM_WIRE_ID(table, offset) KFSW_PARAM_ID(table, offset)
 
 void kfsw_param_table_lock(void);
 void kfsw_param_table_unlock(void);
