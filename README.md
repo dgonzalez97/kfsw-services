@@ -15,6 +15,7 @@ that it is still alive.
 | Commands | `KFSW_COMMAND` | Typed calls with typed results, local or remote |
 | Health | `KFSW_HEALTH` | Component supervision, and the watchdog behind it |
 | Firmware update | `KFSW_FWU` | An image received, verified, and handed to the bootloader |
+| Housekeeping | `KFSW_HK` | A named set of values, collected together and kept for a while |
 
 Each is independent. Enabling one never pulls in another unless it genuinely
 needs it, and none of them require CSP.
@@ -203,10 +204,43 @@ Version 1 has no resume, recursion, globbing, compression or encryption. The
 protocol is K-FSW's own and claims no compatibility with anything else that
 happens to use the FTP or TFTP name.
 
+## Housekeeping
+
+Reading a node one value at a time costs one round trip each. A **report** names
+a set once, and afterwards a pass asks for the set.
+
+A report holds identifiers rather than names — the `(table, offset)` pair the
+wire already uses — because sixteen names would be 512 bytes of definition and
+ground has the names anyway. It is **validated when it is defined**: every
+parameter must exist and the values must fit one packet, so a report that
+cannot be collected is refused there rather than discovered mid-pass.
+
+Widths come from the declaration, not from what a value happens to hold, so
+every sample of a report has the same layout and the tenth value can be read
+without parsing the nine before it. An entry that cannot be sampled is
+zero-filled and flagged rather than dropped: a short frame that silently
+shifted everything after it would be worse than a marked absence.
+
+```text
+  one sample = one CSP packet
+  a lost packet costs one sample, and the sequence number shows the gap
+```
+
+That is deliberate. Streaming under RDP would turn a bad pass into no answer
+rather than most of one.
+
+**The timestamp is when collection started**, and that is what the field is
+called. Local values are read in a tight loop and are coherent to within it; a
+remote value arrives over a radio and cannot be simultaneous with anything.
+Claiming a snapshot would be a promise the protocol cannot keep.
+
+Definitions survive a reset; samples do not. Periodic beacons — a node sending
+telemetry unprompted — are deliberately absent: something that transmits by
+design can flood a link, and that deserves its own floor and its own evidence.
+
 ## Not here yet
 
-- housekeeping collection, so a pass does not read values one round trip at a
-  time
+- periodic housekeeping beacons, sent without being asked
 - a persistent event journal, rate limiting and coalescing
 - authentication on the command path
 - a flight planner
