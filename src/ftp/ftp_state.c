@@ -8,14 +8,13 @@
 #include "ftp_internal.h"
 
 /*
- * Counters and the handful of settings an operator may want to change from the
- * ground. They live with the service rather than with the parameter table that
- * publishes them: the service is what applies them, and a value nothing applies
- * is worse than one nobody can see.
+ * Counters and the settings an operator may change from the ground. They live
+ * with the service rather than the table that publishes them, because the
+ * service is what applies them.
  *
- * Outcomes were recorded as events and counted nowhere, which answers "what
- * happened" but not "how often". A pass is short, and reading a ring to find
- * out whether transfers are succeeding costs more of it than reading a number.
+ * Outcomes were events and counted nowhere, which answers "what happened" but
+ * not "how often" -- and reading a ring costs more of a pass than reading a
+ * number.
  */
 
 static atomic_t ftp_transfers;

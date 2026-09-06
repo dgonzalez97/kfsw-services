@@ -46,16 +46,13 @@ static uint32_t command_timeout_ms = CONFIG_KFSW_COMMAND_TIMEOUT_MS;
 #endif
 
 /*
- * Console echo, off by default. The shell prints every input byte back, so a
- * session driven by a script shows each command twice: once as the sender
- * typed it and once as the shell repeated it. That is noise on a console and
- * unreadable in a recording.
+ * Console echo, off by default: the shell repeats every input byte, so a
+ * scripted session shows each command twice, which is unreadable in a
+ * recording.
  *
- * The console belongs to the composition, not to this service, so applying the
- * change is handed back through a hook the composition fills in. Without that
- * the value could only take effect at the next boot, and a setting you want to
- * toggle while watching the console is exactly the wrong one to make a reboot
- * of.
+ * The console belongs to the composition, so applying the change goes through a
+ * hook it fills in -- otherwise a setting you toggle while watching the console
+ * would need a reboot.
  */
 static uint8_t command_echo_enabled;
 static kfsw_command_echo_handler_t command_echo_handler;

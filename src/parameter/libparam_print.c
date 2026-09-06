@@ -12,20 +12,12 @@
 #include <kfsw/services/log.h>
 
 /*
- * libparam writes its diagnostics straight to the console with printf. Most of
- * them are per-parameter: downloading a node's descriptor list prints one line
- * for every parameter it holds, so asking a sixty-six parameter node for one
- * value buried the answer under sixty-six lines of chatter.
+ * libparam prints its diagnostics with printf, one line per parameter, so
+ * asking a sixty-six parameter node for one value buried the answer.
  *
- * The library is vendored at an upstream revision that west manages, so it is
- * not edited here. Its printf is redirected at the build instead -- see the
- * compile definition on the kfsw_libparam target -- which leaves the vendored
- * tree byte-identical to upstream and keeps the redirection in one obvious
- * place.
- *
- * The messages become debug-level log lines attributed to the parameter
- * module, so they can be turned back on through log_levels like anything else,
- * and are compiled out entirely at the default log level.
+ * The library is vendored at a pinned revision and not edited here; its printf
+ * is redirected at the build instead, on the kfsw_libparam target. The messages
+ * become debug log lines in the parameter module, off at the default level.
  */
 
 int kfsw_libparam_printf(const char *format, ...)

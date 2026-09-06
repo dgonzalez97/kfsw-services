@@ -76,15 +76,12 @@ static void sample_confirmed(void *value)
 
 /*
  * A request to confirm, not a mirror of the flag. Writing 1 marks the running
- * image good; writing 0 asks for nothing and changes nothing, because
- * un-confirming an image that has already proven itself has no honest meaning
- * and would arm a revert nobody asked for.
+ * image good; writing 0 changes nothing, because un-confirming an image that
+ * has proven itself would arm a revert nobody asked for.
  *
- * Zero has to be accepted rather than refused: it is the compiled default, and
- * a parameter that refuses its own default cannot be registered at all. What
- * keeps this honest is the sample callback, which reports what the bootloader
- * actually holds -- so a write of 0 is visible as a no-op on the very next
- * read rather than being mistaken for a cleared flag.
+ * Zero is accepted rather than refused because it is the compiled default, and
+ * a parameter that refuses its own default cannot register. The sample callback
+ * keeps it honest: a write of 0 reads back as a no-op immediately.
  */
 static int validate_confirmed(const union kfsw_param_scalar *value)
 {

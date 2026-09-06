@@ -25,11 +25,8 @@ enum kfsw_param_type {
 	KFSW_PARAM_FLOAT,
 	KFSW_PARAM_DOUBLE,
 	KFSW_PARAM_STRING,
-	/**
-	 * A fixed-length array of bytes. Useful where one setting is really a
-	 * value per something -- a log level per module, say -- and publishing
-	 * one parameter per element would make the table impossible to read
-	 * and its offsets impossible to keep stable.
+	/** A fixed-length array: one setting that is really a value per
+	 * something, like a log level per module.
 	 */
 	KFSW_PARAM_DATA,
 	KFSW_PARAM_INVALID,
@@ -83,12 +80,9 @@ struct kfsw_param_value {
 /**
  * Table identifier bands.
  *
- * A parameter is addressed by table and offset, not by a flat identifier. The
- * band a table sits in says who owns it, so two independently developed
- * components cannot be given the same table by accident.
- *
- * Zero is reserved and never valid, so an uninitialised field cannot address a
- * real table.
+ * A parameter is addressed by table and offset. The band a table sits in says
+ * who owns it, so two components cannot claim the same table by accident.
+ * Zero is reserved, so an uninitialised field addresses nothing real.
  */
 #define KFSW_PARAM_TABLE_INVALID 0U
 /** First and last table owned by the composition, platform or comms layers. */
@@ -150,31 +144,25 @@ struct kfsw_param_table_info {
 /**
  * K-FSW-owned user flag: a write takes effect immediately.
  *
- * Always set by the service for a definition that supplies a change callback,
- * so a parameter that applies its value cannot be reported as needing a reboot.
- * An owner that applies the value simply by reading it on every cycle, and so
- * needs no callback, may set the flag itself.
+ * Set by the service for any definition with a change callback, so a parameter
+ * that applies its value cannot claim to need a reboot. An owner that applies
+ * it by reading it each cycle may set the flag itself.
  *
- * It travels in the wire mask, which is what lets a remote listing report the
- * same write behaviour as a local one.
+ * It travels in the wire mask, so a remote listing reports the same write
+ * behaviour as a local one.
  */
 #define KFSW_PARAM_FLAG_LIVE 0x00020000UL
 
 /** Validate a proposed scalar value; return zero to accept it. */
 typedef int (*kfsw_param_validator_t)(const union kfsw_param_scalar *value);
 /**
- * Validate a proposed string value; return zero to accept it.
- *
- * Separate from the scalar validator because a string cannot be passed through
- * the scalar union, and an owner that could not refuse a malformed string --
- * a route table, say -- would store one that the next boot cannot parse.
+ * Validate a proposed string; return zero to accept it. Separate from the
+ * scalar validator because a string does not fit the scalar union.
  */
 typedef int (*kfsw_param_text_validator_t)(const char *text);
 /**
- * Validate a proposed byte array; return zero to accept it.
- *
- * Given the whole array rather than one element, because the values in an
- * array are usually only sensible together.
+ * Validate a proposed byte array; return zero to accept it. Given the whole
+ * array, because its values are usually only sensible together.
  */
 typedef int (*kfsw_param_data_validator_t)(const uint8_t *data, size_t size);
 /** Apply owner behavior after the backing scalar changes. */
@@ -184,12 +172,10 @@ typedef void (*kfsw_param_text_changed_t)(const char *text);
 /** Apply owner behavior after the backing byte array changes. */
 typedef void (*kfsw_param_data_changed_t)(const uint8_t *data, size_t size);
 /**
- * Refresh backing storage from live state immediately before it is read.
+ * Refresh backing storage from live state just before it is read, so a value
+ * is current rather than up to one timer period stale.
  *
- * Needed because a reported value is only worth reading if it is current: an
- * uptime refreshed on a timer is wrong by up to one period every time it is
- * asked for. Runs while PARAM serializes access, so it must not call back into
- * the parameter API.
+ * Runs under the table lock, so it must not call back into the parameter API.
  */
 typedef void (*kfsw_param_sample_t)(void *value);
 
@@ -264,13 +250,9 @@ int kfsw_param_set(const char *name, const struct kfsw_param_value *value);
 /**
  * @brief Read a parameter by its wire identifier rather than its name.
  *
- * The identifier is the (table, offset) pair the wire already carries, so a
- * caller holding a list of them -- a housekeeping report, a ground station
- * replaying a definition -- does not have to keep the names as well. Names are
- * up to 32 bytes each; an identifier is two.
- *
- * Samples exactly as kfsw_param_get() does, so a value that reads hardware is
- * as fresh here as it would be for an operator.
+ * A caller holding a list of identifiers -- a housekeeping report, say -- does
+ * not have to keep the names too: a name is up to 32 bytes, an identifier is
+ * two. Samples exactly as kfsw_param_get() does.
  */
 int kfsw_param_get_by_id(uint16_t id, struct kfsw_param_value *value);
 
@@ -374,17 +356,13 @@ int kfsw_param_remote_get(uint16_t node, const char *name, struct kfsw_param_val
 /**
  * @brief Read several parameters from one node in as few exchanges as fit.
  *
- * The wire format carries a list, so asking for twelve values costs one or two
- * round trips rather than twelve. Over a radio, where each one waits up to
- * CONFIG_KFSW_PARAM_TIMEOUT_MS, that is the difference between reading a
- * subsystem during a pass and reading a handful of values.
+ * The wire carries a list, so twelve values cost one or two round trips rather
+ * than twelve -- and each one waits up to CONFIG_KFSW_PARAM_TIMEOUT_MS.
  *
- * @p values must hold @p count entries. Every name is resolved before anything
- * is requested, so an unknown name fails without spending a round trip.
- *
- * Returns 0 with every value filled, or a negative errno with none of them
- * guaranteed: a partial read is reported as a failure rather than handed back
- * as a set that is only partly true.
+ * @p values must hold @p count entries. Names are all resolved before anything
+ * is requested, so an unknown name costs no round trip. Returns 0 with every
+ * value filled, or an errno with none guaranteed: a partial read is a failure,
+ * not a set that is only partly true.
  */
 int kfsw_param_remote_get_many(uint16_t node, const char *const *names, size_t count,
 			       struct kfsw_param_value *values);

@@ -17,18 +17,15 @@ extern "C" {
  * @file
  * @brief Bounded record of what a node did, separate from the console log.
  *
- * Logging is a human-readable stream that only exists while someone is
- * watching it. An event is a numeric record: a stable identifier, a monotonic
- * timestamp, a sequence number and a small opaque payload. It survives a
- * console nobody is attached to, it can be read back over a link, and a gap in
- * the sequence is detectable.
+ * A log line only exists while someone is watching. An event is a numeric
+ * record -- identifier, timestamp, sequence number, small payload -- that
+ * survives an unattended console, reads back over a link, and shows its gaps.
  *
- * Events do not replace logging. A message that only helps a developer reading
- * a terminal stays a log call. A fact an operator may need to establish after
- * the moment has passed becomes an event.
+ * Events do not replace logging: a message for a developer at a terminal stays
+ * a log call, a fact an operator may need afterwards becomes an event.
  *
- * The record lives in a fixed-size RAM ring, so it does not survive a reset.
- * Persisting it is separate work and deliberately not part of this service.
+ * The ring is RAM, so it does not survive a reset. Persisting it is separate
+ * work.
  */
 
 /** Owning component of an event identifier. Identifiers are unique per source. */
