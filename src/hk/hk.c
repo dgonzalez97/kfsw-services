@@ -1,0 +1,595 @@
+#include <errno.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <string.h>
+
+#include <zephyr/kernel.h>
+#include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/util.h>
+
+#if CONFIG_KFSW_CSP
+#include <kfsw/comms/csp.h>
+#endif
+#include <kfsw/services/hk.h>
+/* Attributes this file's messages, so its level can be raised alone. */
+#define KFSW_LOG_MODULE KFSW_LOG_MODULE_PARAM
+#include <kfsw/services/log.h>
+#include <kfsw/services/parameter.h>
+
+#include "hk_internal.h"
+
+static struct kfsw_hk_report reports[CONFIG_KFSW_HK_REPORTS];
+static struct kfsw_hk_stats stats;
+static bool initialized;
+/* Set while the saved set is being restored, so restoring does not rewrite the
+ * file once per report as each one comes back.
+ */
+static bool loading;
+
+K_MUTEX_DEFINE(hk_lock);
+
+void kfsw_hk_lock(void)
+{
+	k_mutex_lock(&hk_lock, K_FOREVER);
+}
+
+void kfsw_hk_unlock(void)
+{
+	k_mutex_unlock(&hk_lock);
+}
+
+void kfsw_hk_count_overwritten(void)
+{
+	stats.overwritten++;
+}
+
+void kfsw_hk_count_entry_failure(void)
+{
+	stats.entries_failed++;
+}
+
+struct kfsw_hk_report *kfsw_hk_report_at(uint8_t report)
+{
+	if (report >= ARRAY_SIZE(reports)) {
+		return NULL;
+	}
+	return &reports[report];
+}
+
+/*
+ * A value's width on the wire.
+ *
+ * Fixed by the declaration rather than by what a particular sample happens to
+ * hold, so every sample of a report has the same layout and ground can read
+ * the tenth value without parsing the nine before it. A string that is shorter
+ * than its capacity is padded, which costs bytes and buys a frame that can be
+ * indexed.
+ */
+static size_t entry_width(enum kfsw_param_type type, uint16_t array_size)
+{
+	switch (type) {
+	case KFSW_PARAM_U8:
+	case KFSW_PARAM_I8:
+	case KFSW_PARAM_X8:
+		return 1U;
+	case KFSW_PARAM_U16:
+	case KFSW_PARAM_I16:
+	case KFSW_PARAM_X16:
+		return 2U;
+	case KFSW_PARAM_U32:
+	case KFSW_PARAM_I32:
+	case KFSW_PARAM_X32:
+	case KFSW_PARAM_FLOAT:
+		return 4U;
+	case KFSW_PARAM_U64:
+	case KFSW_PARAM_I64:
+	case KFSW_PARAM_X64:
+	case KFSW_PARAM_DOUBLE:
+		return 8U;
+	case KFSW_PARAM_STRING:
+	case KFSW_PARAM_DATA:
+		return array_size;
+	default:
+		return 0U;
+	}
+}
+
+/* Big-endian, like every other K-FSW protocol. */
+void kfsw_hk_write_value(uint8_t *out, size_t width, const struct kfsw_param_value *value)
+{
+	memset(out, 0, width);
+
+	switch (value->type) {
+	case KFSW_PARAM_U8:
+	case KFSW_PARAM_I8:
+	case KFSW_PARAM_X8:
+		out[0] = value->scalar.u8;
+		break;
+	case KFSW_PARAM_U16:
+	case KFSW_PARAM_I16:
+	case KFSW_PARAM_X16:
+		sys_put_be16(value->scalar.u16, out);
+		break;
+	case KFSW_PARAM_U32:
+	case KFSW_PARAM_I32:
+	case KFSW_PARAM_X32:
+		sys_put_be32(value->scalar.u32, out);
+		break;
+	case KFSW_PARAM_FLOAT: {
+		uint32_t raw;
+
+		memcpy(&raw, &value->scalar.f32, sizeof(raw));
+		sys_put_be32(raw, out);
+		break;
+	}
+	case KFSW_PARAM_U64:
+	case KFSW_PARAM_I64:
+	case KFSW_PARAM_X64:
+		sys_put_be64(value->scalar.u64, out);
+		break;
+	case KFSW_PARAM_DOUBLE: {
+		uint64_t raw;
+
+		memcpy(&raw, &value->scalar.f64, sizeof(raw));
+		sys_put_be64(raw, out);
+		break;
+	}
+	case KFSW_PARAM_STRING:
+	case KFSW_PARAM_DATA:
+		memcpy(out, value->bytes, MIN(width, value->size));
+		break;
+	default:
+		break;
+	}
+}
+
+/*
+ * The declared width of one entry, without reading it.
+ *
+ * Sizing a definition must not depend on a value being readable right now: a
+ * remote node that is briefly quiet should not make a report undefinable, and
+ * a report whose size depends on what a string happens to hold would change
+ * shape between collections.
+ */
+struct width_search {
+	uint16_t wanted;
+	size_t width;
+	bool found;
+};
+
+static bool match_width(const struct kfsw_param_info *info, void *context)
+{
+	struct width_search *search = context;
+
+	if (info->id != search->wanted) {
+		return true;
+	}
+	search->width = entry_width(info->type, info->array_size);
+	search->found = true;
+	return false;
+}
+
+static int entry_declared_width(const struct kfsw_hk_entry *entry, size_t *width)
+{
+	struct width_search search = {.wanted = entry->param_id};
+	int result;
+
+	if (entry->node == KFSW_HK_NODE_LOCAL) {
+		result = kfsw_param_visit(match_width, &search);
+	} else {
+#if CONFIG_KFSW_PARAM_CSP
+		result = kfsw_param_remote_visit(entry->node, match_width, &search);
+#else
+		return -ENOTSUP;
+#endif
+	}
+	if (result != 0) {
+		return result;
+	}
+	if (!search.found) {
+		return -ENOENT;
+	}
+	if (search.width == 0U) {
+		return -ENOTSUP;
+	}
+	*width = search.width;
+	return 0;
+}
+
+int kfsw_hk_define(uint8_t report, const struct kfsw_hk_entry *entries, size_t count)
+{
+	struct kfsw_hk_report *target = kfsw_hk_report_at(report);
+	size_t payload = 0U;
+	int result = 0;
+
+	if ((target == NULL) || (entries == NULL)) {
+		return -EINVAL;
+	}
+	if (!initialized) {
+		return -EACCES;
+	}
+	if (count == 0U) {
+		return kfsw_hk_clear(report);
+	}
+	if (count > ARRAY_SIZE(target->entries)) {
+		return -E2BIG;
+	}
+
+	/* Every entry is priced before anything is stored, so a definition that
+	 * cannot fit leaves the report that was working exactly as it was.
+	 * The widths are kept, because resolving them again on every collection
+	 * would walk the parameter list once per value.
+	 */
+	uint16_t widths[CONFIG_KFSW_HK_ENTRIES];
+	uint16_t offsets[CONFIG_KFSW_HK_ENTRIES];
+
+	for (size_t index = 0U; index < count; index++) {
+		size_t width = 0U;
+
+		result = entry_declared_width(&entries[index], &width);
+		if (result != 0) {
+			kfsw_log_warning("HK: report %u entry %u (node %u id 0x%04x): %d", report,
+					 (unsigned int)index, entries[index].node,
+					 entries[index].param_id, result);
+			return result;
+		}
+		offsets[index] = (uint16_t)(KFSW_HK_HEADER_SIZE + payload);
+		widths[index] = (uint16_t)width;
+		payload += width;
+	}
+
+	if ((payload + KFSW_HK_HEADER_SIZE) > CONFIG_KFSW_HK_SAMPLE_BYTES) {
+		kfsw_log_warning("HK: report %u needs %u bytes, one sample holds %u", report,
+				 (unsigned int)(payload + KFSW_HK_HEADER_SIZE),
+				 (unsigned int)CONFIG_KFSW_HK_SAMPLE_BYTES);
+		return -EMSGSIZE;
+	}
+
+	kfsw_hk_lock();
+	memcpy(target->entries, entries, count * sizeof(entries[0]));
+	memcpy(target->widths, widths, count * sizeof(widths[0]));
+	memcpy(target->offsets, offsets, count * sizeof(offsets[0]));
+	target->entry_count = (uint8_t)count;
+	target->payload_bytes = (uint16_t)payload;
+	target->defined = true;
+	/* A redefinition invalidates what was collected: the same bytes would
+	 * mean different things under the new layout.
+	 */
+	target->held = 0U;
+	target->next_slot = 0U;
+	stats.reports = 0U;
+	for (size_t index = 0U; index < ARRAY_SIZE(reports); index++) {
+		if (reports[index].defined) {
+			stats.reports++;
+		}
+	}
+	kfsw_hk_unlock();
+
+	kfsw_log_info("HK: report %u defined, %u entries, %u bytes", report, (unsigned int)count,
+		      (unsigned int)payload);
+
+#if CONFIG_KFSW_HK_PERSISTENCE
+	/* Saved on the way out, not on a timer: a definition is rare and
+	 * deliberate, and an operator who defines a report during a pass should
+	 * not have to remember a second command to keep it.
+	 *
+	 * Skipped while loading, or restoring the saved set would rewrite the
+	 * file once per report as it came back.
+	 */
+	if (!loading) {
+		(void)kfsw_hk_persist_save();
+	}
+#endif
+	return 0;
+}
+
+int kfsw_hk_clear(uint8_t report)
+{
+	struct kfsw_hk_report *target = kfsw_hk_report_at(report);
+
+	if (target == NULL) {
+		return -EINVAL;
+	}
+
+	kfsw_hk_lock();
+	memset(target, 0, sizeof(*target));
+	stats.reports = 0U;
+	for (size_t index = 0U; index < ARRAY_SIZE(reports); index++) {
+		if (reports[index].defined) {
+			stats.reports++;
+		}
+	}
+	kfsw_hk_unlock();
+
+#if CONFIG_KFSW_HK_PERSISTENCE
+	if (!loading) {
+		(void)kfsw_hk_persist_save();
+	}
+#endif
+	return 0;
+}
+
+int kfsw_hk_get_definition(uint8_t report, struct kfsw_hk_entry *entries, size_t *count)
+{
+	struct kfsw_hk_report *target = kfsw_hk_report_at(report);
+	int result = 0;
+
+	if ((target == NULL) || (entries == NULL) || (count == NULL)) {
+		return -EINVAL;
+	}
+
+	kfsw_hk_lock();
+	if (!target->defined) {
+		result = -ENOENT;
+	} else if (*count < target->entry_count) {
+		result = -ENOSPC;
+	} else {
+		memcpy(entries, target->entries, target->entry_count * sizeof(entries[0]));
+		*count = target->entry_count;
+	}
+	kfsw_hk_unlock();
+	return result;
+}
+
+/*
+ * One collection.
+ *
+ * The timestamp is taken once, at the start, and it is what the field is
+ * called: local values are read in a tight loop and are coherent to within it,
+ * but a remote value arrives over a radio and cannot be simultaneous with
+ * anything. Claiming a snapshot would be a promise the protocol cannot keep.
+ *
+ * An entry that cannot be read is zero-filled and flagged rather than dropped,
+ * so the layout still matches the definition ground holds. A short frame that
+ * silently shifted every later value would be worse than a marked absence.
+ */
+int kfsw_hk_collect_report(struct kfsw_hk_report *entry, struct kfsw_hk_sample *sample)
+{
+	uint8_t flags = 0U;
+
+	if ((entry == NULL) || (sample == NULL)) {
+		return -EINVAL;
+	}
+	if (!entry->defined) {
+		return -ENOENT;
+	}
+
+	memset(sample, 0, sizeof(*sample));
+
+	/* Zero means the clock was never set, which is what a composition
+	 * without CSP has: there is nowhere for a wall clock to come from. A
+	 * sample still says what the values were, it just cannot say when.
+	 */
+	sample->seconds = 0U;
+#if CONFIG_KFSW_CSP
+	{
+		struct kfsw_csp_clock clock = {0};
+
+		kfsw_csp_clock_get(&clock);
+		if (kfsw_csp_clock_is_set(&clock)) {
+			sample->seconds = (uint32_t)clock.seconds;
+		}
+	}
+#endif
+	sample->entry_count = entry->entry_count;
+	sample->length = (uint16_t)(KFSW_HK_HEADER_SIZE + entry->payload_bytes);
+
+	/* Local first, and each one straight into its reserved slot. Widths and
+	 * offsets were settled when the report was defined, so nothing here
+	 * looks a parameter up twice.
+	 */
+	for (size_t index = 0U; index < entry->entry_count; index++) {
+		const struct kfsw_hk_entry *definition = &entry->entries[index];
+		struct kfsw_param_value value;
+
+		if (definition->node != KFSW_HK_NODE_LOCAL) {
+			continue;
+		}
+		if (kfsw_param_get_by_id(definition->param_id, &value) == 0) {
+			kfsw_hk_write_value(&sample->data[entry->offsets[index]],
+					    entry->widths[index], &value);
+		} else {
+			flags |= KFSW_HK_FLAG_INCOMPLETE;
+			kfsw_hk_count_entry_failure();
+		}
+	}
+
+#if CONFIG_KFSW_PARAM_CSP
+	/* Then one pass per remote node. Alternating between two nodes would
+	 * make the descriptor cache re-download a list over the radio, so every
+	 * entry of a node is taken before moving on.
+	 */
+	for (size_t index = 0U; index < entry->entry_count; index++) {
+		uint16_t node = entry->entries[index].node;
+		bool seen = false;
+
+		if (node == KFSW_HK_NODE_LOCAL) {
+			continue;
+		}
+		for (size_t earlier = 0U; earlier < index; earlier++) {
+			if (entry->entries[earlier].node == node) {
+				seen = true;
+				break;
+			}
+		}
+		if (seen) {
+			continue;
+		}
+		if (kfsw_hk_collect_remote(entry, node, sample) != 0) {
+			flags |= KFSW_HK_FLAG_INCOMPLETE;
+		}
+	}
+#else
+	for (size_t index = 0U; index < entry->entry_count; index++) {
+		if (entry->entries[index].node != KFSW_HK_NODE_LOCAL) {
+			flags |= KFSW_HK_FLAG_INCOMPLETE;
+			kfsw_hk_count_entry_failure();
+		}
+	}
+#endif
+
+	sample->flags = flags;
+	sample->sequence = entry->sequence;
+
+	sample->data[0] = KFSW_HK_PROTOCOL_VERSION;
+	sys_put_be16(sample->sequence, &sample->data[2]);
+	sys_put_be32(sample->seconds, &sample->data[4]);
+	sample->data[8] = sample->entry_count;
+	sample->data[9] = sample->flags;
+	return 0;
+}
+
+int kfsw_hk_collect(uint8_t report)
+{
+	struct kfsw_hk_report *target = kfsw_hk_report_at(report);
+	static struct kfsw_hk_sample scratch;
+	int result;
+
+	if (target == NULL) {
+		return -EINVAL;
+	}
+	if (!initialized) {
+		return -EACCES;
+	}
+
+	/* Collected outside the lock: a remote entry blocks on its node, and
+	 * holding the ring for a second would stall a ground request for a
+	 * sample that is already there. The scratch buffer is static because a
+	 * sample is 200 bytes and this runs on a 2560-byte stack.
+	 */
+	kfsw_hk_lock();
+	if (!target->defined) {
+		kfsw_hk_unlock();
+		return -ENOENT;
+	}
+	result = kfsw_hk_collect_report(target, &scratch);
+	if (result != 0) {
+		stats.failures++;
+		kfsw_hk_unlock();
+		return result;
+	}
+
+	scratch.data[1] = report;
+	if (target->held == ARRAY_SIZE(target->ring)) {
+		kfsw_hk_count_overwritten();
+	} else {
+		target->held++;
+	}
+	target->ring[target->next_slot] = scratch;
+	target->next_slot = (uint16_t)((target->next_slot + 1U) % ARRAY_SIZE(target->ring));
+	target->sequence++;
+	stats.collections++;
+	stats.last_seconds = scratch.seconds;
+	kfsw_hk_unlock();
+	return 0;
+}
+
+int kfsw_hk_get(uint8_t report, uint16_t age, struct kfsw_hk_sample *sample)
+{
+	struct kfsw_hk_report *target = kfsw_hk_report_at(report);
+	int result = 0;
+
+	if ((target == NULL) || (sample == NULL)) {
+		return -EINVAL;
+	}
+
+	kfsw_hk_lock();
+	if (age >= target->held) {
+		result = -ENOENT;
+	} else {
+		/* next_slot is where the following sample goes, so the newest
+		 * is one behind it, and age counts further back from there.
+		 */
+		uint16_t slot =
+			(uint16_t)((target->next_slot + ARRAY_SIZE(target->ring) - 1U - age) %
+				   ARRAY_SIZE(target->ring));
+
+		*sample = target->ring[slot];
+	}
+	kfsw_hk_unlock();
+	return result;
+}
+
+int kfsw_hk_depth(uint8_t report, uint16_t *depth)
+{
+	struct kfsw_hk_report *target = kfsw_hk_report_at(report);
+
+	if ((target == NULL) || (depth == NULL)) {
+		return -EINVAL;
+	}
+	kfsw_hk_lock();
+	*depth = target->held;
+	kfsw_hk_unlock();
+	return 0;
+}
+
+int kfsw_hk_set_period(uint8_t report, uint32_t period_ms)
+{
+	struct kfsw_hk_report *target = kfsw_hk_report_at(report);
+
+	if (target == NULL) {
+		return -EINVAL;
+	}
+	if ((period_ms != 0U) && (period_ms < CONFIG_KFSW_HK_PERIOD_FLOOR_MS)) {
+		return -ERANGE;
+	}
+
+	kfsw_hk_lock();
+	if (!target->defined) {
+		kfsw_hk_unlock();
+		return -ENOENT;
+	}
+	target->period_ms = period_ms;
+	target->next_uptime_ms = (period_ms == 0U) ? 0 : (k_uptime_get() + (int64_t)period_ms);
+	kfsw_hk_unlock();
+
+#if CONFIG_KFSW_HK_PERSISTENCE
+	if (!loading) {
+		(void)kfsw_hk_persist_save();
+	}
+#endif
+	return 0;
+}
+
+int kfsw_hk_get_period(uint8_t report, uint32_t *period_ms)
+{
+	struct kfsw_hk_report *target = kfsw_hk_report_at(report);
+
+	if ((target == NULL) || (period_ms == NULL)) {
+		return -EINVAL;
+	}
+	kfsw_hk_lock();
+	*period_ms = target->period_ms;
+	kfsw_hk_unlock();
+	return 0;
+}
+
+void kfsw_hk_get_stats(struct kfsw_hk_stats *out)
+{
+	if (out == NULL) {
+		return;
+	}
+	kfsw_hk_lock();
+	*out = stats;
+	kfsw_hk_unlock();
+}
+
+int kfsw_hk_init(void)
+{
+	if (initialized) {
+		return 0;
+	}
+	memset(reports, 0, sizeof(reports));
+	memset(&stats, 0, sizeof(stats));
+	initialized = true;
+
+#if CONFIG_KFSW_HK_PERSISTENCE
+	loading = true;
+	(void)kfsw_hk_persist_load();
+	loading = false;
+#endif
+	kfsw_log_info("HK: %u reports, %u samples each, %u bytes per sample",
+		      (unsigned int)ARRAY_SIZE(reports), (unsigned int)CONFIG_KFSW_HK_HISTORY,
+		      (unsigned int)CONFIG_KFSW_HK_SAMPLE_BYTES);
+	return 0;
+}

@@ -191,6 +191,23 @@ if(CONFIG_KFSW_COMMAND)
     endif()
 endif()
 
+if(CONFIG_KFSW_HK)
+    list(APPEND kfsw_services_sources
+        src/hk/hk.c
+        src/hk/hk_thread.c
+    )
+    list(APPEND kfsw_services_sources src/hk-parameters/hk_table.c)
+    if(CONFIG_KFSW_PARAM_CSP)
+        list(APPEND kfsw_services_sources src/hk/hk_remote.c)
+    endif()
+    if(CONFIG_KFSW_HK_CSP)
+        list(APPEND kfsw_services_sources src/hk/hk_csp.c)
+    endif()
+    if(CONFIG_KFSW_HK_PERSISTENCE)
+        list(APPEND kfsw_services_sources src/hk/hk_persist.c)
+    endif()
+endif()
+
 add_library(kfsw_services STATIC ${kfsw_services_sources})
 
 add_library(kfsw::services ALIAS kfsw_services)

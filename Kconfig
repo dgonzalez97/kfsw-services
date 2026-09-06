@@ -452,4 +452,122 @@ config KFSW_FWU_STREAM_BUFFER_SIZE
 	  Staging buffer between arriving chunks and the flash write block. Must
 	  be a multiple of the flash write block size.
 
+config KFSW_HK
+	bool "K-FSW housekeeping service"
+	depends on KFSW_PARAM
+	help
+	  Name a set of parameters once, and afterwards ask for the set rather
+	  than its members. Reading a node one value at a time costs one round
+	  trip each, which over a radio is the difference between knowing how a
+	  spacecraft is and guessing.
+
+	  Collection is local by default; reading from another node needs
+	  KFSW_PARAM_CSP, and answering a request from the ground needs
+	  KFSW_HK_CSP.
+
+if KFSW_HK
+
+config KFSW_HK_REPORTS
+	int "Reports that can be defined"
+	default 4
+	range 1 16
+	help
+	  Each report holds its own definition and its own ring of samples, so
+	  this multiplies both the definition storage and KFSW_HK_HISTORY.
+
+config KFSW_HK_ENTRIES
+	int "Parameters one report may name"
+	default 16
+	range 1 64
+	help
+	  An upper bound on the definition, not on what fits: a report is also
+	  refused if its values exceed KFSW_HK_SAMPLE_BYTES, which is usually
+	  the limit reached first.
+
+config KFSW_HK_HISTORY
+	int "Samples each report keeps"
+	default 16
+	range 1 256
+	help
+	  Depth and period together set how far back a pass can look, and that
+	  is the number worth choosing on purpose. Sixteen samples is sixteen
+	  minutes at a one-minute period and about eighty at five -- roughly one
+	  orbit. A pass gap of ninety minutes is only covered at the slower end.
+
+	  Costs KFSW_HK_REPORTS * this * KFSW_HK_SAMPLE_BYTES of static RAM.
+
+config KFSW_HK_SAMPLE_BYTES
+	int "Bytes one sample may occupy, header included"
+	default 192
+	range 32 240
+	help
+	  A sample is one CSP packet, so a bad link loses one sample rather than
+	  the answer. 192 is what file transfer, commands and firmware update
+	  already use.
+
+config KFSW_HK_PERIOD_FLOOR_MS
+	int "Shortest period a report may be given"
+	default 1000
+	range 100 3600000
+	help
+	  A report collecting faster than this is refused. Collection samples
+	  hardware and can reach across a radio, so an operator asking for
+	  milliseconds would be asking the node to do nothing else.
+
+config KFSW_HK_STACK_SIZE
+	int "Collection thread stack size"
+	default 2560
+	range 1024 16384
+	help
+	  Collection holds a parameter value on the stack, and a string
+	  parameter is around 120 bytes of it.
+
+config KFSW_HK_PRIORITY
+	int "Collection thread priority"
+	default 4
+	help
+	  Below the router and the servers. Housekeeping must never delay a
+	  packet to sample a value.
+
+config KFSW_HK_CSP
+	bool "Answer housekeeping requests over CSP"
+	depends on KFSW_CSP
+	default y
+	help
+	  Serve collected samples to a ground node. Without this the service
+	  still collects and the shell still reads it, which is what a bench
+	  bring-up needs.
+
+config KFSW_HK_CSP_PORT
+	int "CSP port for housekeeping requests"
+	depends on KFSW_HK_CSP
+	default 14
+	range 1 16
+	help
+	  Must be below CSP_PORT_MAX_BIND; libcsp refuses to bind anything
+	  above it.
+
+config KFSW_HK_SERVER_STACK_SIZE
+	int "Housekeeping server thread stack size"
+	depends on KFSW_HK_CSP
+	default 2048
+	range 1024 16384
+
+config KFSW_HK_SERVER_PRIORITY
+	int "Housekeeping server thread priority"
+	depends on KFSW_HK_CSP
+	default 3
+
+config KFSW_HK_PERSISTENCE
+	bool "Keep report definitions across a reset"
+	depends on KFSW_STORAGE
+	select CRC
+	default y
+	help
+	  Definitions are written to /kfsw/hk with a CRC, through a temporary
+	  file, so a reset mid-write leaves the previous set intact. Without
+	  this a definition works until the node restarts.
+
+endif # KFSW_HK
+
 endmenu
