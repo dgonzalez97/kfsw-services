@@ -31,7 +31,7 @@ if KFSW_PARAM
 
 config KFSW_PARAM_MAX_DEFINITIONS
 	int "Parameters the local table can hold"
-	default 128
+	default 160
 	range 1 512
 	help
 	  Total parameters across every registered table. Registration is
@@ -49,12 +49,17 @@ config KFSW_PARAM_STRING_MAX
 
 config KFSW_PARAM_MAX_TABLES
 	int "Parameter tables the node can register"
-	default 16
+	default 24
 	range 1 100
 	help
 	  Distinct tables across every composed component. A table is owned by
 	  exactly one component, so this is the number of components that
 	  publish parameters.
+
+	  A composition that exceeds this loses the tables registered last, with
+	  one error line, rather than failing to build. The default was 16 and a
+	  full composition reached exactly 17 the day housekeeping was added, so
+	  it now leaves room for several more.
 
 config KFSW_PARAM_PERSISTENCE
 	bool "Explicit LittleFS parameter snapshots"
