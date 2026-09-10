@@ -12,7 +12,7 @@
 #include <kfsw/comms/csp.h>
 #include <kfsw/services/hk.h>
 /* Attributes this file's messages, so its level can be raised alone. */
-#define KFSW_LOG_MODULE KFSW_LOG_MODULE_PARAM
+#define KFSW_LOG_MODULE KFSW_LOG_MODULE_HK
 #include <kfsw/services/log.h>
 
 #include "hk_internal.h"
