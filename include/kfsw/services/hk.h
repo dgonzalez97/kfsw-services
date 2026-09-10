@@ -24,6 +24,16 @@ extern "C" {
 /** Set when at least one entry could not be sampled and was zero-filled. */
 #define KFSW_HK_FLAG_INCOMPLETE 0x01U
 
+/**
+ * Set when the node's clock was not set, so the timestamp is zero.
+ *
+ * The values are still what they say they are; only the time is missing. The
+ * periodic collector waits for a clock rather than filling the ring with
+ * samples that cannot be placed in order, so in practice this appears only on
+ * a sample collected by hand before the clock arrives.
+ */
+#define KFSW_HK_FLAG_CLOCK_UNSET 0x02U
+
 /** Node number meaning "this one", so a definition need not know its own address. */
 #define KFSW_HK_NODE_LOCAL 0U
 
@@ -59,6 +69,8 @@ struct kfsw_hk_stats {
 	uint32_t overwritten;
 	uint32_t last_seconds;
 	uint8_t reports;
+	/** Whether the node has a wall clock, and so whether samples are timed. */
+	bool clock_valid;
 };
 
 /** Prepare the service. Safe to call before CSP exists. */

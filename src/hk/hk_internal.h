@@ -36,6 +36,8 @@ void kfsw_hk_count_overwritten(void);
 int kfsw_hk_collect_report(struct kfsw_hk_report *entry, struct kfsw_hk_sample *sample);
 
 /** Serialise one value at its fixed width, big-endian. */
+bool kfsw_hk_clock_valid(void);
+
 void kfsw_hk_write_value(uint8_t *out, size_t width, const struct kfsw_param_value *value);
 
 /** Count one entry that could not be read. */
