@@ -5,8 +5,9 @@
 #include <zephyr/sys/util.h>
 
 #include <kfsw/services/hk.h>
-/* Attributes this file's messages, so its level can be raised alone. */
-#define KFSW_LOG_MODULE KFSW_LOG_MODULE_PARAM
+/* Attributes this file's messages to housekeeping, so its level can be
+ * raised without also raising the parameter service's. */
+#define KFSW_LOG_MODULE KFSW_LOG_MODULE_HK
 #include <kfsw/services/log.h>
 
 #include "hk_internal.h"

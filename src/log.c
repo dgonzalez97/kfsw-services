@@ -25,7 +25,7 @@ static uint8_t kfsw_log_module_levels[KFSW_LOG_MODULE_COUNT];
 
 static const char *const kfsw_log_module_names[KFSW_LOG_MODULE_COUNT] = {
 	"app", "boot", "log",    "param",   "storage", "csp",   "uart",
-	"ftp", "fwu",  "health", "command", "event",   "radio",
+	"ftp", "fwu",  "health", "command", "event",   "radio", "hk",
 };
 
 const char *kfsw_log_module_name(enum kfsw_log_module module)
