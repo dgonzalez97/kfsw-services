@@ -20,6 +20,7 @@ static uint32_t hk_last_seconds;
 static uint32_t hk_period_floor_ms = CONFIG_KFSW_HK_PERIOD_FLOOR_MS;
 static uint8_t hk_history = CONFIG_KFSW_HK_HISTORY;
 static uint8_t hk_max_entries = CONFIG_KFSW_HK_ENTRIES;
+static uint8_t hk_clock_valid;
 
 static void sample_stats(void)
 {
@@ -32,6 +33,7 @@ static void sample_stats(void)
 	hk_entries_failed = stats.entries_failed;
 	hk_overwritten = stats.overwritten;
 	hk_last_seconds = stats.last_seconds;
+	hk_clock_valid = stats.clock_valid ? 1U : 0U;
 }
 
 static void sample_reports(void *value)
@@ -68,6 +70,12 @@ static void sample_last_seconds(void *value)
 {
 	sample_stats();
 	*(uint32_t *)value = hk_last_seconds;
+}
+
+static void sample_clock_valid(void *value)
+{
+	sample_stats();
+	*(uint8_t *)value = hk_clock_valid;
 }
 
 static const struct kfsw_param_definition hk_param_definitions[] = {
@@ -134,6 +142,19 @@ static const struct kfsw_param_definition hk_param_definitions[] = {
 		.description = "When the last collection started, UTC",
 		.value = &hk_last_seconds,
 		.sample = sample_last_seconds,
+	},
+	{
+		.offset = 0x16,
+		.type = KFSW_PARAM_U8,
+		.flags = KFSW_PARAM_FLAG_READ_ONLY | KFSW_PARAM_FLAG_LIVE,
+		.name = "hk_clock_valid",
+		/* The one to check when a report is defined and enabled and the
+		 * ring is still empty: nothing is collected on a schedule until
+		 * the node has been told the time.
+		 */
+		.description = "Whether the node has a clock, and so collects on its period",
+		.value = &hk_clock_valid,
+		.sample = sample_clock_valid,
 	},
 	{
 		.offset = 0x1a,

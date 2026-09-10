@@ -342,6 +342,25 @@ int kfsw_hk_get_definition(uint8_t report, struct kfsw_hk_entry *entries, size_t
  * An unreadable entry is zero-filled and flagged, not dropped, so the layout
  * still matches the definition ground holds.
  */
+/*
+ * Whether the node knows what time it is.
+ *
+ * A composition without CSP has nowhere for a wall clock to come from, and one
+ * with CSP has none until the ground sets it. Both answer false, and the
+ * collector treats them the same.
+ */
+bool kfsw_hk_clock_valid(void)
+{
+#if CONFIG_KFSW_CSP
+	struct kfsw_csp_clock clock = {0};
+
+	kfsw_csp_clock_get(&clock);
+	return kfsw_csp_clock_is_set(&clock);
+#else
+	return false;
+#endif
+}
+
 int kfsw_hk_collect_report(struct kfsw_hk_report *entry, struct kfsw_hk_sample *sample)
 {
 	uint8_t flags = 0U;
@@ -357,19 +376,21 @@ int kfsw_hk_collect_report(struct kfsw_hk_report *entry, struct kfsw_hk_sample *
 
 	/* Zero means the clock was never set, which is what a composition
 	 * without CSP has: there is nowhere for a wall clock to come from. A
-	 * sample still says what the values were, it just cannot say when.
+	 * sample still says what the values were, it just cannot say when, and
+	 * the flag says so rather than leaving a reader to infer it from a
+	 * timestamp that happens to be zero.
 	 */
 	sample->seconds = 0U;
+	if (kfsw_hk_clock_valid()) {
 #if CONFIG_KFSW_CSP
-	{
 		struct kfsw_csp_clock clock = {0};
 
 		kfsw_csp_clock_get(&clock);
-		if (kfsw_csp_clock_is_set(&clock)) {
-			sample->seconds = (uint32_t)clock.seconds;
-		}
-	}
+		sample->seconds = (uint32_t)clock.seconds;
 #endif
+	} else {
+		flags |= KFSW_HK_FLAG_CLOCK_UNSET;
+	}
 	sample->entry_count = entry->entry_count;
 	sample->length = (uint16_t)(KFSW_HK_HEADER_SIZE + entry->payload_bytes);
 
@@ -571,6 +592,10 @@ void kfsw_hk_get_stats(struct kfsw_hk_stats *out)
 	kfsw_hk_lock();
 	*out = stats;
 	kfsw_hk_unlock();
+	/* Read outside the lock: it asks the clock, not this service, and
+	 * holding the housekeeping mutex across that buys nothing.
+	 */
+	out->clock_valid = kfsw_hk_clock_valid();
 }
 
 int kfsw_hk_init(void)

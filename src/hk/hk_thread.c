@@ -32,8 +32,34 @@ static void hk_collector(void *arg1, void *arg2, void *arg3)
 	ARG_UNUSED(arg2);
 	ARG_UNUSED(arg3);
 
+	/* Said once when the clock arrives, and again if it is ever lost, so a
+	 * log shows when timed collection actually began rather than when the
+	 * thread started.
+	 */
+	bool announced = false;
+
 	while (true) {
 		int64_t now = k_uptime_get();
+
+		/* Nothing is collected on a schedule until the node knows what
+		 * time it is. A ring full of samples stamped zero cannot be put
+		 * in order, and it would overwrite the ones that can: the
+		 * period keeps running while the clock is missing, so a node
+		 * that came up without one would discard its own history
+		 * before anybody could ask for it.
+		 *
+		 * `hk collect` still works, and marks what it produces. An
+		 * operator debugging a node with no clock wants the values.
+		 */
+		if (!kfsw_hk_clock_valid()) {
+			announced = false;
+			k_sleep(K_MSEC(KFSW_HK_TICK_MS));
+			continue;
+		}
+		if (!announced) {
+			announced = true;
+			kfsw_log_info("HK: clock is set, collecting on schedule");
+		}
 
 		for (uint8_t index = 0U; index < CONFIG_KFSW_HK_REPORTS; index++) {
 			struct kfsw_hk_report *report = kfsw_hk_report_at(index);
