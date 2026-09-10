@@ -83,7 +83,7 @@ if KFSW_PARAM_CSP
 
 config KFSW_PARAM_PORT
 	int "CSP parameter transaction port"
-	range 1 63
+	range 1 CSP_PORT_MAX_BIND
 	default 10
 	help
 	  CSP port used for libparam version 2 pull and push transactions.
@@ -91,7 +91,7 @@ config KFSW_PARAM_PORT
 
 config KFSW_PARAM_LIST_PORT
 	int "CSP parameter-list port"
-	range 1 63
+	range 1 CSP_PORT_MAX_BIND
 	default 12
 	help
 	  CSP port used by the upstream version 3 parameter-list wire format.
@@ -155,7 +155,7 @@ if KFSW_FTP
 
 config KFSW_FTP_CSP_PORT
 	int "CSP file transfer port"
-	range 1 63
+	range 1 CSP_PORT_MAX_BIND
 	default 9
 
 config KFSW_FTP_TIMEOUT_MS
@@ -234,7 +234,7 @@ if KFSW_COMMAND_CSP
 
 config KFSW_COMMAND_CSP_PORT
 	int "CSP command port"
-	range 1 63
+	range 1 CSP_PORT_MAX_BIND
 	default 11
 	help
 	  Distinct from file transfer (9) and the parameter adapter (10, 12).
@@ -379,10 +379,11 @@ config KFSW_FWU_LITE_CSP_PORT
 	int "CSP port for firmware upload"
 	depends on KFSW_FWU_LITE_CSP
 	default 13
-	range 0 63
+	range 1 CSP_PORT_MAX_BIND
 	help
 	  Ports in use: 9 file transfer, 10 parameter transactions, 11 commands,
-	  12 parameter list.
+	  12 parameter list, 14 housekeeping. Port 0 is libcsp's own management
+	  protocol and 1 is its ping.
 
 config KFSW_FWU_LITE_RDP
 	bool "Use reliable delivery for firmware upload"
@@ -547,10 +548,10 @@ config KFSW_HK_CSP_PORT
 	int "CSP port for housekeeping requests"
 	depends on KFSW_HK_CSP
 	default 14
-	range 1 16
+	range 1 CSP_PORT_MAX_BIND
 	help
-	  Must be below CSP_PORT_MAX_BIND; libcsp refuses to bind anything
-	  above it.
+	  Ports in use: 9 file transfer, 10 parameter transactions, 11 commands,
+	  12 parameter list, 13 firmware upload.
 
 config KFSW_HK_SERVER_STACK_SIZE
 	int "Housekeeping server thread stack size"
