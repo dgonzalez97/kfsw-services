@@ -51,6 +51,11 @@ static void hk_collector(void *arg1, void *arg2, void *arg3)
 		 * `hk collect` still works, and marks what it produces. An
 		 * operator debugging a node with no clock wants the values.
 		 */
+		if (!kfsw_hk_enabled()) {
+			k_sleep(K_MSEC(KFSW_HK_TICK_MS));
+			continue;
+		}
+
 		if (!kfsw_hk_clock_valid()) {
 			announced = false;
 			k_sleep(K_MSEC(KFSW_HK_TICK_MS));

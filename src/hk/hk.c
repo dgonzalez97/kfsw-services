@@ -21,6 +21,7 @@
 static struct kfsw_hk_report reports[CONFIG_KFSW_HK_REPORTS];
 static struct kfsw_hk_stats stats;
 static bool initialized;
+static bool enabled = true;
 #if CONFIG_KFSW_HK_PERSISTENCE
 /* Set while the saved set is being restored, so restoring does not rewrite the
  * file once per report as each one comes back.
@@ -333,15 +334,33 @@ int kfsw_hk_get_definition(uint8_t report, struct kfsw_hk_entry *entries, size_t
 	return result;
 }
 
-/*
- * One collection.
- *
- * The timestamp is taken once, at the start, which is what the field is called:
- * a remote value arrives over a radio and cannot be simultaneous with anything.
- *
- * An unreadable entry is zero-filled and flagged, not dropped, so the layout
- * still matches the definition ground holds.
- */
+void kfsw_hk_set_enabled(bool value)
+{
+	bool changed;
+
+	kfsw_hk_lock();
+	changed = (enabled != value);
+	enabled = value;
+	kfsw_hk_unlock();
+
+	/* Logged outside the lock, and only on a change, so setting the
+	 * parameter to what it already is does not fill a pass with lines.
+	 */
+	if (changed) {
+		kfsw_log_info("HK: periodic collection %s", value ? "enabled" : "disabled");
+	}
+}
+
+bool kfsw_hk_enabled(void)
+{
+	bool value;
+
+	kfsw_hk_lock();
+	value = enabled;
+	kfsw_hk_unlock();
+	return value;
+}
+
 /*
  * Whether the node knows what time it is.
  *
@@ -361,6 +380,15 @@ bool kfsw_hk_clock_valid(void)
 #endif
 }
 
+/*
+ * One collection.
+ *
+ * The timestamp is taken once, at the start, which is what the field is called:
+ * a remote value arrives over a radio and cannot be simultaneous with anything.
+ *
+ * An unreadable entry is zero-filled and flagged, not dropped, so the layout
+ * still matches the definition ground holds.
+ */
 int kfsw_hk_collect_report(struct kfsw_hk_report *entry, struct kfsw_hk_sample *sample)
 {
 	uint8_t flags = 0U;
@@ -596,6 +624,7 @@ void kfsw_hk_get_stats(struct kfsw_hk_stats *out)
 	 * holding the housekeeping mutex across that buys nothing.
 	 */
 	out->clock_valid = kfsw_hk_clock_valid();
+	out->enabled = kfsw_hk_enabled();
 }
 
 int kfsw_hk_init(void)

@@ -34,6 +34,7 @@ static void sample_stats(void)
 	hk_overwritten = stats.overwritten;
 	hk_last_seconds = stats.last_seconds;
 	hk_clock_valid = stats.clock_valid ? 1U : 0U;
+	hk_enabled = stats.enabled ? 1U : 0U;
 }
 
 static void sample_reports(void *value)
@@ -72,6 +73,17 @@ static void sample_last_seconds(void *value)
 	*(uint32_t *)value = hk_last_seconds;
 }
 
+static void apply_enabled(const union kfsw_param_scalar *value)
+{
+	kfsw_hk_set_enabled(value->u8 != 0U);
+}
+
+static void sample_enabled(void *value)
+{
+	sample_stats();
+	*(uint8_t *)value = hk_enabled;
+}
+
 static void sample_clock_valid(void *value)
 {
 	sample_stats();
@@ -93,9 +105,15 @@ static const struct kfsw_param_definition hk_param_definitions[] = {
 		.type = KFSW_PARAM_U8,
 		.flags = KFSW_PARAM_FLAG_CONFIGURATION,
 		.name = "hk_enabled",
+		/* Definitions and the ring survive being turned off, so an
+		 * operator who quietens housekeeping during a firmware upload
+		 * gets the history back by turning it on again.
+		 */
 		.description = "Collect periodic reports",
 		.value = &hk_enabled,
 		.default_value.u8 = 1U,
+		.changed = apply_enabled,
+		.sample = sample_enabled,
 	},
 	{
 		.offset = 0x02,
