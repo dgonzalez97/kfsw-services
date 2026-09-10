@@ -71,6 +71,8 @@ struct kfsw_hk_stats {
 	uint8_t reports;
 	/** Whether the node has a wall clock, and so whether samples are timed. */
 	bool clock_valid;
+	/** Whether periodic collection is enabled. */
+	bool enabled;
 };
 
 /** Prepare the service. Safe to call before CSP exists. */
@@ -126,6 +128,25 @@ int kfsw_hk_get_period(uint8_t report, uint32_t *period_ms);
 
 /** Copy the service counters. */
 void kfsw_hk_get_stats(struct kfsw_hk_stats *stats);
+
+/**
+ * @brief Start or stop collecting on a period.
+ *
+ * Definitions and everything already collected are kept, so an operator who
+ * quietens housekeeping during a firmware upload gets the history back by
+ * turning it on again. Collecting by hand still works: disabling is a decision
+ * about the schedule, not a lock on the service.
+ *
+ * @param enabled True to collect on each report's period.
+ */
+void kfsw_hk_set_enabled(bool enabled);
+
+/**
+ * @brief Whether periodic collection is enabled.
+ *
+ * @return True when reports with a period are being collected.
+ */
+bool kfsw_hk_enabled(void);
 
 /** Definitions this service publishes as parameter table 33. */
 extern const struct kfsw_param_definition_set kfsw_hk_param_definitions;
