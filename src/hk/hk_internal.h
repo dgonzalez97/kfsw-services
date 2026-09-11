@@ -75,6 +75,22 @@ void kfsw_hk_beacon_tick(uint8_t report, int64_t now);
 
 #if CONFIG_KFSW_HK_CSP
 int kfsw_hk_server_start(void);
+
+/* Named rather than included: this header is read by files that have no
+ * business pulling in the CSP headers.
+ */
+struct csp_conn_s;
+struct csp_packet_s;
+
+
+/**
+ * @brief Answer one request, sending a packet per sample on @p connection.
+ *
+ * Separate from the accept loop so what a request means can be exercised
+ * without a router: the loop around it only accepts, reads and closes.
+ * Takes ownership of @p request.
+ */
+void kfsw_hk_serve_request(struct csp_conn_s *connection, struct csp_packet_s *request);
 #endif
 
 #endif /* KFSW_HK_INTERNAL_H */

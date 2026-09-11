@@ -39,7 +39,7 @@ static bool running;
  * than believing it has everything. Streaming under RDP would turn a bad link
  * into no answer at all.
  */
-static void serve_request(csp_conn_t *connection, csp_packet_t *request)
+void kfsw_hk_serve_request(csp_conn_t *connection, csp_packet_t *request)
 {
 	static struct kfsw_hk_sample sample;
 	uint8_t report;
@@ -106,7 +106,7 @@ static void hk_server(void *arg1, void *arg2, void *arg3)
 		}
 		request = csp_read(connection, 0);
 		if (request != NULL) {
-			serve_request(connection, request);
+			kfsw_hk_serve_request(connection, request);
 		}
 		(void)csp_close(connection);
 	}
