@@ -106,8 +106,8 @@ int kfsw_ftp_local_mkdir(const char *virtual_path, struct kfsw_ftp_workspace *wo
 	if (workspace == NULL) {
 		return -EINVAL;
 	}
-	result = kfsw_ftp_resolve_path(virtual_path, false, workspace->path,
-				       sizeof(workspace->path));
+	result =
+		kfsw_ftp_resolve_write_path(virtual_path, workspace->path, sizeof(workspace->path));
 	if (result != 0) {
 		return result;
 	}

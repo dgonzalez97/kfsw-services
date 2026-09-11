@@ -535,6 +535,65 @@ config KFSW_HK_PRIORITY
 	  Below the router and the servers. Housekeeping must never delay a
 	  packet to sample a value.
 
+config KFSW_HK_STORE
+	bool "Keep collected samples in a file"
+	depends on KFSW_STORAGE
+	help
+	  Write samples to /kfsw/hk so a pass can be read after a reset. The
+	  file is a ring of fixed-size records, one file per report, and it
+	  never grows: the oldest record is overwritten in place.
+
+	  Without this the samples live only in RAM and a reset loses them.
+
+config KFSW_HK_STORE_CAPACITY
+	int "Samples one report's file holds"
+	depends on KFSW_HK_STORE
+	range 8 8192
+	default 256
+	help
+	  Records per file. Multiply by the record size — ten bytes of header
+	  plus the report's values — for the bytes one report costs, and check
+	  it against the free space a node reports in fs_free_kb: a 64 kB
+	  partition gives about 40 kB back once LittleFS has taken its share.
+
+	  Capacity and period together set how far back a file reaches. 256
+	  samples is eight hours at a two-minute period and eight minutes at
+	  two seconds.
+
+config KFSW_HK_STORE_FLOOR_MS
+	int "Shortest store interval a report may be given"
+	depends on KFSW_HK_STORE
+	range 1000 3600000
+	default 10000
+	help
+	  Refused below this, because internal flash wears out. Every write
+	  eventually costs an erase, and an interval of a second spends a
+	  small partition's budget in days rather than years.
+
+	  Raise it on a board whose storage is more precious than this one's,
+	  and lower it only where the backing store is not flash.
+
+config KFSW_HK_STORE_ADVISED_MS
+	int "Store interval below which a warning is logged"
+	depends on KFSW_HK_STORE
+	range 1000 86400000
+	default 600000
+	help
+	  Accepted but warned about between the floor and here. The warning
+	  names the writes a day and the partition's erase budget, so an
+	  operator can judge it rather than be told it is bad.
+
+config KFSW_HK_STORE_ERASE_CYCLES
+	int "Erase cycles one flash block is rated for"
+	depends on KFSW_HK_STORE
+	range 100 1000000
+	default 10000
+	help
+	  Used only to state the erase budget in the warning above. The default
+	  suits the STM32L4 internal flash; check the datasheet of the part
+	  actually being flown, because this is the number an operator will
+	  weigh a store interval against.
+
 config KFSW_HK_CSP
 	bool "Answer housekeeping requests over CSP"
 	depends on KFSW_CSP

@@ -300,6 +300,24 @@ static void serve_connection(struct kfsw_ftp_link *link)
 				  0U, 0U);
 		return;
 	}
+	/* The read-only root is enforced in one place, before anything opens a
+	 * file. A node's own record of a pass is not a peer's to change, and
+	 * only these two operations write.
+	 */
+	if ((frame.message.opcode == KFSW_FTP_OP_MKDIR_REQUEST) ||
+	    (frame.message.opcode == KFSW_FTP_OP_PUT_REQUEST)) {
+		char path[KFSW_FTP_MAX_PATH_SIZE + 1U];
+
+		if ((kfsw_ftp_copy_message_path(&frame.message, path, sizeof(path)) == 0) &&
+		    kfsw_ftp_path_is_read_only(path)) {
+			(void)send_status(link, response_opcode(frame.message.opcode),
+					  frame.message.request_id,
+					  kfsw_ftp_errno_to_wire_status(-EROFS), 0U, 0U);
+			kfsw_ftp_link_release(&frame);
+			return;
+		}
+	}
+
 	switch (frame.message.opcode) {
 	case KFSW_FTP_OP_MKDIR_REQUEST:
 		(void)serve_mkdir(link, &frame.message);

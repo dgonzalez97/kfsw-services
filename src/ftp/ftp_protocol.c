@@ -102,10 +102,48 @@ int kfsw_ftp_copy_message_path(const struct kfsw_ftp_message *message, char *pat
 	return 0;
 }
 
+/*
+ * Whether a path names the read-only root.
+ *
+ * The first component selects which root a path belongs to, so `/hk/x` reaches
+ * housekeeping's own directory and everything else stays in the sandbox. It is
+ * a prefix test rather than a resolved-path test because a caller has to know
+ * before it opens anything for writing.
+ */
+bool kfsw_ftp_path_is_read_only(const char *virtual_path)
+{
+	const char *relative = virtual_path;
+
+	if (virtual_path == NULL) {
+		return false;
+	}
+	if (relative[0] == '/') {
+		relative++;
+	}
+	if (strncmp(relative, KFSW_FTP_READONLY_PREFIX, sizeof(KFSW_FTP_READONLY_PREFIX) - 1U) !=
+	    0) {
+		return false;
+	}
+	relative += sizeof(KFSW_FTP_READONLY_PREFIX) - 1U;
+	return (relative[0] == '\0') || (relative[0] == '/');
+}
+
+int kfsw_ftp_resolve_write_path(const char *virtual_path, char *resolved, size_t resolved_size)
+{
+	/* Both the local shell and a remote request come through here, which is
+	 * why the refusal lives at the resolve rather than at either caller.
+	 */
+	if (kfsw_ftp_path_is_read_only(virtual_path)) {
+		return -EROFS;
+	}
+	return kfsw_ftp_resolve_path(virtual_path, false, resolved, resolved_size);
+}
+
 int kfsw_ftp_resolve_path(const char *virtual_path, bool allow_root, char *resolved,
 			  size_t resolved_size)
 {
 	const char *relative;
+	const char *root = KFSW_FTP_ROOT_PATH;
 	size_t component_size = 0U;
 	size_t relative_size;
 	size_t root_size = sizeof(KFSW_FTP_ROOT_PATH) - 1U;
@@ -122,11 +160,23 @@ int kfsw_ftp_resolve_path(const char *virtual_path, bool allow_root, char *resol
 		relative++;
 		relative_size--;
 	}
+	if (kfsw_ftp_path_is_read_only(virtual_path)) {
+		const size_t selector = sizeof(KFSW_FTP_READONLY_PREFIX) - 1U;
+
+		root = KFSW_FTP_READONLY_ROOT;
+		root_size = sizeof(KFSW_FTP_READONLY_ROOT) - 1U;
+		relative += selector;
+		relative_size -= selector;
+		if ((relative_size != 0U) && (relative[0] == '/')) {
+			relative++;
+			relative_size--;
+		}
+	}
 	if (relative_size == 0U) {
 		if (!allow_root || (resolved_size <= root_size)) {
 			return -EINVAL;
 		}
-		memcpy(resolved, KFSW_FTP_ROOT_PATH, root_size + 1U);
+		memcpy(resolved, root, root_size + 1U);
 		return 0;
 	}
 	if (resolved_size <= root_size + 1U + relative_size) {
@@ -155,7 +205,7 @@ int kfsw_ftp_resolve_path(const char *virtual_path, bool allow_root, char *resol
 		component_size++;
 	}
 
-	memcpy(resolved, KFSW_FTP_ROOT_PATH, root_size);
+	memcpy(resolved, root, root_size);
 	resolved[root_size] = '/';
 	memcpy(&resolved[root_size + 1U], relative, relative_size);
 	resolved[root_size + 1U + relative_size] = '\0';

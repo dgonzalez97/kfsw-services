@@ -142,6 +142,39 @@ void kfsw_hk_get_stats(struct kfsw_hk_stats *stats);
 void kfsw_hk_set_enabled(bool enabled);
 
 /**
+ * @brief Keep a report's samples in a file, and how often to write.
+ *
+ * Collection and storage are separate rates on purpose: collecting often and
+ * writing rarely is what keeps a small flash alive. The interval is the
+ * longest a sample may wait, and it is capped by the ring depth so nothing is
+ * overwritten before it reaches the file.
+ *
+ * Refused below CONFIG_KFSW_HK_STORE_FLOOR_MS, and refused when the file would
+ * not fit the free space, so a report that cannot be stored says so while
+ * somebody is listening rather than during a pass.
+ *
+ * @param report Report index.
+ * @param interval_ms Milliseconds between writes, or 0 to keep samples in RAM.
+ * @retval 0 Storage configured.
+ * @retval -EINVAL Unknown report.
+ * @retval -ENOENT The report is not defined.
+ * @retval -ERANGE The interval is below the floor.
+ * @retval -ENOSPC The file would not fit.
+ * @retval -ENODEV There is no storage.
+ */
+int kfsw_hk_set_store(uint8_t report, uint32_t interval_ms);
+
+/**
+ * @brief Read back a report's store interval.
+ *
+ * @param report Report index.
+ * @param[out] interval_ms Milliseconds between writes, 0 when RAM only.
+ * @retval 0 The interval was written.
+ * @retval -EINVAL Unknown report or NULL destination.
+ */
+int kfsw_hk_get_store(uint8_t report, uint32_t *interval_ms);
+
+/**
  * @brief Whether periodic collection is enabled.
  *
  * @return True when reports with a period are being collected.
