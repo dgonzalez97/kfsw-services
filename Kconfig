@@ -674,6 +674,55 @@ config KFSW_HK_CSP
 	  still collects and the shell still reads it, which is what a bench
 	  bring-up needs.
 
+config KFSW_HK_BEACON
+	bool "Send samples unprompted"
+	depends on KFSW_HK_CSP
+	help
+	  Put the newest sample on the link without being asked, so a pass
+	  learns how a node is in its first seconds rather than after a round
+	  trip. The frame is the one the request path sends, to the same port,
+	  so the ground decodes it with what it already has.
+
+	  A node that transmits unprompted can flood a link. This has a period
+	  floor it cannot go below, an enable an operator can take away, and a
+	  buffer reserve it will not spend.
+
+config KFSW_HK_BEACON_FLOOR_MS
+	int "Shortest beacon interval a report may be given"
+	depends on KFSW_HK_BEACON
+	range 1000 3600000
+	default 5000
+	help
+	  Refused below this. The number that matters is how much of the link a
+	  beacon may take: a 25-byte sample every five seconds is a few bytes a
+	  second, which a 57600 baud radio will not notice, and the same sample
+	  every 100 ms would be a quarter of it.
+
+config KFSW_HK_BEACON_PORT
+	int "CSP port a beacon is addressed to"
+	depends on KFSW_HK_BEACON
+	range 1 16
+	default 15
+	help
+	  Deliberately not the port housekeeping serves on. A beacon addressed
+	  there would land on another node's request handler, and a frame whose
+	  first byte is also a version number could be read as a request.
+
+	  Nothing binds this port, so a node that receives a beacon drops it
+	  cleanly. A ground listener does not bind either: it recognises
+	  housekeeping by the port a frame came *from*, which is the serving
+	  port either way.
+
+config KFSW_HK_BEACON_BUFFER_RESERVE
+	int "CSP buffers a beacon will not take"
+	depends on KFSW_HK_BEACON
+	range 1 64
+	default 4
+	help
+	  A beacon is skipped rather than sent when fewer than this many buffers
+	  are free. A reply somebody is waiting for outranks a broadcast nobody
+	  asked for, and the skip is counted so a quiet beacon can be explained.
+
 config KFSW_HK_CSP_PORT
 	int "CSP port for housekeeping requests"
 	depends on KFSW_HK_CSP

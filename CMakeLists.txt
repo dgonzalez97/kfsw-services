@@ -213,6 +213,9 @@ if(CONFIG_KFSW_HK)
     if(CONFIG_KFSW_HK_PERSISTENCE)
         list(APPEND kfsw_services_sources src/hk/hk_persist.c)
     endif()
+    if(CONFIG_KFSW_HK_BEACON)
+        list(APPEND kfsw_services_sources src/hk/hk_beacon.c)
+    endif()
     if(CONFIG_KFSW_HK_STORE)
         list(APPEND kfsw_services_sources src/hk/hk_store.c)
     endif()
@@ -241,7 +244,7 @@ target_link_libraries(kfsw_services
 )
 
 if(CONFIG_KFSW_PARAM_CSP OR CONFIG_KFSW_FTP OR CONFIG_KFSW_COMMAND_CSP
-   OR CONFIG_KFSW_FWU_LITE_CSP)
+   OR CONFIG_KFSW_FWU_LITE_CSP OR CONFIG_KFSW_HK_CSP)
     target_link_libraries(kfsw_services
         PRIVATE
             kfsw::comms

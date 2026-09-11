@@ -688,6 +688,9 @@ void kfsw_hk_get_stats(struct kfsw_hk_stats *out)
 	 */
 	out->clock_valid = kfsw_hk_clock_valid();
 	out->enabled = kfsw_hk_enabled();
+#if CONFIG_KFSW_HK_BEACON
+	kfsw_hk_beacon_stats(&out->beacons_sent, &out->beacons_skipped);
+#endif
 }
 
 int kfsw_hk_init(void)
