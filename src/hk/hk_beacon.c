@@ -40,7 +40,7 @@ static struct beacon_state beacons[CONFIG_KFSW_HK_REPORTS];
 static uint32_t sent_count;
 static uint32_t skipped_count;
 
-int kfsw_hk_beacon_configure(uint8_t report, uint16_t node, uint32_t interval_ms)
+int kfsw_hk_set_beacon(uint8_t report, uint16_t node, uint32_t interval_ms)
 {
 	if (report >= ARRAY_SIZE(beacons)) {
 		return -EINVAL;
@@ -63,7 +63,7 @@ int kfsw_hk_beacon_configure(uint8_t report, uint16_t node, uint32_t interval_ms
 	return 0;
 }
 
-int kfsw_hk_beacon_get(uint8_t report, uint16_t *node, uint32_t *interval_ms)
+int kfsw_hk_get_beacon(uint8_t report, uint16_t *node, uint32_t *interval_ms)
 {
 	if ((report >= ARRAY_SIZE(beacons)) || (node == NULL) || (interval_ms == NULL)) {
 		return -EINVAL;

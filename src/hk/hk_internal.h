@@ -69,8 +69,6 @@ int kfsw_hk_store_bytes_needed(uint16_t record_size);
 #endif
 
 #if CONFIG_KFSW_HK_BEACON
-int kfsw_hk_beacon_configure(uint8_t report, uint16_t node, uint32_t interval_ms);
-int kfsw_hk_beacon_get(uint8_t report, uint16_t *node, uint32_t *interval_ms);
 void kfsw_hk_beacon_stats(uint32_t *sent, uint32_t *skipped);
 void kfsw_hk_beacon_tick(uint8_t report, int64_t now);
 #endif
