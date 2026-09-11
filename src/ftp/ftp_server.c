@@ -287,7 +287,7 @@ static int serve_get(struct kfsw_ftp_link *link, const struct kfsw_ftp_message *
 			   kfsw_ftp_errno_to_wire_status(result), transfer.offset, transfer.crc32);
 }
 
-static void serve_connection(struct kfsw_ftp_link *link)
+void kfsw_ftp_serve_connection(struct kfsw_ftp_link *link)
 {
 	struct kfsw_ftp_link_frame frame;
 	int result = kfsw_ftp_link_receive(link, &frame);
@@ -357,7 +357,7 @@ static void ftp_worker(void *arg1, void *arg2, void *arg3)
 			continue;
 		}
 		if (kfsw_ftp_link_is_open(&link)) {
-			serve_connection(&link);
+			kfsw_ftp_serve_connection(&link);
 			kfsw_ftp_link_close(&link);
 		}
 		atomic_clear(&server_busy);
