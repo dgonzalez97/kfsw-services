@@ -176,6 +176,27 @@ bool kfsw_command_is_initialized(void);
 /** Visit each registered command. */
 void kfsw_command_visit(kfsw_command_visitor_t visitor, void *context);
 
+/**
+ * @brief Convert one text argument to the type a command declares.
+ *
+ * The conversion belongs to the command service rather than to a front end,
+ * because a shell, a procedure file and anything else that carries arguments
+ * as text must agree on what "42" means for a declared type.
+ *
+ * A text argument is not copied: @p text must outlive the invocation.
+ *
+ * @param text Argument as written.
+ * @param type Type the command declares for that position.
+ * @param[out] arg Destination.
+ * @retval 0 Converted.
+ * @retval -EINVAL @p text is not a number where one is required, or a NULL was
+ *         given.
+ * @retval -ENAMETOOLONG The text is longer than KFSW_COMMAND_MAX_TEXT_SIZE.
+ * @retval -ENOTSUP The type is not one this service carries.
+ */
+int kfsw_command_parse_arg(const char *text, enum kfsw_command_type type,
+			   struct kfsw_command_arg *arg);
+
 /** Look up one registered command by name. Returns -ENOENT when absent. */
 int kfsw_command_find(const char *name, struct kfsw_command_info *info);
 
