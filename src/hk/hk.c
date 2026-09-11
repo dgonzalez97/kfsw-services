@@ -268,6 +268,13 @@ int kfsw_hk_define(uint8_t report, const struct kfsw_hk_entry *entries, size_t c
 	}
 	kfsw_hk_unlock();
 
+#if CONFIG_KFSW_HK_STORE
+	/* Same rule as the ring above: a redefinition invalidates what was
+	 * collected, and a file of the old layout would decode into the wrong
+	 * parameters. Storage has to be asked for again.
+	 */
+	kfsw_hk_store_forget(report);
+#endif
 	kfsw_log_info("HK: report %u defined, %u entries, %u bytes", report, (unsigned int)count,
 		      (unsigned int)payload);
 
@@ -288,6 +295,12 @@ int kfsw_hk_define(uint8_t report, const struct kfsw_hk_entry *entries, size_t c
 
 int kfsw_hk_clear(uint8_t report)
 {
+#if CONFIG_KFSW_HK_STORE
+	/* The file goes with the definition: the same bytes would mean
+	 * different things under the next one.
+	 */
+	kfsw_hk_store_forget(report);
+#endif
 	struct kfsw_hk_report *target = kfsw_hk_report_at(report);
 
 	if (target == NULL) {
@@ -528,9 +541,59 @@ int kfsw_hk_collect(uint8_t report)
 	target->sequence++;
 	stats.collections++;
 	stats.last_seconds = scratch.seconds;
+#if CONFIG_KFSW_HK_STORE
+	/* Under the same lock as the ring it reads from, so a flush cannot see
+	 * a slot being replaced. A write is a few hundred bytes to a mounted
+	 * filesystem, not a blocking round trip.
+	 */
+	if (kfsw_hk_store_interval(report) != 0U) {
+		int stored = kfsw_hk_store_flush(report, target);
+
+		if (stored != 0) {
+			kfsw_log_warning("HK: report %u could not be stored (%d)", report, stored);
+		}
+	}
+#endif
 	kfsw_hk_unlock();
 	return 0;
 }
+
+#if CONFIG_KFSW_HK_STORE
+int kfsw_hk_set_store(uint8_t report, uint32_t interval_ms)
+{
+	struct kfsw_hk_report *target = kfsw_hk_report_at(report);
+	uint32_t period;
+	uint16_t record_size;
+	int result;
+
+	if (target == NULL) {
+		return -EINVAL;
+	}
+	kfsw_hk_lock();
+	if (!target->defined) {
+		kfsw_hk_unlock();
+		return -ENOENT;
+	}
+	period = target->period_ms;
+	record_size = (uint16_t)(KFSW_HK_HEADER_SIZE + target->payload_bytes);
+	kfsw_hk_unlock();
+
+	result = kfsw_hk_store_configure(report, interval_ms, period, record_size);
+	if ((result == 0) && (interval_ms == 0U)) {
+		kfsw_hk_store_forget(report);
+	}
+	return result;
+}
+
+int kfsw_hk_get_store(uint8_t report, uint32_t *interval_ms)
+{
+	if ((report >= CONFIG_KFSW_HK_REPORTS) || (interval_ms == NULL)) {
+		return -EINVAL;
+	}
+	*interval_ms = kfsw_hk_store_interval(report);
+	return 0;
+}
+#endif
 
 int kfsw_hk_get(uint8_t report, uint16_t age, struct kfsw_hk_sample *sample)
 {

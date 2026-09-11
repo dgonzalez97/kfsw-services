@@ -15,6 +15,15 @@ extern "C" {
 #define KFSW_FTP_MAX_PATH_SIZE 96U
 #define KFSW_FTP_CHUNK_SIZE 192U
 #define KFSW_FTP_STORAGE_ROOT "/kfsw/ftp"
+
+/**
+ * A second root, served read-only.
+ *
+ * Housekeeping owns its files and a remote peer must not be able to delete a
+ * node's own record of a pass, so this path is readable and nothing more:
+ * every write, rename, delete and mkdir under it is refused.
+ */
+#define KFSW_FTP_READONLY_ROOT "/kfsw/hk"
 /* Matches the Kconfig range, so a value accepted at runtime is one the
  * composition could have been built with. */
 #define KFSW_FTP_TIMEOUT_MIN_MS 1000U

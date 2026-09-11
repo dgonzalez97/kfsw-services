@@ -59,6 +59,15 @@ int kfsw_hk_persist_save(void);
 int kfsw_hk_persist_load(void);
 #endif
 
+#if CONFIG_KFSW_HK_STORE
+int kfsw_hk_store_configure(uint8_t report, uint32_t interval_ms, uint32_t period_ms,
+			    uint16_t record_size);
+uint32_t kfsw_hk_store_interval(uint8_t report);
+void kfsw_hk_store_forget(uint8_t report);
+int kfsw_hk_store_flush(uint8_t report, const struct kfsw_hk_report *entry);
+int kfsw_hk_store_bytes_needed(uint16_t record_size);
+#endif
+
 #if CONFIG_KFSW_HK_CSP
 int kfsw_hk_server_start(void);
 #endif
