@@ -391,7 +391,7 @@ int kfsw_fbo_run(const char *name)
 {
 	struct fs_dirent info;
 	char path[128];
-	size_t length;
+	const char *terminator;
 	int result;
 
 	if (!initialized) {
@@ -400,8 +400,12 @@ int kfsw_fbo_run(const char *name)
 	if (name == NULL) {
 		return -EINVAL;
 	}
-	length = strnlen(name, KFSW_FBO_NAME_MAX);
-	if ((length == 0U) || (length >= KFSW_FBO_NAME_MAX)) {
+	/* Bounded without strnlen, which the minimal libc does not provide.
+	 * No terminator within the limit means the name is too long; one at
+	 * the first byte means it is empty.
+	 */
+	terminator = memchr(name, '\0', KFSW_FBO_NAME_MAX);
+	if ((terminator == NULL) || (terminator == name)) {
 		return -EINVAL;
 	}
 	/* A name, not a path: a procedure lives in one directory and cannot

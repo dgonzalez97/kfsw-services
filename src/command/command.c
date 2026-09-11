@@ -199,7 +199,11 @@ int kfsw_command_parse_arg(const char *text, enum kfsw_command_type type,
 		break;
 	}
 	case KFSW_COMMAND_TYPE_TEXT:
-		if (strnlen(text, KFSW_COMMAND_MAX_TEXT_SIZE + 1U) > KFSW_COMMAND_MAX_TEXT_SIZE) {
+		/* Bounded the way registration above is, and for the same
+		 * reason: the minimal libc has no strnlen, and a plain strlen
+		 * on text that is not terminated would read past it.
+		 */
+		if (memchr(text, '\0', KFSW_COMMAND_MAX_TEXT_SIZE + 1U) == NULL) {
 			return -ENAMETOOLONG;
 		}
 		/* Not copied: the caller owns the text for as long as the
