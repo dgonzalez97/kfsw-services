@@ -191,6 +191,13 @@ if(CONFIG_KFSW_COMMAND)
     endif()
 endif()
 
+if(CONFIG_KFSW_FBO)
+    list(APPEND kfsw_services_sources
+        src/fbo/fbo.c
+        src/fbo-parameters/fbo_table.c
+    )
+endif()
+
 if(CONFIG_KFSW_HK)
     list(APPEND kfsw_services_sources
         src/hk/hk.c

@@ -2,6 +2,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <zephyr/kernel.h>
@@ -166,6 +167,54 @@ void kfsw_command_visit(kfsw_command_visitor_t visitor, void *context)
 			return;
 		}
 	}
+}
+
+int kfsw_command_parse_arg(const char *text, enum kfsw_command_type type,
+			   struct kfsw_command_arg *arg)
+{
+	char *end;
+
+	if ((text == NULL) || (arg == NULL)) {
+		return -EINVAL;
+	}
+	arg->type = type;
+	switch (type) {
+	case KFSW_COMMAND_TYPE_U32: {
+		unsigned long parsed = strtoul(text, &end, 0);
+
+		if ((end == text) || (*end != '\0') || (parsed > UINT32_MAX)) {
+			return -EINVAL;
+		}
+		arg->value.u32 = (uint32_t)parsed;
+		break;
+	}
+	case KFSW_COMMAND_TYPE_I32: {
+		long parsed = strtol(text, &end, 0);
+
+		if ((end == text) || (*end != '\0') || (parsed > INT32_MAX) ||
+		    (parsed < INT32_MIN)) {
+			return -EINVAL;
+		}
+		arg->value.i32 = (int32_t)parsed;
+		break;
+	}
+	case KFSW_COMMAND_TYPE_TEXT:
+		/* Bounded the way registration above is, and for the same
+		 * reason: the minimal libc has no strnlen, and a plain strlen
+		 * on text that is not terminated would read past it.
+		 */
+		if (memchr(text, '\0', KFSW_COMMAND_MAX_TEXT_SIZE + 1U) == NULL) {
+			return -ENAMETOOLONG;
+		}
+		/* Not copied: the caller owns the text for as long as the
+		 * invocation lasts, which is what every caller already does.
+		 */
+		arg->value.text = text;
+		break;
+	default:
+		return -ENOTSUP;
+	}
+	return 0;
 }
 
 int kfsw_command_find(const char *name, struct kfsw_command_info *info)

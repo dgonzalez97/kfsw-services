@@ -24,8 +24,8 @@ static atomic_t kfsw_log_level = ATOMIC_INIT(CONFIG_KFSW_LOG_MIN_LEVEL);
 static uint8_t kfsw_log_module_levels[KFSW_LOG_MODULE_COUNT];
 
 static const char *const kfsw_log_module_names[KFSW_LOG_MODULE_COUNT] = {
-	"app", "boot", "log",    "param",   "storage", "csp",   "uart",
-	"ftp", "fwu",  "health", "command", "event",   "radio", "hk",
+	"app", "boot",   "log",     "param", "storage", "csp", "uart", "ftp",
+	"fwu", "health", "command", "event", "radio",   "hk",  "fbo",
 };
 
 const char *kfsw_log_module_name(enum kfsw_log_module module)

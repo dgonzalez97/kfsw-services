@@ -458,6 +458,77 @@ config KFSW_FWU_STREAM_BUFFER_SIZE
 	  Staging buffer between arriving chunks and the flash write block. Must
 	  be a multiple of the flash write block size.
 
+config KFSW_FBO
+	bool "File based operations"
+	depends on KFSW_COMMAND && KFSW_STORAGE
+	help
+	  Carry out a sequence of commands written in a file, so a node can be
+	  handed a pass plan or a recovery sequence and get on with it without
+	  an operator on the link for every step.
+
+	  Every line is a command the command service already validates, so a
+	  file cannot ask for anything the radio could not. There are no loops
+	  and no jumps: a procedure terminates by construction, which is what
+	  makes it safe to run unattended.
+
+config KFSW_FBO_LINES_MAX
+	int "Lines one procedure may carry out"
+	depends on KFSW_FBO
+	range 1 4096
+	default 128
+	help
+	  A ceiling, so a corrupted or over-ambitious file cannot become a job
+	  that runs for the rest of the pass. Blank and comment lines are not
+	  counted against it.
+
+config KFSW_FBO_LINE_MAX
+	int "Longest line in bytes"
+	depends on KFSW_FBO
+	range 32 512
+	default 128
+	help
+	  Long enough for a command and four arguments. A longer line is cut,
+	  which fails the line rather than the procedure.
+
+config KFSW_FBO_WAIT_MAX_S
+	int "Longest a wait line may ask for"
+	depends on KFSW_FBO
+	range 1 86400
+	default 600
+	help
+	  Bounded on purpose. A procedure that could wait for ever would be a
+	  procedure that can hold the node, and nothing else here can.
+
+config KFSW_FBO_EVENT_LOOKBACK
+	int "Events an if-event line looks back through"
+	depends on KFSW_FBO
+	range 1 256
+	default 32
+	help
+	  How far into the event ring a guard reads before deciding an event
+	  did not happen. Keep it below the ring depth, or a guard answers
+	  about events that were overwritten.
+
+config KFSW_FBO_STACK_SIZE
+	int "Procedure thread stack size"
+	depends on KFSW_FBO
+	range 1024 8192
+	default 3072
+	help
+	  The thread runs command handlers, so it needs what the deepest of
+	  them needs. Its own thread rather than a work item because a wait
+	  line blocks, and the system workqueue is shared with health and the
+	  watchdog.
+
+config KFSW_FBO_PRIORITY
+	int "Procedure thread priority"
+	depends on KFSW_FBO
+	range 0 15
+	default 5
+	help
+	  Below the router and the servers. A procedure is not urgent; the link
+	  that can stop it is.
+
 config KFSW_HK
 	bool "K-FSW housekeeping service"
 	depends on KFSW_PARAM
