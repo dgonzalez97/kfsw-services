@@ -585,6 +585,16 @@ int kfsw_hk_set_store(uint8_t report, uint32_t interval_ms)
 	return result;
 }
 
+int kfsw_hk_get_store(uint8_t report, uint32_t *interval_ms)
+{
+	if ((report >= CONFIG_KFSW_HK_REPORTS) || (interval_ms == NULL)) {
+		return -EINVAL;
+	}
+	*interval_ms = kfsw_hk_store_interval(report);
+	return 0;
+}
+#endif
+
 #if CONFIG_KFSW_HK_BEACON
 int kfsw_hk_set_beacon(uint8_t report, uint16_t node, uint32_t interval_ms)
 {
@@ -594,16 +604,6 @@ int kfsw_hk_set_beacon(uint8_t report, uint16_t node, uint32_t interval_ms)
 int kfsw_hk_get_beacon(uint8_t report, uint16_t *node, uint32_t *interval_ms)
 {
 	return kfsw_hk_beacon_get(report, node, interval_ms);
-}
-#endif
-
-int kfsw_hk_get_store(uint8_t report, uint32_t *interval_ms)
-{
-	if ((report >= CONFIG_KFSW_HK_REPORTS) || (interval_ms == NULL)) {
-		return -EINVAL;
-	}
-	*interval_ms = kfsw_hk_store_interval(report);
-	return 0;
 }
 #endif
 
