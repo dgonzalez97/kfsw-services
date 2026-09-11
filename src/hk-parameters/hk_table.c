@@ -21,6 +21,10 @@ static uint32_t hk_period_floor_ms = CONFIG_KFSW_HK_PERIOD_FLOOR_MS;
 static uint8_t hk_history = CONFIG_KFSW_HK_HISTORY;
 static uint8_t hk_max_entries = CONFIG_KFSW_HK_ENTRIES;
 static uint8_t hk_clock_valid;
+#if CONFIG_KFSW_HK_BEACON
+static uint32_t hk_beacons_sent;
+static uint32_t hk_beacons_skipped;
+#endif
 
 static void sample_stats(void)
 {
@@ -35,6 +39,10 @@ static void sample_stats(void)
 	hk_last_seconds = stats.last_seconds;
 	hk_clock_valid = stats.clock_valid ? 1U : 0U;
 	hk_enabled = stats.enabled ? 1U : 0U;
+#if CONFIG_KFSW_HK_BEACON
+	hk_beacons_sent = stats.beacons_sent;
+	hk_beacons_skipped = stats.beacons_skipped;
+#endif
 }
 
 static void sample_reports(void *value)
@@ -89,6 +97,20 @@ static void sample_clock_valid(void *value)
 	sample_stats();
 	*(uint8_t *)value = hk_clock_valid;
 }
+
+#if CONFIG_KFSW_HK_BEACON
+static void sample_beacons_sent(void *value)
+{
+	sample_stats();
+	*(uint32_t *)value = hk_beacons_sent;
+}
+
+static void sample_beacons_skipped(void *value)
+{
+	sample_stats();
+	*(uint32_t *)value = hk_beacons_skipped;
+}
+#endif
 
 static const struct kfsw_param_definition hk_param_definitions[] = {
 	{
@@ -174,6 +196,29 @@ static const struct kfsw_param_definition hk_param_definitions[] = {
 		.value = &hk_clock_valid,
 		.sample = sample_clock_valid,
 	},
+#if CONFIG_KFSW_HK_BEACON
+	{
+		.offset = 0x20,
+		.type = KFSW_PARAM_U32,
+		.flags = KFSW_PARAM_FLAG_READ_ONLY,
+		.name = "hk_beacons_sent",
+		.description = "Samples put on the link without being asked",
+		.value = &hk_beacons_sent,
+		.sample = sample_beacons_sent,
+	},
+	{
+		.offset = 0x24,
+		.type = KFSW_PARAM_U32,
+		.flags = KFSW_PARAM_FLAG_READ_ONLY,
+		/* The one to read when a ground station stops hearing a node
+		 * that is still collecting: the link was busy, not broken.
+		 */
+		.name = "hk_beacons_skipped",
+		.description = "Beacons not sent because CSP buffers were short",
+		.value = &hk_beacons_skipped,
+		.sample = sample_beacons_skipped,
+	},
+#endif
 	{
 		.offset = 0x1a,
 		.type = KFSW_PARAM_U32,

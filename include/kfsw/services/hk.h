@@ -73,6 +73,10 @@ struct kfsw_hk_stats {
 	bool clock_valid;
 	/** Whether periodic collection is enabled. */
 	bool enabled;
+	/** Beacons put on the link since boot. */
+	uint32_t beacons_sent;
+	/** Beacons skipped because CSP buffers were short. */
+	uint32_t beacons_skipped;
 };
 
 /** Prepare the service. Safe to call before CSP exists. */
@@ -163,6 +167,41 @@ void kfsw_hk_set_enabled(bool enabled);
  * @retval -ENODEV There is no storage.
  */
 int kfsw_hk_set_store(uint8_t report, uint32_t interval_ms);
+
+/**
+ * @brief Send a report's newest sample to a node without being asked.
+ *
+ * Housekeeping answers requests, which is useless in the first seconds of a
+ * pass: the ground must find the node, ask, and wait a round trip. A beacon
+ * puts the newest sample on the link as soon as the link exists.
+ *
+ * The frame is the one a request gets, on the same port, so nothing on the
+ * ground needs to change. Sent connection-less and at low priority, and
+ * skipped rather than sent when CSP buffers are short — a reply somebody is
+ * waiting for outranks a broadcast nobody asked for.
+ *
+ * Beacons follow collection: a report that is not collecting does not beacon,
+ * and neither does a node whose clock was never set.
+ *
+ * @param report Report index.
+ * @param node Destination address.
+ * @param interval_ms Milliseconds between beacons, or 0 to stop.
+ * @retval 0 Configured.
+ * @retval -EINVAL Unknown report, or an address outside 1..16383.
+ * @retval -ERANGE The interval is below CONFIG_KFSW_HK_BEACON_FLOOR_MS.
+ */
+int kfsw_hk_set_beacon(uint8_t report, uint16_t node, uint32_t interval_ms);
+
+/**
+ * @brief Read back a report's beacon destination and interval.
+ *
+ * @param report Report index.
+ * @param[out] node Destination address.
+ * @param[out] interval_ms Milliseconds between beacons, 0 when not beaconing.
+ * @retval 0 Written.
+ * @retval -EINVAL Unknown report or a NULL destination.
+ */
+int kfsw_hk_get_beacon(uint8_t report, uint16_t *node, uint32_t *interval_ms);
 
 /**
  * @brief Read back a report's store interval.

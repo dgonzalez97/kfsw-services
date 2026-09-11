@@ -85,6 +85,14 @@ static void hk_collector(void *arg1, void *arg2, void *arg3)
 			if (due) {
 				(void)kfsw_hk_collect(index);
 			}
+#if CONFIG_KFSW_HK_BEACON
+			/* After collecting, and behind the same gates: a
+			 * report that is not collecting has nothing new to
+			 * announce, and a node with no clock would announce it
+			 * without saying when.
+			 */
+			kfsw_hk_beacon_tick(index, now);
+#endif
 		}
 		k_sleep(K_MSEC(KFSW_HK_TICK_MS));
 	}
