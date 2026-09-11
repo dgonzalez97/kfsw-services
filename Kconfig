@@ -509,12 +509,6 @@ config KFSW_FBO_EVENT_LOOKBACK
 	  did not happen. Keep it below the ring depth, or a guard answers
 	  about events that were overwritten.
 
-config KFSW_FBO_TICK_MS
-	int "How often the runner looks for work"
-	depends on KFSW_FBO
-	range 10 5000
-	default 200
-
 config KFSW_FBO_STACK_SIZE
 	int "Procedure thread stack size"
 	depends on KFSW_FBO

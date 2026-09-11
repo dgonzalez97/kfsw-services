@@ -53,6 +53,11 @@ static struct k_mutex lock;
 static bool initialized;
 static atomic_t stop_requested;
 static atomic_t running;
+/* Given once the name is in place, so the thread cannot start on a name that
+ * has not been written yet. Waiting on it rather than polling a flag is also
+ * what removes the tick: there is nothing to look for between procedures.
+ */
+static K_SEM_DEFINE(start, 0, 1);
 static char requested[KFSW_FBO_NAME_MAX];
 
 /* One at a time, so the buffers below are the service's rather than a stack's:
@@ -162,11 +167,17 @@ static int run_command_line(char **tokens, size_t count)
  */
 static int run_line(char *text, bool *skip_next, bool *stop_on_error)
 {
-	char *tokens[KFSW_COMMAND_MAX_ARGS + 1U];
+	char *tokens[KFSW_COMMAND_MAX_ARGS + 2U];
 	size_t count = tokenise(text, tokens, ARRAY_SIZE(tokens));
 
 	if (count == 0U) {
 		return 0;
+	}
+	/* One more slot than any command can use, so a line with too many
+	 * words is refused instead of quietly losing its tail.
+	 */
+	if (count > (KFSW_COMMAND_MAX_ARGS + 1U)) {
+		return -E2BIG;
 	}
 
 	if (strcmp(tokens[0], "on-error") == 0) {
@@ -229,6 +240,7 @@ static void run_procedure(const char *name)
 	uint16_t line_number = 0U;
 	size_t used = 0U;
 	bool at_end = false;
+	bool overflowed = false;
 	int result;
 
 	(void)snprintf(path, sizeof(path), "%s/%s", KFSW_FBO_DIRECTORY, name);
@@ -256,7 +268,8 @@ static void run_procedure(const char *name)
 		 * state for no gain.
 		 */
 		used = 0U;
-		while (used + 1U < sizeof(current.text)) {
+		overflowed = false;
+		while (true) {
 			char character;
 
 			read = fs_read(&file, &character, 1U);
@@ -267,9 +280,19 @@ static void run_procedure(const char *name)
 			if (character == '\n') {
 				break;
 			}
-			if (character != '\r') {
-				current.text[used++] = character;
+			if (character == '\r') {
+				continue;
 			}
+			if (used + 1U >= sizeof(current.text)) {
+				/* Read on to the newline rather than stopping
+				 * here: leaving the tail in the file would turn
+				 * one over-long line into two, and the second
+				 * half might parse as something.
+				 */
+				overflowed = true;
+				continue;
+			}
+			current.text[used++] = character;
 		}
 		current.text[used] = '\0';
 
@@ -281,6 +304,16 @@ static void run_procedure(const char *name)
 		}
 
 		line_number++;
+		if (overflowed) {
+			kfsw_log_error("FBO: %s line %u is longer than %u bytes", name, line_number,
+				       (unsigned int)(sizeof(current.text) - 1U));
+			kfsw_fbo_count_line(line_number, -ENAMETOOLONG);
+			note(KFSW_FBO_EVENT_LINE_FAILED, KFSW_EVENT_ERROR, line_number);
+			if (stop_on_error) {
+				break;
+			}
+			continue;
+		}
 		if (skip_next) {
 			skip_next = false;
 			kfsw_fbo_count_skipped(line_number);
@@ -310,10 +343,7 @@ static void fbo_thread(void *arg1, void *arg2, void *arg3)
 	ARG_UNUSED(arg3);
 
 	while (true) {
-		if (atomic_get(&running) == 0) {
-			k_sleep(K_MSEC(CONFIG_KFSW_FBO_TICK_MS));
-			continue;
-		}
+		k_sem_take(&start, K_FOREVER);
 		run_procedure(requested);
 		k_mutex_lock(&lock, K_FOREVER);
 		status.running = false;
@@ -401,6 +431,9 @@ int kfsw_fbo_run(const char *name)
 	status.line = 0U;
 	status.runs++;
 	k_mutex_unlock(&lock);
+
+	/* Last, and only once the name is in place. */
+	k_sem_give(&start);
 	return 0;
 }
 
