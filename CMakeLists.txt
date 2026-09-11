@@ -3,6 +3,12 @@ set(kfsw_services_sources
     src/log.c
 )
 
+# Two services keep a snapshot on the filesystem and both want the same
+# guarantee, so the sequence that provides it lives in one place.
+if(CONFIG_KFSW_PARAM_PERSISTENCE OR CONFIG_KFSW_HK_PERSISTENCE)
+    list(APPEND kfsw_services_sources src/snapshot_file.c)
+endif()
+
 if(CONFIG_KFSW_PARAM)
     list(APPEND kfsw_services_sources src/boot-parameters/boot_table.c)
 endif()

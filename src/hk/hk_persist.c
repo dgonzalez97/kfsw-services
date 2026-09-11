@@ -14,6 +14,7 @@
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_HK
 #include <kfsw/services/log.h>
 
+#include "../snapshot_file.h"
 #include "hk_internal.h"
 
 #if CONFIG_KFSW_HK_PERSISTENCE
@@ -47,31 +48,11 @@
 
 static uint8_t blob[KFSW_HK_PERSIST_MAX_SIZE];
 
-static int write_all(struct fs_file_t *file, const uint8_t *data, size_t size)
-{
-	size_t offset = 0U;
-
-	while (offset < size) {
-		ssize_t written = fs_write(file, &data[offset], size - offset);
-
-		if (written < 0) {
-			return (int)written;
-		}
-		if (written == 0) {
-			return -EIO;
-		}
-		offset += (size_t)written;
-	}
-	return 0;
-}
-
 int kfsw_hk_persist_save(void)
 {
-	struct fs_file_t file;
 	size_t offset = KFSW_HK_PERSIST_HEADER_SIZE;
 	uint16_t saved = 0U;
 	int result;
-	int close_result;
 
 	if (!kfsw_storage_is_ready()) {
 		return -ENODEV;
@@ -109,25 +90,8 @@ int kfsw_hk_persist_save(void)
 		return result;
 	}
 
-	fs_file_t_init(&file);
-	result = fs_open(&file, KFSW_HK_PERSIST_TEMP_PATH, FS_O_CREATE | FS_O_WRITE | FS_O_TRUNC);
+	result = kfsw_snapshot_write(KFSW_HK_PERSIST_PATH, KFSW_HK_PERSIST_TEMP_PATH, blob, offset);
 	if (result != 0) {
-		return result;
-	}
-	result = write_all(&file, blob, offset);
-	close_result = fs_close(&file);
-	if (result == 0) {
-		result = close_result;
-	}
-	if (result != 0) {
-		(void)fs_unlink(KFSW_HK_PERSIST_TEMP_PATH);
-		return result;
-	}
-
-	(void)fs_unlink(KFSW_HK_PERSIST_PATH);
-	result = fs_rename(KFSW_HK_PERSIST_TEMP_PATH, KFSW_HK_PERSIST_PATH);
-	if (result != 0) {
-		(void)fs_unlink(KFSW_HK_PERSIST_TEMP_PATH);
 		return result;
 	}
 
