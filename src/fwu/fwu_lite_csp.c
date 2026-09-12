@@ -11,6 +11,7 @@
 #include <zephyr/sys/util.h>
 
 #include <kfsw/platform/storage.h>
+#include <kfsw/comms/csp.h>
 #include <kfsw/services/fwu.h>
 #include <kfsw/services/fwu_lite.h>
 /* Attributes this file's messages, so its level can be raised alone. */
@@ -37,6 +38,8 @@ BUILD_ASSERT(WIRE_BUFFER_SIZE <= CSP_BUFFER_SIZE,
 static K_THREAD_STACK_DEFINE(server_stack, CONFIG_KFSW_FWU_LITE_STACK_SIZE);
 static struct k_thread server_thread;
 static bool server_running;
+static csp_socket_t server_socket;
+K_MUTEX_DEFINE(server_start_lock);
 
 static void serve_packet(csp_conn_t *connection, csp_packet_t *packet)
 {
@@ -122,28 +125,16 @@ int kfsw_fwu_lite_set_retries(uint8_t retries)
 
 static void server_entry(void *first, void *second, void *third)
 {
-	static csp_socket_t socket;
 	csp_conn_t *connection;
 
 	ARG_UNUSED(first);
 	ARG_UNUSED(second);
 	ARG_UNUSED(third);
 
-	socket.opts = SOCKET_OPTIONS;
-	if (csp_bind(&socket, CONFIG_KFSW_FWU_LITE_CSP_PORT) != CSP_ERR_NONE) {
-		kfsw_log_error("Firmware upload could not bind port %d",
-			       CONFIG_KFSW_FWU_LITE_CSP_PORT);
-		return;
-	}
-	if (csp_listen(&socket, 1) != CSP_ERR_NONE) {
-		kfsw_log_error("Firmware upload could not listen");
-		return;
-	}
-
 	kfsw_log_info("Firmware upload server on CSP port %d", CONFIG_KFSW_FWU_LITE_CSP_PORT);
 
 	while (true) {
-		connection = csp_accept(&socket, CSP_MAX_TIMEOUT);
+		connection = csp_accept(&server_socket, CSP_MAX_TIMEOUT);
 		if (connection == NULL) {
 			continue;
 		}
@@ -166,16 +157,42 @@ static void server_entry(void *first, void *second, void *third)
 
 int kfsw_fwu_lite_server_start(void)
 {
+	struct kfsw_csp_info info;
+	int result;
+
+	k_mutex_lock(&server_start_lock, K_FOREVER);
 	if (server_running) {
-		return -EALREADY;
+		result = -EALREADY;
+		goto out;
+	}
+	kfsw_csp_get_info(&info);
+	if (!info.initialized || !info.router_running) {
+		result = -EACCES;
+		goto out;
+	}
+	memset(&server_socket, 0, sizeof(server_socket));
+	server_socket.opts = SOCKET_OPTIONS;
+	if (csp_listen(&server_socket, 1U) != CSP_ERR_NONE) {
+		(void)csp_socket_close(&server_socket);
+		result = -EIO;
+		goto out;
+	}
+	if (csp_bind(&server_socket, CONFIG_KFSW_FWU_LITE_CSP_PORT) != CSP_ERR_NONE) {
+		(void)csp_socket_close(&server_socket);
+		result = -EADDRINUSE;
+		goto out;
 	}
 
 	(void)k_thread_create(&server_thread, server_stack, K_THREAD_STACK_SIZEOF(server_stack),
 			      server_entry, NULL, NULL, NULL, CONFIG_KFSW_FWU_LITE_PRIORITY, 0,
-			      K_NO_WAIT);
+			      K_FOREVER);
 	k_thread_name_set(&server_thread, "kfsw_fwu_lite");
 	server_running = true;
-	return 0;
+	k_thread_start(&server_thread);
+	result = 0;
+out:
+	k_mutex_unlock(&server_start_lock);
+	return result;
 }
 
 /* Send one message and wait for its reply. */

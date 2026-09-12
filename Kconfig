@@ -318,6 +318,21 @@ config KFSW_FWU_MCUBOOT
 	  reboot, which is what the unit tests do: they exercise the transfer
 	  and its rejections on a target that has no bootloader.
 
+config KFSW_FWU_FILES
+	bool "Read firmware slots as files"
+	depends on KFSW_FWU && FILE_SYSTEM && MCUBOOT_BOOTUTIL_LIB
+	default y
+	help
+	  Mount /kfsw/boot with read-only firmware_1.bin and firmware_2.bin
+	  backed by slot0 and the update partition. No image copy is stored in
+	  the data filesystem. FILE_SYSTEM_MAX_FILE_NAME must allow 14 bytes.
+
+config KFSW_FWU_FILE_HANDLES
+	int "Open firmware slot files"
+	depends on KFSW_FWU_FILES
+	default 4
+	range 1 8
+
 config KFSW_FWU_SLOT_OFFSET_SECTORS
 	int "Sectors to skip at the start of the target slot"
 	depends on KFSW_FWU

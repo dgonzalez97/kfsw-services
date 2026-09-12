@@ -173,6 +173,9 @@ endif()
 
 if(CONFIG_KFSW_FWU)
     list(APPEND kfsw_services_sources src/fwu/fwu.c)
+    if(CONFIG_KFSW_FWU_FILES)
+        list(APPEND kfsw_services_sources src/fwu/fwu_fs.c)
+    endif()
     if(CONFIG_KFSW_PARAM)
         list(APPEND kfsw_services_sources src/fwu-parameters/fwu_table.c)
     endif()
@@ -230,6 +233,10 @@ endif()
 add_library(kfsw_services STATIC ${kfsw_services_sources})
 
 add_library(kfsw::services ALIAS kfsw_services)
+
+if(CONFIG_KFSW_FWU_FILES)
+    target_link_libraries(kfsw_services PRIVATE MCUBOOT_BOOTUTIL)
+endif()
 
 target_include_directories(kfsw_services
     PUBLIC
