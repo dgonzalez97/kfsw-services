@@ -87,6 +87,15 @@ void kfsw_ftp_link_close(struct kfsw_ftp_link *link);
 /** Return whether the link currently holds a connection. */
 bool kfsw_ftp_link_is_open(const struct kfsw_ftp_link *link);
 
+/**
+ * @brief Serve one request on an open link, then release its frame.
+ *
+ * Separate from the accept loop so what a request means can be exercised over
+ * a link that is not a radio: the loop around it only accepts, hands over and
+ * closes.
+ */
+void kfsw_ftp_serve_connection(struct kfsw_ftp_link *link);
+
 /** Bind and listen on the file-transfer port with a one-connection backlog. */
 int kfsw_ftp_link_listen(struct kfsw_ftp_listener *listener);
 
