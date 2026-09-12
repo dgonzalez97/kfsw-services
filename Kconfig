@@ -137,6 +137,21 @@ config KFSW_PARAM_LIST_TIMEOUT_MS
 	int "Total remote descriptor refresh budget in milliseconds"
 	range 100 120000
 	default 10000
+	help
+	  A remote read resolves a name before it can fetch a value, and a node
+	  whose descriptors are not cached downloads all of them first. This is
+	  the budget for that download, not for one value, so it has to fit the
+	  slowest link the node will ask over.
+
+	  Measured: about a hundred descriptors take well under a second over
+	  CAN at 500 kbit/s, and 35 seconds over a 57600 baud UHF modem. The
+	  10 second default therefore works on a bus and fails on a radio, and
+	  it fails as a plain timeout on the first remote read, which looks
+	  like an unreachable node rather than a budget that was too small.
+
+	  Raise it in the composition that carries the slow link rather than
+	  here: a node that only speaks over a bus should not wait a minute
+	  before reporting a peer as absent.
 
 config KFSW_PARAM_LIST_RDP
 	bool "Allow legacy parameter-list clients using RDP"
