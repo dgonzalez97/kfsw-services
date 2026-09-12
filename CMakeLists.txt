@@ -120,8 +120,8 @@ if(CONFIG_KFSW_PARAM_CSP)
     # The library is vendored at an upstream revision west manages, so it is not
     # edited; its printf is redirected here instead, into a debug-level log line
     # attributed to the parameter module. See src/parameter/libparam_print.c.
-    target_compile_definitions(kfsw_libparam
-        PRIVATE printf=kfsw_libparam_printf
+    target_compile_options(kfsw_libparam
+        PRIVATE -include "${CMAKE_CURRENT_LIST_DIR}/src/parameter/libparam_print.h"
     )
 
     target_include_directories(kfsw_libparam
