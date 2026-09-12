@@ -578,11 +578,36 @@ int kfsw_hk_set_store(uint8_t report, uint32_t interval_ms)
 	record_size = (uint16_t)(KFSW_HK_HEADER_SIZE + target->payload_bytes);
 	kfsw_hk_unlock();
 
+	/* Stopping is not discarding. Turning a store off used to unlink the
+	 * file in the same call, so the command that reads as "stop writing"
+	 * also destroyed the pass it had already captured. Removing it is now
+	 * its own request.
+	 */
 	result = kfsw_hk_store_configure(report, interval_ms, period, record_size);
-	if ((result == 0) && (interval_ms == 0U)) {
-		kfsw_hk_store_forget(report);
+#if CONFIG_KFSW_HK_PERSISTENCE
+	/* Saved like a period is, because a policy that does not outlive the
+	 * reset is a policy an operator has to set again from the ground at
+	 * exactly the moment they are least able to.
+	 */
+	if ((result == 0) && !loading) {
+		(void)kfsw_hk_persist_save();
 	}
+#endif
 	return result;
+}
+
+int kfsw_hk_clear_store(uint8_t report)
+{
+	if (report >= CONFIG_KFSW_HK_REPORTS) {
+		return -EINVAL;
+	}
+	kfsw_hk_store_forget(report);
+#if CONFIG_KFSW_HK_PERSISTENCE
+	if (!loading) {
+		(void)kfsw_hk_persist_save();
+	}
+#endif
+	return 0;
 }
 
 int kfsw_hk_get_store(uint8_t report, uint32_t *interval_ms)
@@ -592,6 +617,17 @@ int kfsw_hk_get_store(uint8_t report, uint32_t *interval_ms)
 	}
 	*interval_ms = kfsw_hk_store_interval(report);
 	return 0;
+}
+#endif
+
+#if CONFIG_KFSW_HK_BEACON
+void kfsw_hk_beacon_persist(void)
+{
+#if CONFIG_KFSW_HK_PERSISTENCE
+	if (!loading) {
+		(void)kfsw_hk_persist_save();
+	}
+#endif
 }
 #endif
 

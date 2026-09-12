@@ -70,6 +70,12 @@ int kfsw_hk_store_bytes_needed(uint16_t record_size);
 
 #if CONFIG_KFSW_HK_BEACON
 void kfsw_hk_beacon_stats(uint32_t *sent, uint32_t *skipped);
+
+/* Keeps a beacon across a reset, the way a period is kept. Defined next to the
+ * rest of the saving so the beacon file does not need to know whether this
+ * build persists anything.
+ */
+void kfsw_hk_beacon_persist(void);
 void kfsw_hk_beacon_tick(uint8_t report, int64_t now);
 #endif
 

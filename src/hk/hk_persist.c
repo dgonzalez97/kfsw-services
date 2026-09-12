@@ -32,14 +32,24 @@
 #define KFSW_HK_PERSIST_TEMP_PATH KFSW_HK_PERSIST_DIRECTORY "/reports.tmp"
 #define KFSW_HK_PERSIST_MAGIC "KHKR"
 #define KFSW_HK_PERSIST_MAGIC_SIZE 4U
-#define KFSW_HK_PERSIST_VERSION 1U
+#define KFSW_HK_PERSIST_VERSION 2U
 #define KFSW_HK_PERSIST_HEADER_SIZE 12U
 #define KFSW_HK_PERSIST_CRC_OFFSET 8U
 
 /* magic 4, version 1, reserved 1, count 2, crc 4, then per report:
- * id 1, entry count 1, period 4, then entries of node 2 and id 2.
+ * id 1, entry count 1, period 4, store interval 4, beacon node 2,
+ * beacon interval 4, then entries of node 2 and id 2.
+ *
+ * Version 2 added the last three. A node that resets mid-pass used to come
+ * back collecting but silent, with its store off — the definition survived and
+ * the policy built around it did not, which is the half that matters when
+ * nobody is there to set it again.
+ *
+ * Version 1 is still read, so a board that has one keeps its reports across
+ * the update and gains the rest on its next save.
  */
-#define KFSW_HK_PERSIST_REPORT_HEADER 6U
+#define KFSW_HK_PERSIST_REPORT_HEADER_V1 6U
+#define KFSW_HK_PERSIST_REPORT_HEADER 16U
 #define KFSW_HK_PERSIST_ENTRY_SIZE 4U
 #define KFSW_HK_PERSIST_MAX_SIZE                                                                   \
 	(KFSW_HK_PERSIST_HEADER_SIZE +                                                             \
@@ -47,6 +57,51 @@
 				    (CONFIG_KFSW_HK_ENTRIES * KFSW_HK_PERSIST_ENTRY_SIZE))))
 
 static uint8_t blob[KFSW_HK_PERSIST_MAX_SIZE];
+
+/* A build without the store or the beacon still writes their fields, as zero.
+ * One layout on disk means a node that gains either on its next image reads
+ * what it already has instead of refusing it.
+ */
+static uint32_t store_interval_of(uint8_t report)
+{
+#if CONFIG_KFSW_HK_STORE
+	uint32_t interval = 0U;
+
+	(void)kfsw_hk_get_store(report, &interval);
+	return interval;
+#else
+	ARG_UNUSED(report);
+	return 0U;
+#endif
+}
+
+static uint16_t beacon_node_of(uint8_t report)
+{
+#if CONFIG_KFSW_HK_BEACON
+	uint16_t node = 0U;
+	uint32_t interval = 0U;
+
+	(void)kfsw_hk_get_beacon(report, &node, &interval);
+	return node;
+#else
+	ARG_UNUSED(report);
+	return 0U;
+#endif
+}
+
+static uint32_t beacon_interval_of(uint8_t report)
+{
+#if CONFIG_KFSW_HK_BEACON
+	uint16_t node = 0U;
+	uint32_t interval = 0U;
+
+	(void)kfsw_hk_get_beacon(report, &node, &interval);
+	return interval;
+#else
+	ARG_UNUSED(report);
+	return 0U;
+#endif
+}
 
 int kfsw_hk_persist_save(void)
 {
@@ -68,6 +123,12 @@ int kfsw_hk_persist_save(void)
 		blob[offset++] = index;
 		blob[offset++] = report->entry_count;
 		sys_put_be32(report->period_ms, &blob[offset]);
+		offset += 4U;
+		sys_put_be32(store_interval_of(index), &blob[offset]);
+		offset += 4U;
+		sys_put_be16(beacon_node_of(index), &blob[offset]);
+		offset += 2U;
+		sys_put_be32(beacon_interval_of(index), &blob[offset]);
 		offset += 4U;
 		for (uint8_t entry = 0U; entry < report->entry_count; entry++) {
 			sys_put_be16(report->entries[entry].node, &blob[offset]);
@@ -107,6 +168,8 @@ int kfsw_hk_persist_load(void)
 	uint16_t expected;
 	uint32_t stored_crc;
 	uint32_t actual_crc;
+	uint8_t version;
+	size_t report_header;
 	ssize_t read;
 	int result;
 
@@ -135,14 +198,18 @@ int kfsw_hk_persist_load(void)
 	if (memcmp(blob, KFSW_HK_PERSIST_MAGIC, KFSW_HK_PERSIST_MAGIC_SIZE) != 0) {
 		return -EBADMSG;
 	}
-	if (blob[4] != KFSW_HK_PERSIST_VERSION) {
-		/* Refused rather than guessed at: a layout this reader does not
-		 * know would be decoded into the wrong parameters.
-		 */
-		kfsw_log_warning("HK: saved definitions are version %u, not %u", blob[4],
+	/* Older layouts this reader still knows are read; newer ones are
+	 * refused rather than guessed at, because a layout it does not know
+	 * would be decoded into the wrong parameters.
+	 */
+	version = blob[4];
+	if ((version != KFSW_HK_PERSIST_VERSION) && (version != 1U)) {
+		kfsw_log_warning("HK: saved definitions are version %u, not %u", version,
 				 KFSW_HK_PERSIST_VERSION);
 		return -EPROTONOSUPPORT;
 	}
+	report_header = (version == 1U) ? KFSW_HK_PERSIST_REPORT_HEADER_V1
+					: KFSW_HK_PERSIST_REPORT_HEADER;
 
 	stored_crc = sys_get_be32(&blob[KFSW_HK_PERSIST_CRC_OFFSET]);
 	sys_put_be32(0U, &blob[KFSW_HK_PERSIST_CRC_OFFSET]);
@@ -158,14 +225,26 @@ int kfsw_hk_persist_load(void)
 		uint8_t report;
 		uint8_t count;
 		uint32_t period;
+		uint32_t store_interval;
+		uint16_t beacon_node;
+		uint32_t beacon_interval;
 
-		if ((offset + KFSW_HK_PERSIST_REPORT_HEADER) > (size_t)info.size) {
+		if ((offset + report_header) > (size_t)info.size) {
 			return -EBADMSG;
 		}
 		report = blob[offset];
 		count = blob[offset + 1U];
 		period = sys_get_be32(&blob[offset + 2U]);
-		offset += KFSW_HK_PERSIST_REPORT_HEADER;
+		if (version == 1U) {
+			store_interval = 0U;
+			beacon_node = 0U;
+			beacon_interval = 0U;
+		} else {
+			store_interval = sys_get_be32(&blob[offset + 6U]);
+			beacon_node = sys_get_be16(&blob[offset + 10U]);
+			beacon_interval = sys_get_be32(&blob[offset + 12U]);
+		}
+		offset += report_header;
 
 		if ((count == 0U) || (count > ARRAY_SIZE(entries)) ||
 		    ((offset + ((size_t)count * KFSW_HK_PERSIST_ENTRY_SIZE)) > (size_t)info.size)) {
@@ -191,6 +270,20 @@ int kfsw_hk_persist_load(void)
 		if (period != 0U) {
 			(void)kfsw_hk_set_period(report, period);
 		}
+		/* After the period, because the store sizes its batch from it.
+		 * Each is best-effort: a policy that no longer fits this image
+		 * should not cost the definition that does.
+		 */
+#if CONFIG_KFSW_HK_STORE
+		if (store_interval != 0U) {
+			(void)kfsw_hk_set_store(report, store_interval);
+		}
+#endif
+#if CONFIG_KFSW_HK_BEACON
+		if (beacon_interval != 0U) {
+			(void)kfsw_hk_set_beacon(report, beacon_node, beacon_interval);
+		}
+#endif
 	}
 	return 0;
 }

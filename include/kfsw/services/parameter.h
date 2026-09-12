@@ -339,6 +339,12 @@ int kfsw_param_persist_load(void);
 /** Delete the active persistent snapshot and any abandoned temporary file. */
 int kfsw_param_persist_clear(void);
 
+/** Space the last built snapshot occupied, in bytes. */
+uint32_t kfsw_param_persist_bytes(void);
+
+/** Most space a snapshot is allowed to occupy, in bytes. */
+uint32_t kfsw_param_persist_max_bytes(void);
+
 /** Restore persistent parameters to their compiled defaults in RAM only. */
 int kfsw_param_restore_defaults(void);
 #endif

@@ -204,6 +204,20 @@ int kfsw_hk_set_beacon(uint8_t report, uint16_t node, uint32_t interval_ms);
 int kfsw_hk_get_beacon(uint8_t report, uint16_t *node, uint32_t *interval_ms);
 
 /**
+ * @brief Stop storing a report and remove what it already wrote.
+ *
+ * Separate from setting the interval to zero, which stops the writing and
+ * leaves the file where it is. An operator who turns storing off to save flash
+ * is not necessarily asking to lose the pass already captured, and the two
+ * requests should not be the same keystroke.
+ *
+ * @param report Report index.
+ * @retval 0 Stopped, and the file is gone.
+ * @retval -EINVAL Unknown report.
+ */
+int kfsw_hk_clear_store(uint8_t report);
+
+/**
  * @brief Read back a report's store interval.
  *
  * @param report Report index.
