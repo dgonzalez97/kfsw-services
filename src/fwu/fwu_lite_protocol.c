@@ -206,22 +206,7 @@ static void handle_block(const struct kfsw_fwu_lite_message *request,
 
 static void handle_verify(struct kfsw_fwu_lite_message *reply)
 {
-	struct kfsw_fwu_status status;
-
-	if (kfsw_fwu_get_status(&status) != 0) {
-		reply->status = KFSW_FWU_LITE_STATUS_FAILED;
-		return;
-	}
-	if (status.received != status.total_size) {
-		reply->status = KFSW_FWU_LITE_STATUS_INVALID;
-		return;
-	}
-	if (status.actual_crc32 != status.expected_crc32) {
-		reply->status = KFSW_FWU_LITE_STATUS_BAD_IMAGE;
-		return;
-	}
-
-	reply->status = KFSW_FWU_LITE_STATUS_OK;
+	reply->status = status_for_errno(kfsw_fwu_verify());
 }
 
 static void handle_start_flashing(struct kfsw_fwu_lite_message *reply)
@@ -259,8 +244,7 @@ int kfsw_fwu_lite_handle(const struct kfsw_fwu_lite_message *request,
 		handle_start_flashing(reply);
 		break;
 	case KFSW_FWU_LITE_OP_ABORT:
-		(void)kfsw_fwu_abort();
-		reply->status = KFSW_FWU_LITE_STATUS_OK;
+		reply->status = status_for_errno(kfsw_fwu_abort());
 		break;
 	default:
 		reply->status = KFSW_FWU_LITE_STATUS_INVALID;

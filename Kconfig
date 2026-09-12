@@ -93,6 +93,7 @@ endif # KFSW_PARAM
 config KFSW_PARAM_CSP
 	bool "K-FSW parameter CSP adapter"
 	depends on KFSW_PARAM && KFSW_CSP
+	select CRC
 	help
 	  Expose the local parameter table over the established libparam CSP wire
 	  protocol and enable remote parameter client/cache operations.
@@ -132,24 +133,32 @@ config KFSW_PARAM_TIMEOUT_MS
 	range 10 60000
 	default 1000
 
+config KFSW_PARAM_LIST_TIMEOUT_MS
+	int "Total remote descriptor refresh budget in milliseconds"
+	range 100 120000
+	default 10000
+	help
+	  A remote read resolves a name before it can fetch a value, and a node
+	  whose descriptors are not cached downloads all of them first. This is
+	  the budget for that download, not for one value, so it has to fit the
+	  slowest link the node will ask over.
+
+	  Measured: about a hundred descriptors take well under a second over
+	  CAN at 500 kbit/s, and 35 seconds over a 57600 baud UHF modem. The
+	  10 second default therefore works on a bus and fails on a radio, and
+	  it fails as a plain timeout on the first remote read, which looks
+	  like an unreachable node rather than a budget that was too small.
+
+	  Raise it in the composition that carries the slow link rather than
+	  here: a node that only speaks over a bus should not wait a minute
+	  before reporting a peer as absent.
+
 config KFSW_PARAM_LIST_RDP
-	bool "Use reliable delivery for the parameter list"
-	depends on KFSW_PARAM_CSP
+	bool "Allow legacy parameter-list clients using RDP"
 	default y
 	help
-	  The list is one packet per parameter with no acknowledgement of its
-	  own, so a single lost descriptor leaves a hole the caller cannot see:
-	  a short list looks exactly like a small table. Over a radio that
-	  happens on nearly every transfer. Reliable delivery retransmits the
-	  losses instead, at the cost of a connection handshake.
-
-	  Unlike the firmware upload, this has no per-item checksum and repeat
-	  of its own to fall back on, which is why it is on by default here and
-	  off there.
-
-	  Requires the CSP_USE_RDP CMake option, which the K-FSW compositions
-	  set. RDP is a build option of the vendored libcsp rather than a
-	  Kconfig symbol, so it cannot be expressed as a dependency here.
+	  Legacy v3 clients can use RDP when libcsp is built with CSP_USE_RDP.
+	  K-FSW clients use indexed v4 replies with a count and table CRC.
 
 config KFSW_PARAM_LIST_STACK_SIZE
 	int "Parameter-list server thread stack size"
@@ -158,6 +167,26 @@ config KFSW_PARAM_LIST_STACK_SIZE
 config KFSW_PARAM_LIST_PRIORITY
 	int "Parameter-list server thread priority"
 	default 1
+
+config KFSW_PARAM_VALUE_QUEUE_DEPTH
+	int "Queued parameter value requests"
+	range 1 8
+	default 2
+	help
+	  Each queued request holds one CSP packet, plus one in the worker.
+	  Leave buffer capacity for routing, replies and list transfers.
+
+config KFSW_PARAM_VALUE_STACK_SIZE
+	int "Parameter value worker stack size"
+	range 1536 8192
+	default 3072
+
+config KFSW_PARAM_VALUE_PRIORITY
+	int "Parameter value worker priority"
+	range 2 15
+	default 3
+	help
+	  Keep below the CSP router. Sampling and change callbacks run here.
 
 endif # KFSW_PARAM_CSP
 
@@ -303,6 +332,21 @@ config KFSW_FWU_MCUBOOT
 	  Turn this off to receive and verify images without asking for a
 	  reboot, which is what the unit tests do: they exercise the transfer
 	  and its rejections on a target that has no bootloader.
+
+config KFSW_FWU_FILES
+	bool "Read firmware slots as files"
+	depends on KFSW_FWU && FILE_SYSTEM && MCUBOOT_BOOTUTIL_LIB
+	default y
+	help
+	  Mount /kfsw/boot with read-only firmware_1.bin and firmware_2.bin
+	  backed by slot0 and the update partition. No image copy is stored in
+	  the data filesystem. FILE_SYSTEM_MAX_FILE_NAME must allow 14 bytes.
+
+config KFSW_FWU_FILE_HANDLES
+	int "Open firmware slot files"
+	depends on KFSW_FWU_FILES
+	default 4
+	range 1 8
 
 config KFSW_FWU_SLOT_OFFSET_SECTORS
 	int "Sectors to skip at the start of the target slot"
@@ -479,6 +523,7 @@ config KFSW_FWU_STREAM_BUFFER_SIZE
 config KFSW_FBO
 	bool "File based operations"
 	depends on KFSW_COMMAND && KFSW_STORAGE
+	select KFSW_EVENT
 	help
 	  Carry out a sequence of commands written in a file, so a node can be
 	  handed a pass plan or a recovery sequence and get on with it without
@@ -498,6 +543,15 @@ config KFSW_FBO_LINES_MAX
 	  A ceiling, so a corrupted or over-ambitious file cannot become a job
 	  that runs for the rest of the pass. Blank and comment lines are not
 	  counted against it.
+
+config KFSW_FBO_BYTES_MAX
+	int "Maximum procedure file size in bytes"
+	depends on KFSW_FBO
+	range 128 1048576
+	default 65536
+	help
+	  Includes blank lines and comments. Reading stops at this limit even
+	  if the file grows after the run was accepted.
 
 config KFSW_FBO_LINE_MAX
 	int "Longest line in bytes"
@@ -569,6 +623,15 @@ config KFSW_HK_REPORTS
 	help
 	  Each report holds its own definition and its own ring of samples, so
 	  this multiplies both the definition storage and KFSW_HK_HISTORY.
+
+config KFSW_HK_REMOTE_BUDGET_MS
+	int "Total remote read budget per HK report in milliseconds"
+	default 1000
+	range 10 60000
+	help
+	  Shared across nodes, descriptor lookup, queue admission and value reads.
+	  Expired entries remain zero and the sample is marked incomplete.
+	  Local sample callbacks and driver calls must supply their own bounds.
 
 config KFSW_HK_ENTRIES
 	int "Parameters one report may name"

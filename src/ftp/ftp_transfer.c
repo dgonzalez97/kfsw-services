@@ -10,6 +10,8 @@
 
 #if CONFIG_KFSW_FWU
 #include <kfsw/services/fwu.h>
+#define KFSW_LOG_MODULE KFSW_LOG_MODULE_FTP
+#include <kfsw/services/log.h>
 #endif
 
 #include "ftp_link.h"
@@ -211,7 +213,11 @@ int kfsw_ftp_transfer_finish(struct kfsw_ftp_transfer *transfer, const char *tar
 			result = kfsw_fwu_finish();
 		}
 		if (result != 0) {
-			(void)kfsw_fwu_abort();
+			int cleanup = kfsw_fwu_abort();
+
+			if (cleanup != 0) {
+				kfsw_log_error("Firmware upload cleanup failed (%d)", cleanup);
+			}
 		}
 		return result;
 	}

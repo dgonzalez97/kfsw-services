@@ -20,7 +20,6 @@
  * or loud without touching the command service it drives. */
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_FBO
 #include <kfsw/services/log.h>
-#include <kfsw/services/parameter.h>
 
 #include "fbo_internal.h"
 
@@ -49,10 +48,10 @@ struct line {
 };
 
 static struct kfsw_fbo_status status;
-static struct k_mutex lock;
+static K_MUTEX_DEFINE(lock);
 static bool initialized;
 static atomic_t stop_requested;
-static atomic_t running;
+static K_SEM_DEFINE(cancel, 0, 1);
 /* Given once the name is in place, so the thread cannot start on a name that
  * has not been written yet. Waiting on it rather than polling a flag is also
  * what removes the tick: there is nothing to look for between procedures.
@@ -190,150 +189,147 @@ static int run_line(char *text, bool *skip_next, bool *stop_on_error)
 	}
 
 	if (strcmp(tokens[0], "wait") == 0) {
-		unsigned long seconds;
-		char *end;
+		struct kfsw_command_arg seconds;
 
 		if (count != 2U) {
 			return -EINVAL;
 		}
-		seconds = strtoul(tokens[1], &end, 0);
-		if ((end == tokens[1]) || (*end != '\0') ||
-		    (seconds > CONFIG_KFSW_FBO_WAIT_MAX_S)) {
+		if ((kfsw_command_parse_arg(tokens[1], KFSW_COMMAND_TYPE_U32, &seconds) != 0) ||
+		    (seconds.value.u32 > CONFIG_KFSW_FBO_WAIT_MAX_S)) {
 			return -EINVAL;
 		}
-		/* Bounded by construction: a procedure that could wait for ever
-		 * would be a procedure that can hang the node.
-		 */
-		k_sleep(K_SECONDS(seconds));
-		return 0;
+		(void)k_sem_take(&cancel, K_SECONDS(seconds.value.u32));
+		return atomic_get(&stop_requested) ? -ECANCELED : 0;
 	}
 
 	if (strcmp(tokens[0], "if-event") == 0) {
-		unsigned long source;
-		unsigned long id;
-		char *end;
+		struct kfsw_command_arg source;
+		struct kfsw_command_arg id;
 
 		if ((count != 4U) || (strcmp(tokens[3], "skip") != 0)) {
 			return -EINVAL;
 		}
-		source = strtoul(tokens[1], &end, 0);
-		if ((end == tokens[1]) || (*end != '\0')) {
+		if ((kfsw_command_parse_arg(tokens[1], KFSW_COMMAND_TYPE_U32, &source) != 0) ||
+		    (kfsw_command_parse_arg(tokens[2], KFSW_COMMAND_TYPE_U32, &id) != 0) ||
+		    (source.value.u32 > UINT16_MAX) || (id.value.u32 > UINT16_MAX)) {
 			return -EINVAL;
 		}
-		id = strtoul(tokens[2], &end, 0);
-		if ((end == tokens[2]) || (*end != '\0')) {
-			return -EINVAL;
-		}
-		*skip_next = !event_seen((uint16_t)source, (uint16_t)id);
+		*skip_next = !event_seen((uint16_t)source.value.u32, (uint16_t)id.value.u32);
 		return 0;
 	}
 
 	return run_command_line(tokens, count);
 }
 
-static void run_procedure(const char *name)
+/* Read errors and the byte limit discard the entire unfinished line. */
+static int read_line(struct fs_file_t *file, size_t *bytes, bool *at_end)
+{
+	size_t used = 0U;
+	bool overflowed = false;
+
+	while (true) {
+		char character;
+		ssize_t count;
+
+		if (atomic_get(&stop_requested)) {
+			return -ECANCELED;
+		}
+		count = fs_read(file, &character, 1U);
+		if (count < 0) {
+			return (int)count;
+		}
+		if (count == 0) {
+			*at_end = true;
+			break;
+		}
+		if (*bytes >= CONFIG_KFSW_FBO_BYTES_MAX) {
+			return -EFBIG;
+		}
+		(*bytes)++;
+		if (character == '\n') {
+			break;
+		}
+		if (character == '\r') {
+			continue;
+		}
+		if (used + 1U >= sizeof(current.text)) {
+			overflowed = true;
+			continue;
+		}
+		current.text[used++] = character;
+	}
+	current.text[used] = '\0';
+	return overflowed ? -ENAMETOOLONG : 0;
+}
+
+static int run_procedure(const char *name)
 {
 	char path[128];
 	struct fs_file_t file;
 	bool stop_on_error = true;
 	bool skip_next = false;
-	uint16_t line_number = 0U;
-	size_t used = 0U;
 	bool at_end = false;
-	bool overflowed = false;
+	uint16_t line_number = 0U;
+	size_t bytes = 0U;
+	int outcome = 0;
 	int result;
 
 	(void)snprintf(path, sizeof(path), "%s/%s", KFSW_FBO_DIRECTORY, name);
 	fs_file_t_init(&file);
 	result = fs_open(&file, path, FS_O_READ);
 	if (result != 0) {
-		kfsw_log_error("FBO: cannot open %s (%d)", name, result);
-		return;
+		return result;
 	}
 
 	kfsw_log_info("FBO: %s started", name);
 	note(KFSW_FBO_EVENT_STARTED, KFSW_EVENT_INFO, 0U);
-
-	while (!at_end && (line_number < CONFIG_KFSW_FBO_LINES_MAX)) {
-		ssize_t read;
+	while (!at_end) {
 		size_t index = 0U;
 
-		if (atomic_get(&stop_requested) != 0) {
-			kfsw_log_warning("FBO: %s stopped at line %u", name, line_number);
+		result = read_line(&file, &bytes, &at_end);
+		if ((result != 0) && (result != -ENAMETOOLONG)) {
+			outcome = result;
 			break;
 		}
-
-		/* One byte at a time because a line is short and a procedure
-		 * runs at human speed; buffering a file this size would be
-		 * state for no gain.
-		 */
-		used = 0U;
-		overflowed = false;
-		while (true) {
-			char character;
-
-			read = fs_read(&file, &character, 1U);
-			if (read <= 0) {
-				at_end = true;
-				break;
-			}
-			if (character == '\n') {
-				break;
-			}
-			if (character == '\r') {
-				continue;
-			}
-			if (used + 1U >= sizeof(current.text)) {
-				/* Read on to the newline rather than stopping
-				 * here: leaving the tail in the file would turn
-				 * one over-long line into two, and the second
-				 * half might parse as something.
-				 */
-				overflowed = true;
-				continue;
-			}
-			current.text[used++] = character;
-		}
-		current.text[used] = '\0';
-
 		while ((current.text[index] == ' ') || (current.text[index] == '\t')) {
 			index++;
 		}
-		if ((current.text[index] == '\0') || (current.text[index] == '#')) {
+		if ((result == 0) &&
+		    ((current.text[index] == '\0') || (current.text[index] == '#'))) {
 			continue;
 		}
-
+		if (line_number == CONFIG_KFSW_FBO_LINES_MAX) {
+			outcome = -E2BIG;
+			break;
+		}
 		line_number++;
-		if (overflowed) {
-			kfsw_log_error("FBO: %s line %u is longer than %u bytes", name, line_number,
-				       (unsigned int)(sizeof(current.text) - 1U));
-			kfsw_fbo_count_line(line_number, -ENAMETOOLONG);
-			note(KFSW_FBO_EVENT_LINE_FAILED, KFSW_EVENT_ERROR, line_number);
-			if (stop_on_error) {
-				break;
-			}
-			continue;
-		}
-		if (skip_next) {
+		if ((result == 0) && skip_next) {
 			skip_next = false;
 			kfsw_fbo_count_skipped(line_number);
 			continue;
 		}
-
-		result = run_line(&current.text[index], &skip_next, &stop_on_error);
+		if (result == 0) {
+			result = run_line(&current.text[index], &skip_next, &stop_on_error);
+		}
 		kfsw_fbo_count_line(line_number, result);
 		if (result != 0) {
 			kfsw_log_error("FBO: %s line %u failed (%d)", name, line_number, result);
 			note(KFSW_FBO_EVENT_LINE_FAILED, KFSW_EVENT_ERROR, line_number);
-			if (stop_on_error) {
+			if ((outcome == 0) || (result == -ECANCELED)) {
+				outcome = result;
+			}
+			if (stop_on_error || (result == -ECANCELED)) {
 				break;
 			}
 		}
 	}
-
-	(void)fs_close(&file);
-	kfsw_log_info("FBO: %s finished at line %u", name, line_number);
-	note(KFSW_FBO_EVENT_FINISHED, KFSW_EVENT_INFO, line_number);
+	result = fs_close(&file);
+	if (outcome == 0) {
+		outcome = result;
+	}
+	kfsw_log_info("FBO: %s finished at line %u (%d)", name, line_number, outcome);
+	note(KFSW_FBO_EVENT_FINISHED, outcome ? KFSW_EVENT_ERROR : KFSW_EVENT_INFO, line_number);
+	return outcome;
 }
 
 static void fbo_thread(void *arg1, void *arg2, void *arg3)
@@ -344,12 +340,14 @@ static void fbo_thread(void *arg1, void *arg2, void *arg3)
 
 	while (true) {
 		k_sem_take(&start, K_FOREVER);
-		run_procedure(requested);
+		int result = run_procedure(requested);
+
 		k_mutex_lock(&lock, K_FOREVER);
+		status.last_result = result;
 		status.running = false;
-		k_mutex_unlock(&lock);
 		atomic_set(&stop_requested, 0);
-		atomic_set(&running, 0);
+		k_sem_reset(&cancel);
+		k_mutex_unlock(&lock);
 	}
 }
 
@@ -377,12 +375,12 @@ void kfsw_fbo_count_skipped(uint16_t line)
 
 int kfsw_fbo_init(void)
 {
-	if (initialized) {
-		return 0;
+	k_mutex_lock(&lock, K_FOREVER);
+	if (!initialized) {
+		initialized = true;
+		k_thread_start(kfsw_fbo_thread);
 	}
-	(void)k_mutex_init(&lock);
-	initialized = true;
-	k_thread_start(kfsw_fbo_thread);
+	k_mutex_unlock(&lock);
 	kfsw_log_info("FBO: ready, up to %u lines a procedure", CONFIG_KFSW_FBO_LINES_MAX);
 	return 0;
 }
@@ -394,9 +392,6 @@ int kfsw_fbo_run(const char *name)
 	const char *terminator;
 	int result;
 
-	if (!initialized) {
-		return -EACCES;
-	}
 	if (name == NULL) {
 		return -EINVAL;
 	}
@@ -417,18 +412,26 @@ int kfsw_fbo_run(const char *name)
 	if (!kfsw_storage_is_ready()) {
 		return -ENODEV;
 	}
-	if (atomic_cas(&running, 0, 1) == false) {
-		return -EBUSY;
-	}
-
 	(void)snprintf(path, sizeof(path), "%s/%s", KFSW_FBO_DIRECTORY, name);
 	result = fs_stat(path, &info);
 	if (result != 0) {
-		atomic_set(&running, 0);
 		return result;
 	}
 
+	if (info.type != FS_DIR_ENTRY_FILE) {
+		return -EISDIR;
+	}
+	if (info.size > CONFIG_KFSW_FBO_BYTES_MAX) {
+		return -EFBIG;
+	}
 	k_mutex_lock(&lock, K_FOREVER);
+	if (!initialized || status.running) {
+		result = initialized ? -EBUSY : -EACCES;
+		k_mutex_unlock(&lock);
+		return result;
+	}
+	k_sem_reset(&cancel);
+	atomic_set(&stop_requested, 0);
 	strcpy(requested, name);
 	strcpy(status.name, name);
 	status.running = true;
@@ -443,7 +446,12 @@ int kfsw_fbo_run(const char *name)
 
 int kfsw_fbo_stop(void)
 {
-	atomic_set(&stop_requested, 1);
+	k_mutex_lock(&lock, K_FOREVER);
+	if (status.running) {
+		atomic_set(&stop_requested, 1);
+		k_sem_give(&cancel);
+	}
+	k_mutex_unlock(&lock);
 	return 0;
 }
 

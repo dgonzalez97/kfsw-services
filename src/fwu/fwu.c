@@ -16,6 +16,7 @@
 #endif
 
 #include <kfsw/services/fwu.h>
+#include "fwu_internal.h"
 /* Attributes this file's messages, so its level can be raised alone. */
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_FWU
 #include <kfsw/services/log.h>
@@ -39,6 +40,36 @@ static struct kfsw_fwu_status fwu_state = {
 	.state = KFSW_FWU_IDLE,
 	.target_bound = KFSW_FWU_PARTITION_PRESENT,
 };
+static unsigned int secondary_readers;
+
+static bool secondary_needed_for_revert(void)
+{
+#if CONFIG_KFSW_FWU_MCUBOOT
+	return mcuboot_swap_type() == BOOT_SWAP_TYPE_REVERT;
+#else
+	return false;
+#endif
+}
+
+int kfsw_fwu_secondary_acquire(void)
+{
+	k_mutex_lock(&fwu_lock, K_FOREVER);
+	if ((fwu_state.state == KFSW_FWU_RECEIVING) || (fwu_state.state == KFSW_FWU_FAILED)) {
+		k_mutex_unlock(&fwu_lock);
+		return -EBUSY;
+	}
+	secondary_readers++;
+	k_mutex_unlock(&fwu_lock);
+	return 0;
+}
+
+void kfsw_fwu_secondary_release(void)
+{
+	k_mutex_lock(&fwu_lock, K_FOREVER);
+	__ASSERT_NO_MSG(secondary_readers > 0U);
+	secondary_readers--;
+	k_mutex_unlock(&fwu_lock);
+}
 
 #if KFSW_FWU_PARTITION_PRESENT
 static uint8_t fwu_stream_buffer[CONFIG_KFSW_FWU_STREAM_BUFFER_SIZE];
@@ -166,7 +197,8 @@ int kfsw_fwu_begin(uint32_t total_size, uint32_t expected_crc32)
 
 	k_mutex_lock(&fwu_lock, K_FOREVER);
 
-	if (fwu_state.state == KFSW_FWU_RECEIVING) {
+	if ((fwu_state.state == KFSW_FWU_RECEIVING) || (secondary_readers != 0U) ||
+	    secondary_needed_for_revert()) {
 		k_mutex_unlock(&fwu_lock);
 		return -EBUSY;
 	}
@@ -283,31 +315,35 @@ int kfsw_fwu_write(uint32_t offset, const void *data, size_t size)
 #endif
 }
 
-int kfsw_fwu_finish(void)
-{
 #if KFSW_FWU_PARTITION_PRESENT
+/* Caller holds fwu_lock. Verification makes buffered bytes readable without
+ * scheduling an upgrade; both upload protocols use this boundary.
+ */
+static int fwu_verify_locked(void)
+{
 	int result;
 
-	k_mutex_lock(&fwu_lock, K_FOREVER);
-
+	if (fwu_state.state == KFSW_FWU_VERIFIED) {
+		return 0;
+	}
 	if (fwu_state.state != KFSW_FWU_RECEIVING) {
-		k_mutex_unlock(&fwu_lock);
 		return -EINVAL;
 	}
 
 	if (fwu_state.received != fwu_state.total_size) {
-		k_mutex_unlock(&fwu_lock);
 		return -EAGAIN;
 	}
 
 	if (fwu_state.actual_crc32 != fwu_state.expected_crc32) {
 		kfsw_log_error("Firmware update rejected: crc32 %08x, expected %08x",
 			       fwu_state.actual_crc32, fwu_state.expected_crc32);
-		(void)fwu_erase_slot();
 		fwu_close_stream();
+		result = fwu_erase_slot();
+		if (result != 0) {
+			kfsw_log_error("Firmware update cleanup failed (%d)", result);
+		}
 		fwu_state.state = KFSW_FWU_FAILED;
 		fwu_state.failed++;
-		k_mutex_unlock(&fwu_lock);
 		return -EILSEQ;
 	}
 
@@ -317,10 +353,43 @@ int kfsw_fwu_finish(void)
 		fwu_close_stream();
 		fwu_state.state = KFSW_FWU_FAILED;
 		fwu_state.failed++;
-		k_mutex_unlock(&fwu_lock);
 		return result;
 	}
 	fwu_close_stream();
+	fwu_state.state = KFSW_FWU_VERIFIED;
+	return 0;
+}
+#endif
+
+int kfsw_fwu_verify(void)
+{
+#if KFSW_FWU_PARTITION_PRESENT
+	int result;
+
+	k_mutex_lock(&fwu_lock, K_FOREVER);
+	result = fwu_verify_locked();
+	k_mutex_unlock(&fwu_lock);
+	return result;
+#else
+	return -ENODEV;
+#endif
+}
+
+int kfsw_fwu_finish(void)
+{
+#if KFSW_FWU_PARTITION_PRESENT
+	int result;
+
+	k_mutex_lock(&fwu_lock, K_FOREVER);
+	if (secondary_readers != 0U) {
+		k_mutex_unlock(&fwu_lock);
+		return -EBUSY;
+	}
+	result = fwu_verify_locked();
+	if (result != 0) {
+		k_mutex_unlock(&fwu_lock);
+		return result;
+	}
 
 #if CONFIG_KFSW_FWU_MCUBOOT
 	result = boot_request_upgrade(BOOT_UPGRADE_TEST);
@@ -360,13 +429,24 @@ int kfsw_fwu_finish(void)
 int kfsw_fwu_abort(void)
 {
 	k_mutex_lock(&fwu_lock, K_FOREVER);
+	if ((secondary_readers != 0U) || secondary_needed_for_revert()) {
+		k_mutex_unlock(&fwu_lock);
+		return -EBUSY;
+	}
 
 #if KFSW_FWU_PARTITION_PRESENT
+	int result;
+
 	if (fwu_state.state == KFSW_FWU_RECEIVING) {
 		fwu_state.failed++;
 	}
 	fwu_close_stream();
-	(void)fwu_erase_slot();
+	result = fwu_erase_slot();
+	if (result != 0) {
+		fwu_state.state = KFSW_FWU_FAILED;
+		k_mutex_unlock(&fwu_lock);
+		return result;
+	}
 #endif
 
 	fwu_state.total_size = 0U;
@@ -404,6 +484,8 @@ const char *kfsw_fwu_state_name(enum kfsw_fwu_state state)
 		return "ready";
 	case KFSW_FWU_FAILED:
 		return "failed";
+	case KFSW_FWU_VERIFIED:
+		return "verified";
 	default:
 		return "unknown";
 	}

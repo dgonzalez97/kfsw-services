@@ -244,3 +244,8 @@ design can flood a link, and that deserves its own floor and its own evidence.
 - a persistent event journal, rate limiting and coalescing
 - authentication on the command path
 - a flight planner
+
+## License
+
+Licensed under [Apache 2.0](LICENSE). Third-party dependencies retain their
+own licences.

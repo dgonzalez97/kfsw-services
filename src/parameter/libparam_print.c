@@ -1,7 +1,4 @@
-/* The redirect is a command-line define for this whole library. It must not
- * apply here: this file provides the replacement, and leaving it in place would
- * rewrite the printf-format attribute in the logging header too.
- */
+/* This file provides the replacement for the forced-include redirect. */
 #undef printf
 
 #include <stdarg.h>

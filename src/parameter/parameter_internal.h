@@ -20,6 +20,7 @@ struct kfsw_param_entry {
 
 void kfsw_param_table_lock(void);
 void kfsw_param_table_unlock(void);
+int kfsw_param_table_lock_until(int64_t deadline);
 
 size_t kfsw_param_entry_count(void);
 const struct kfsw_param_entry *kfsw_param_entry_at(size_t index);
@@ -40,5 +41,8 @@ void kfsw_param_value_changed(uint16_t id);
 void kfsw_param_sample_all(void);
 void kfsw_param_count_save(void);
 void kfsw_param_count_load_failure(void);
+#if CONFIG_KFSW_PARAM_CSP
+uint32_t kfsw_param_csp_dropped_requests(void);
+#endif
 
 #endif

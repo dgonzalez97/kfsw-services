@@ -22,14 +22,29 @@ static struct kfsw_hk_report reports[CONFIG_KFSW_HK_REPORTS];
 static struct kfsw_hk_stats stats;
 static bool initialized;
 static bool enabled = true;
+static bool restoring;
+static uint64_t config_revision;
 #if CONFIG_KFSW_HK_PERSISTENCE
-/* Set while the saved set is being restored, so restoring does not rewrite the
- * file once per report as each one comes back.
- */
-static bool loading;
+static bool save_blocked;
 #endif
+static K_MUTEX_DEFINE(config_lock);
+static K_MUTEX_DEFINE(init_lock);
 
 K_MUTEX_DEFINE(hk_lock);
+static K_MUTEX_DEFINE(collection_lock);
+static K_MUTEX_DEFINE(storage_lock);
+static uint64_t generations[CONFIG_KFSW_HK_REPORTS];
+static uint64_t schedule_revisions[CONFIG_KFSW_HK_REPORTS];
+
+void kfsw_hk_storage_lock(void)
+{
+	k_mutex_lock(&storage_lock, K_FOREVER);
+}
+
+void kfsw_hk_storage_unlock(void)
+{
+	k_mutex_unlock(&storage_lock);
+}
 
 void kfsw_hk_lock(void)
 {
@@ -44,11 +59,6 @@ void kfsw_hk_unlock(void)
 void kfsw_hk_count_overwritten(void)
 {
 	stats.overwritten++;
-}
-
-void kfsw_hk_count_entry_failure(void)
-{
-	stats.entries_failed++;
 }
 
 struct kfsw_hk_report *kfsw_hk_report_at(uint8_t report)
@@ -181,7 +191,9 @@ static int entry_declared_width(const struct kfsw_hk_entry *entry, size_t *width
 		result = kfsw_param_visit(match_width, &search);
 	} else {
 #if CONFIG_KFSW_PARAM_CSP
-		result = kfsw_param_remote_visit(entry->node, match_width, &search);
+		result = kfsw_param_remote_visit_until(entry->node, match_width, &search,
+						       k_uptime_get() +
+							       CONFIG_KFSW_PARAM_LIST_TIMEOUT_MS);
 #else
 		return -ENOTSUP;
 #endif
@@ -199,32 +211,21 @@ static int entry_declared_width(const struct kfsw_hk_entry *entry, size_t *width
 	return 0;
 }
 
-int kfsw_hk_define(uint8_t report, const struct kfsw_hk_entry *entries, size_t count)
+int kfsw_hk_prepare_definition(uint8_t report, const struct kfsw_hk_entry *entries, size_t count,
+			       struct kfsw_hk_definition *definition)
 {
-	struct kfsw_hk_report *target = kfsw_hk_report_at(report);
 	size_t payload = 0U;
-	int result = 0;
+	int result;
 
-	if ((target == NULL) || (entries == NULL)) {
+	if (report >= CONFIG_KFSW_HK_REPORTS || entries == NULL || definition == NULL ||
+	    count == 0U || count > CONFIG_KFSW_HK_ENTRIES) {
 		return -EINVAL;
 	}
-	if (!initialized) {
-		return -EACCES;
-	}
-	if (count == 0U) {
-		return kfsw_hk_clear(report);
-	}
-	if (count > ARRAY_SIZE(target->entries)) {
-		return -E2BIG;
-	}
-
 	/* Every entry is priced before anything is stored, so a definition that
 	 * cannot fit leaves the report that was working exactly as it was.
 	 * The widths are kept, because resolving them again on every collection
 	 * would walk the parameter list once per value.
 	 */
-	uint16_t widths[CONFIG_KFSW_HK_ENTRIES];
-	uint16_t offsets[CONFIG_KFSW_HK_ENTRIES];
 
 	for (size_t index = 0U; index < count; index++) {
 		size_t width = 0U;
@@ -236,8 +237,8 @@ int kfsw_hk_define(uint8_t report, const struct kfsw_hk_entry *entries, size_t c
 					 entries[index].param_id, result);
 			return result;
 		}
-		offsets[index] = (uint16_t)(KFSW_HK_HEADER_SIZE + payload);
-		widths[index] = (uint16_t)width;
+		definition->offsets[index] = (uint16_t)(KFSW_HK_HEADER_SIZE + payload);
+		definition->widths[index] = (uint16_t)width;
 		payload += width;
 	}
 
@@ -248,13 +249,45 @@ int kfsw_hk_define(uint8_t report, const struct kfsw_hk_entry *entries, size_t c
 		return -EMSGSIZE;
 	}
 
+	memcpy(definition->entries, entries, count * sizeof(entries[0]));
+	definition->entry_count = count;
+	definition->payload_bytes = payload;
+	return 0;
+}
+
+static int clear_impl(uint8_t report);
+
+static int define_impl(uint8_t report, const struct kfsw_hk_entry *entries, size_t count)
+{
+	struct kfsw_hk_report *target = kfsw_hk_report_at(report);
+	struct kfsw_hk_definition definition;
+	int result;
+
+	if (target == NULL || entries == NULL) {
+		return -EINVAL;
+	}
+	if (count == 0U) {
+		return clear_impl(report);
+	}
+	if (count > CONFIG_KFSW_HK_ENTRIES) {
+		return -E2BIG;
+	}
+	result = kfsw_hk_prepare_definition(report, entries, count, &definition);
+	if (result != 0) {
+		return result;
+	}
+
+	kfsw_hk_storage_lock();
 	kfsw_hk_lock();
+	generations[report]++;
+	schedule_revisions[report]++;
 	memcpy(target->entries, entries, count * sizeof(entries[0]));
-	memcpy(target->widths, widths, count * sizeof(widths[0]));
-	memcpy(target->offsets, offsets, count * sizeof(offsets[0]));
+	memcpy(target->widths, definition.widths, count * sizeof(definition.widths[0]));
+	memcpy(target->offsets, definition.offsets, count * sizeof(definition.offsets[0]));
 	target->entry_count = (uint8_t)count;
-	target->payload_bytes = (uint16_t)payload;
+	target->payload_bytes = definition.payload_bytes;
 	target->defined = true;
+	target->next_uptime_ms = k_uptime_get() + target->period_ms;
 	/* A redefinition invalidates what was collected: the same bytes would
 	 * mean different things under the new layout.
 	 */
@@ -275,39 +308,29 @@ int kfsw_hk_define(uint8_t report, const struct kfsw_hk_entry *entries, size_t c
 	 */
 	kfsw_hk_store_forget(report);
 #endif
+	kfsw_hk_storage_unlock();
+	kfsw_hk_wake();
 	kfsw_log_info("HK: report %u defined, %u entries, %u bytes", report, (unsigned int)count,
-		      (unsigned int)payload);
+		      (unsigned int)definition.payload_bytes);
 
-#if CONFIG_KFSW_HK_PERSISTENCE
-	/* Saved on the way out, not on a timer: a definition is rare and
-	 * deliberate, and an operator who defines a report during a pass should
-	 * not have to remember a second command to keep it.
-	 *
-	 * Skipped while loading, or restoring the saved set would rewrite the
-	 * file once per report as it came back.
-	 */
-	if (!loading) {
-		(void)kfsw_hk_persist_save();
-	}
-#endif
 	return 0;
 }
 
-int kfsw_hk_clear(uint8_t report)
+static int clear_impl(uint8_t report)
 {
-#if CONFIG_KFSW_HK_STORE
-	/* The file goes with the definition: the same bytes would mean
-	 * different things under the next one.
-	 */
-	kfsw_hk_store_forget(report);
-#endif
 	struct kfsw_hk_report *target = kfsw_hk_report_at(report);
 
 	if (target == NULL) {
 		return -EINVAL;
 	}
+	kfsw_hk_storage_lock();
+#if CONFIG_KFSW_HK_STORE
+	kfsw_hk_store_forget(report);
+#endif
 
 	kfsw_hk_lock();
+	generations[report]++;
+	schedule_revisions[report]++;
 	memset(target, 0, sizeof(*target));
 	stats.reports = 0U;
 	for (size_t index = 0U; index < ARRAY_SIZE(reports); index++) {
@@ -316,12 +339,9 @@ int kfsw_hk_clear(uint8_t report)
 		}
 	}
 	kfsw_hk_unlock();
+	kfsw_hk_storage_unlock();
+	kfsw_hk_wake();
 
-#if CONFIG_KFSW_HK_PERSISTENCE
-	if (!loading) {
-		(void)kfsw_hk_persist_save();
-	}
-#endif
 	return 0;
 }
 
@@ -354,12 +374,18 @@ void kfsw_hk_set_enabled(bool value)
 	kfsw_hk_lock();
 	changed = (enabled != value);
 	enabled = value;
+	if (changed) {
+		for (size_t index = 0; index < ARRAY_SIZE(reports); index++) {
+			schedule_revisions[index]++;
+		}
+	}
 	kfsw_hk_unlock();
 
 	/* Logged outside the lock, and only on a change, so setting the
 	 * parameter to what it already is does not fill a pass with lines.
 	 */
 	if (changed) {
+		kfsw_hk_wake();
 		kfsw_log_info("HK: periodic collection %s", value ? "enabled" : "disabled");
 	}
 }
@@ -402,15 +428,16 @@ bool kfsw_hk_clock_valid(void)
  * An unreadable entry is zero-filled and flagged, not dropped, so the layout
  * still matches the definition ground holds.
  */
-int kfsw_hk_collect_report(struct kfsw_hk_report *entry, struct kfsw_hk_sample *sample)
+int kfsw_hk_collect_report(const struct kfsw_hk_definition *entry, struct kfsw_hk_sample *sample,
+			   uint32_t *failures)
 {
 	uint8_t flags = 0U;
+#if CONFIG_KFSW_PARAM_CSP
+	int64_t remote_deadline = k_uptime_get() + CONFIG_KFSW_HK_REMOTE_BUDGET_MS;
+#endif
 
 	if ((entry == NULL) || (sample == NULL)) {
 		return -EINVAL;
-	}
-	if (!entry->defined) {
-		return -ENOENT;
 	}
 
 	memset(sample, 0, sizeof(*sample));
@@ -451,7 +478,7 @@ int kfsw_hk_collect_report(struct kfsw_hk_report *entry, struct kfsw_hk_sample *
 					    entry->widths[index], &value);
 		} else {
 			flags |= KFSW_HK_FLAG_INCOMPLETE;
-			kfsw_hk_count_entry_failure();
+			(*failures)++;
 		}
 	}
 
@@ -476,7 +503,7 @@ int kfsw_hk_collect_report(struct kfsw_hk_report *entry, struct kfsw_hk_sample *
 		if (seen) {
 			continue;
 		}
-		if (kfsw_hk_collect_remote(entry, node, sample) != 0) {
+		if (kfsw_hk_collect_remote(entry, node, sample, failures, remote_deadline) != 0) {
 			flags |= KFSW_HK_FLAG_INCOMPLETE;
 		}
 	}
@@ -484,7 +511,7 @@ int kfsw_hk_collect_report(struct kfsw_hk_report *entry, struct kfsw_hk_sample *
 	for (size_t index = 0U; index < entry->entry_count; index++) {
 		if (entry->entries[index].node != KFSW_HK_NODE_LOCAL) {
 			flags |= KFSW_HK_FLAG_INCOMPLETE;
-			kfsw_hk_count_entry_failure();
+			(*failures)++;
 		}
 	}
 #endif
@@ -504,32 +531,47 @@ int kfsw_hk_collect(uint8_t report)
 {
 	struct kfsw_hk_report *target = kfsw_hk_report_at(report);
 	static struct kfsw_hk_sample scratch;
+	static struct kfsw_hk_definition definition;
+	uint64_t generation;
+	uint32_t failures = 0U;
+	uint16_t next_sequence;
 	int result;
 
 	if (target == NULL) {
 		return -EINVAL;
 	}
-	if (!initialized) {
+	if (!kfsw_hk_is_ready()) {
 		return -EACCES;
 	}
-
-	/* Collected outside the lock: a remote entry blocks on its node, and
-	 * holding the ring for a second would stall a ground request for a
-	 * sample that is already there. The scratch buffer is static because a
-	 * sample is 200 bytes and this runs on a 2560-byte stack.
-	 */
+	k_mutex_lock(&collection_lock, K_FOREVER);
 	kfsw_hk_lock();
 	if (!target->defined) {
 		kfsw_hk_unlock();
+		k_mutex_unlock(&collection_lock);
 		return -ENOENT;
 	}
-	result = kfsw_hk_collect_report(target, &scratch);
+	memcpy(definition.entries, target->entries, sizeof(definition.entries));
+	memcpy(definition.widths, target->widths, sizeof(definition.widths));
+	memcpy(definition.offsets, target->offsets, sizeof(definition.offsets));
+	definition.entry_count = target->entry_count;
+	definition.payload_bytes = target->payload_bytes;
+	definition.sequence = target->sequence;
+	generation = generations[report];
+	kfsw_hk_unlock();
+
+	result = kfsw_hk_collect_report(&definition, &scratch, &failures);
+	kfsw_hk_storage_lock();
+	kfsw_hk_lock();
+	if (!target->defined || (generation != generations[report])) {
+		result = -EAGAIN;
+	}
 	if (result != 0) {
 		stats.failures++;
 		kfsw_hk_unlock();
+		kfsw_hk_storage_unlock();
+		k_mutex_unlock(&collection_lock);
 		return result;
 	}
-
 	scratch.data[1] = report;
 	if (target->held == ARRAY_SIZE(target->ring)) {
 		kfsw_hk_count_overwritten();
@@ -539,27 +581,30 @@ int kfsw_hk_collect(uint8_t report)
 	target->ring[target->next_slot] = scratch;
 	target->next_slot = (uint16_t)((target->next_slot + 1U) % ARRAY_SIZE(target->ring));
 	target->sequence++;
+	next_sequence = target->sequence;
 	stats.collections++;
+	stats.entries_failed += failures;
 	stats.last_seconds = scratch.seconds;
+	kfsw_hk_unlock();
 #if CONFIG_KFSW_HK_STORE
-	/* Under the same lock as the ring it reads from, so a flush cannot see
-	 * a slot being replaced. A write is a few hundred bytes to a mounted
-	 * filesystem, not a blocking round trip.
-	 */
+	/* Collection owns the ring writes; storage excludes definition changes. */
 	if (kfsw_hk_store_interval(report) != 0U) {
-		int stored = kfsw_hk_store_flush(report, target);
+		int stored = kfsw_hk_store_flush(report, next_sequence);
 
 		if (stored != 0) {
 			kfsw_log_warning("HK: report %u could not be stored (%d)", report, stored);
 		}
 	}
+#else
+	ARG_UNUSED(next_sequence);
 #endif
-	kfsw_hk_unlock();
+	kfsw_hk_storage_unlock();
+	k_mutex_unlock(&collection_lock);
 	return 0;
 }
 
 #if CONFIG_KFSW_HK_STORE
-int kfsw_hk_set_store(uint8_t report, uint32_t interval_ms)
+static int set_store_impl(uint8_t report, uint32_t interval_ms)
 {
 	struct kfsw_hk_report *target = kfsw_hk_report_at(report);
 	uint32_t period;
@@ -569,9 +614,11 @@ int kfsw_hk_set_store(uint8_t report, uint32_t interval_ms)
 	if (target == NULL) {
 		return -EINVAL;
 	}
+	kfsw_hk_storage_lock();
 	kfsw_hk_lock();
 	if (!target->defined) {
 		kfsw_hk_unlock();
+		kfsw_hk_storage_unlock();
 		return -ENOENT;
 	}
 	period = target->period_ms;
@@ -584,29 +631,18 @@ int kfsw_hk_set_store(uint8_t report, uint32_t interval_ms)
 	 * its own request.
 	 */
 	result = kfsw_hk_store_configure(report, interval_ms, period, record_size);
-#if CONFIG_KFSW_HK_PERSISTENCE
-	/* Saved like a period is, because a policy that does not outlive the
-	 * reset is a policy an operator has to set again from the ground at
-	 * exactly the moment they are least able to.
-	 */
-	if ((result == 0) && !loading) {
-		(void)kfsw_hk_persist_save();
-	}
-#endif
+	kfsw_hk_storage_unlock();
 	return result;
 }
 
-int kfsw_hk_clear_store(uint8_t report)
+static int clear_store_impl(uint8_t report)
 {
 	if (report >= CONFIG_KFSW_HK_REPORTS) {
 		return -EINVAL;
 	}
+	kfsw_hk_storage_lock();
 	kfsw_hk_store_forget(report);
-#if CONFIG_KFSW_HK_PERSISTENCE
-	if (!loading) {
-		(void)kfsw_hk_persist_save();
-	}
-#endif
+	kfsw_hk_storage_unlock();
 	return 0;
 }
 
@@ -615,19 +651,10 @@ int kfsw_hk_get_store(uint8_t report, uint32_t *interval_ms)
 	if ((report >= CONFIG_KFSW_HK_REPORTS) || (interval_ms == NULL)) {
 		return -EINVAL;
 	}
+	kfsw_hk_storage_lock();
 	*interval_ms = kfsw_hk_store_interval(report);
+	kfsw_hk_storage_unlock();
 	return 0;
-}
-#endif
-
-#if CONFIG_KFSW_HK_BEACON
-void kfsw_hk_beacon_persist(void)
-{
-#if CONFIG_KFSW_HK_PERSISTENCE
-	if (!loading) {
-		(void)kfsw_hk_persist_save();
-	}
-#endif
 }
 #endif
 
@@ -670,7 +697,7 @@ int kfsw_hk_depth(uint8_t report, uint16_t *depth)
 	return 0;
 }
 
-int kfsw_hk_set_period(uint8_t report, uint32_t period_ms)
+static int set_period_impl(uint8_t report, uint32_t period_ms)
 {
 	struct kfsw_hk_report *target = kfsw_hk_report_at(report);
 
@@ -686,15 +713,12 @@ int kfsw_hk_set_period(uint8_t report, uint32_t period_ms)
 		kfsw_hk_unlock();
 		return -ENOENT;
 	}
+	schedule_revisions[report]++;
 	target->period_ms = period_ms;
 	target->next_uptime_ms = (period_ms == 0U) ? 0 : (k_uptime_get() + (int64_t)period_ms);
 	kfsw_hk_unlock();
+	kfsw_hk_wake();
 
-#if CONFIG_KFSW_HK_PERSISTENCE
-	if (!loading) {
-		(void)kfsw_hk_persist_save();
-	}
-#endif
 	return 0;
 }
 
@@ -731,20 +755,241 @@ void kfsw_hk_get_stats(struct kfsw_hk_stats *out)
 
 int kfsw_hk_init(void)
 {
-	if (initialized) {
-		return 0;
-	}
-	memset(reports, 0, sizeof(reports));
-	memset(&stats, 0, sizeof(stats));
-	initialized = true;
-
+	k_mutex_lock(&init_lock, K_FOREVER);
+	if (!initialized) {
 #if CONFIG_KFSW_HK_PERSISTENCE
-	loading = true;
-	(void)kfsw_hk_persist_load();
-	loading = false;
+		/* A rejected snapshot leaves diagnostics available with default settings. */
+		(void)kfsw_hk_persist_load();
 #endif
-	kfsw_log_info("HK: %u reports, %u samples each, %u bytes per sample",
-		      (unsigned int)ARRAY_SIZE(reports), (unsigned int)CONFIG_KFSW_HK_HISTORY,
-		      (unsigned int)CONFIG_KFSW_HK_SAMPLE_BYTES);
+		kfsw_hk_lock();
+		initialized = true;
+		kfsw_hk_unlock();
+	}
+	k_mutex_unlock(&init_lock);
 	return 0;
 }
+
+int64_t kfsw_hk_next_due(int64_t due, uint32_t period, int64_t now)
+{
+	/* Advance strictly past completion, without a catch-up burst. */
+	return due + ((now - due) / period + 1) * period;
+}
+
+bool kfsw_hk_schedule_take(uint8_t index, int64_t now, struct kfsw_hk_due *due)
+{
+	struct kfsw_hk_report *report = kfsw_hk_report_at(index);
+	bool ready = false;
+
+	kfsw_hk_lock();
+	if (initialized && !restoring && enabled && report != NULL && report->defined &&
+	    report->period_ms != 0U && now >= report->next_uptime_ms) {
+		*due = (struct kfsw_hk_due){schedule_revisions[index], report->next_uptime_ms,
+					    report->period_ms};
+		stats.scheduled_attempts++;
+		ready = true;
+	}
+	kfsw_hk_unlock();
+	return ready;
+}
+
+void kfsw_hk_schedule_finish(uint8_t index, const struct kfsw_hk_due *due, int64_t now)
+{
+	struct kfsw_hk_report *report = kfsw_hk_report_at(index);
+	uint64_t missed = (uint64_t)(MAX(now, due->uptime_ms) - due->uptime_ms) / due->period_ms;
+
+	kfsw_hk_lock();
+	stats.missed_slots += (uint32_t)MIN(missed, UINT32_MAX - stats.missed_slots);
+	if (enabled && report != NULL && report->defined && report->period_ms != 0U &&
+	    schedule_revisions[index] == due->revision) {
+		report->next_uptime_ms =
+			kfsw_hk_next_due(due->uptime_ms, due->period_ms, MAX(now, due->uptime_ms));
+	}
+	kfsw_hk_unlock();
+}
+
+int64_t kfsw_hk_schedule_wait(int64_t now)
+{
+	int64_t wait = 200;
+
+	kfsw_hk_lock();
+	for (uint8_t index = 0; index < ARRAY_SIZE(reports); index++) {
+		struct kfsw_hk_report *report = &reports[index];
+
+		if (report->defined && report->period_ms != 0U) {
+			wait = MIN(wait, MAX(0, report->next_uptime_ms - now));
+		}
+#if CONFIG_KFSW_HK_BEACON
+		wait = MIN(wait, kfsw_hk_beacon_wait(index, now));
+#endif
+	}
+	kfsw_hk_unlock();
+	return wait;
+}
+
+bool kfsw_hk_is_ready(void)
+{
+	bool ready;
+
+	kfsw_hk_lock();
+	ready = initialized && !restoring;
+	kfsw_hk_unlock();
+	return ready;
+}
+
+int kfsw_hk_config_begin(void)
+{
+	if (!kfsw_hk_is_ready()) {
+		return -EACCES;
+	}
+	k_mutex_lock(&config_lock, K_FOREVER);
+	if (!kfsw_hk_is_ready()) {
+		k_mutex_unlock(&config_lock);
+		return -EACCES;
+	}
+	return 0;
+}
+
+int kfsw_hk_config_end(int result)
+{
+	if (result == 0) {
+		kfsw_hk_lock();
+		config_revision++;
+		stats.settings_dirty = IS_ENABLED(CONFIG_KFSW_HK_PERSISTENCE);
+		kfsw_hk_unlock();
+	}
+	k_mutex_unlock(&config_lock);
+#if CONFIG_KFSW_HK_PERSISTENCE
+	if (result == 0) {
+		result = kfsw_hk_persist_save();
+		if (result != 0) {
+			return KFSW_HK_APPLIED_UNSAVED;
+		}
+	}
+#endif
+	return result;
+}
+
+int kfsw_hk_define(uint8_t report, const struct kfsw_hk_entry *entries, size_t count)
+{
+	int result = kfsw_hk_config_begin();
+
+	return result != 0 ? result : kfsw_hk_config_end(define_impl(report, entries, count));
+}
+
+int kfsw_hk_clear(uint8_t report)
+{
+	int result = kfsw_hk_config_begin();
+
+	return result != 0 ? result : kfsw_hk_config_end(clear_impl(report));
+}
+
+int kfsw_hk_set_period(uint8_t report, uint32_t period_ms)
+{
+	int result = kfsw_hk_config_begin();
+
+	return result != 0 ? result : kfsw_hk_config_end(set_period_impl(report, period_ms));
+}
+
+#if CONFIG_KFSW_HK_STORE
+int kfsw_hk_set_store(uint8_t report, uint32_t interval_ms)
+{
+	int result = kfsw_hk_config_begin();
+
+	return result != 0 ? result : kfsw_hk_config_end(set_store_impl(report, interval_ms));
+}
+
+int kfsw_hk_clear_store(uint8_t report)
+{
+	int result = kfsw_hk_config_begin();
+
+	return result != 0 ? result : kfsw_hk_config_end(clear_store_impl(report));
+}
+#endif
+
+#if CONFIG_KFSW_HK_PERSISTENCE
+/* Save caller owns HK state. The file mutex is always acquired first. */
+uint64_t kfsw_hk_config_revision(void)
+{
+	return config_revision;
+}
+
+bool kfsw_hk_save_blocked(void)
+{
+	return save_blocked;
+}
+
+void kfsw_hk_save_result(uint64_t revision, int result)
+{
+	kfsw_hk_lock();
+	stats.last_save_error = result;
+	if (result == 0 && config_revision == revision) {
+		stats.settings_dirty = false;
+	}
+	kfsw_hk_unlock();
+}
+
+int kfsw_hk_save(void)
+{
+	if (!kfsw_hk_is_ready()) {
+		return -EACCES;
+	}
+	kfsw_hk_lock();
+	save_blocked = false;
+	kfsw_hk_unlock();
+	return kfsw_hk_persist_save();
+}
+
+void kfsw_hk_restore_begin(void)
+{
+	k_mutex_lock(&config_lock, K_FOREVER);
+	kfsw_hk_lock();
+	restoring = true;
+	kfsw_hk_unlock();
+}
+
+void kfsw_hk_restore_end(int result)
+{
+	kfsw_hk_lock();
+	stats.last_load_error = result == -ENOENT ? 0 : result;
+	save_blocked = result != 0 && result != -ENOENT;
+	stats.settings_dirty = save_blocked;
+	if (result == 0) {
+		config_revision++;
+		stats.settings_dirty = false;
+	}
+	restoring = false;
+	kfsw_hk_unlock();
+	k_mutex_unlock(&config_lock);
+	kfsw_hk_wake();
+}
+
+/* The complete snapshot has already been checked. Caller holds config ownership. */
+void kfsw_hk_restore_report(uint8_t index, const struct kfsw_hk_definition *definition,
+			    uint32_t period_ms)
+{
+	struct kfsw_hk_report *report = &reports[index];
+
+	kfsw_hk_lock();
+	generations[index]++;
+	schedule_revisions[index]++;
+	memset(report, 0, sizeof(*report));
+	if (definition != NULL) {
+		memcpy(report->entries, definition->entries, sizeof(report->entries));
+		memcpy(report->widths, definition->widths, sizeof(report->widths));
+		memcpy(report->offsets, definition->offsets, sizeof(report->offsets));
+		report->entry_count = definition->entry_count;
+		report->payload_bytes = definition->payload_bytes;
+		report->defined = true;
+		report->period_ms = period_ms;
+		report->next_uptime_ms = k_uptime_get() + period_ms;
+#if CONFIG_KFSW_HK_STORE
+		report->sequence = kfsw_hk_store_restore_sequence(index);
+#endif
+	}
+	stats.reports = 0;
+	for (size_t i = 0; i < ARRAY_SIZE(reports); i++) {
+		stats.reports += reports[i].defined;
+	}
+	kfsw_hk_unlock();
+}
+#endif

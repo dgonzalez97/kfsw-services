@@ -71,7 +71,7 @@ static void serve_request(csp_conn_t *connection, uint16_t source_node)
 	struct kfsw_command_result result;
 	struct kfsw_command_source source = {
 		.node = source_node,
-		/* Authentication is not implemented; never claim otherwise. */
+		/* Link protection does not provide a command-level identity here. */
 		.authenticated = false,
 	};
 	csp_packet_t *packet;
@@ -264,10 +264,8 @@ int kfsw_command_invoke_remote(uint16_t node, const char *name, const struct kfs
 		return outcome;
 	}
 
-	/* No RDP, deliberately. It makes delivery at-least-once and the server
-	 * does not deduplicate, so a resent "reboot" would run twice. Without it
-	 * a lost packet is a clean timeout the caller decides to repeat, and a
-	 * command runs at most once.
+	/* No automatic retry. A lost reply leaves the command outcome unknown;
+	 * the caller must check state before submitting another request.
 	 */
 	connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_COMMAND_CSP_PORT,
 				 kfsw_command_get_timeout_ms(), CSP_O_CRC32);

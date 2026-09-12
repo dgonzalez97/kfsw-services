@@ -17,6 +17,7 @@ endif()
 # from, or comparing a node against a build record proves nothing. Resolved
 # from the composition repository rather than this one, because that is what
 # pins every other repository. The fallback keeps a source tarball buildable.
+zephyr_get(KFSW_IMAGE_VERSION SYSBUILD LOCAL)
 if(NOT DEFINED KFSW_IMAGE_VERSION)
     find_package(Git QUIET)
     set(KFSW_IMAGE_VERSION "unknown")
@@ -54,6 +55,10 @@ if(NOT DEFINED KFSW_IMAGE_VERSION)
             endif()
         endif()
     endif()
+endif()
+zephyr_get(KFSW_RELEASE_SOURCE SYSBUILD LOCAL)
+if(NOT KFSW_RELEASE_SOURCE)
+    set(KFSW_RELEASE_SOURCE "development")
 endif()
 message(STATUS "K-FSW image version: ${KFSW_IMAGE_VERSION}")
 
@@ -115,8 +120,8 @@ if(CONFIG_KFSW_PARAM_CSP)
     # The library is vendored at an upstream revision west manages, so it is not
     # edited; its printf is redirected here instead, into a debug-level log line
     # attributed to the parameter module. See src/parameter/libparam_print.c.
-    target_compile_definitions(kfsw_libparam
-        PRIVATE printf=kfsw_libparam_printf
+    target_compile_options(kfsw_libparam
+        PRIVATE -include "${CMAKE_CURRENT_LIST_DIR}/src/parameter/libparam_print.h"
     )
 
     target_include_directories(kfsw_libparam
@@ -173,6 +178,9 @@ endif()
 
 if(CONFIG_KFSW_FWU)
     list(APPEND kfsw_services_sources src/fwu/fwu.c)
+    if(CONFIG_KFSW_FWU_FILES)
+        list(APPEND kfsw_services_sources src/fwu/fwu_fs.c)
+    endif()
     if(CONFIG_KFSW_PARAM)
         list(APPEND kfsw_services_sources src/fwu-parameters/fwu_table.c)
     endif()
@@ -198,10 +206,10 @@ if(CONFIG_KFSW_COMMAND)
 endif()
 
 if(CONFIG_KFSW_FBO)
-    list(APPEND kfsw_services_sources
-        src/fbo/fbo.c
-        src/fbo-parameters/fbo_table.c
-    )
+    list(APPEND kfsw_services_sources src/fbo/fbo.c)
+    if(CONFIG_KFSW_PARAM)
+        list(APPEND kfsw_services_sources src/fbo-parameters/fbo_table.c)
+    endif()
 endif()
 
 if(CONFIG_KFSW_HK)
@@ -231,6 +239,10 @@ add_library(kfsw_services STATIC ${kfsw_services_sources})
 
 add_library(kfsw::services ALIAS kfsw_services)
 
+if(CONFIG_KFSW_FWU_FILES)
+    target_link_libraries(kfsw_services PRIVATE MCUBOOT_BOOTUTIL)
+endif()
+
 target_include_directories(kfsw_services
     PUBLIC
         ${CMAKE_CURRENT_LIST_DIR}/include
@@ -239,6 +251,7 @@ target_include_directories(kfsw_services
 target_compile_definitions(kfsw_services
     PRIVATE
         KFSW_IMAGE_VERSION="${KFSW_IMAGE_VERSION}"
+        KFSW_SOURCE_REVISION="${KFSW_RELEASE_SOURCE}"
 )
 
 target_link_libraries(kfsw_services

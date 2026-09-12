@@ -180,7 +180,7 @@ int kfsw_hk_store_configure(uint8_t report, uint32_t interval_ms, uint32_t perio
 	 * written out, and losing them quietly is worse than writing more often
 	 * than asked.
 	 */
-	every = (period_ms == 0U) ? 1U : ((interval_ms + period_ms - 1U) / period_ms);
+	every = (period_ms == 0U) ? 1U : (((uint64_t)interval_ms + period_ms - 1U) / period_ms);
 	if (every == 0U) {
 		every = 1U;
 	}
@@ -231,7 +231,7 @@ void kfsw_hk_store_forget(uint8_t report)
 	(void)fs_unlink(path);
 }
 
-int kfsw_hk_store_flush(uint8_t report, const struct kfsw_hk_report *entry)
+int kfsw_hk_store_flush(uint8_t report, uint16_t next_sequence)
 {
 	struct fs_file_t file;
 	char path[64];
@@ -239,11 +239,11 @@ int kfsw_hk_store_flush(uint8_t report, const struct kfsw_hk_report *entry)
 	int result;
 	int close_result;
 
-	if ((report >= ARRAY_SIZE(stores)) || (entry == NULL) || !stores[report].open) {
+	if ((report >= ARRAY_SIZE(stores)) || !stores[report].open) {
 		return -EACCES;
 	}
 
-	stores[report].pending++;
+	stores[report].pending = MIN(stores[report].pending + 1U, CONFIG_KFSW_HK_HISTORY);
 	if (stores[report].pending < stores[report].every_n) {
 		return 0;
 	}
@@ -260,18 +260,19 @@ int kfsw_hk_store_flush(uint8_t report, const struct kfsw_hk_report *entry)
 	 * than in order means a replayed or repeated flush lands in the same
 	 * place instead of shifting the ring.
 	 */
-	first = (uint16_t)(entry->sequence - stores[report].pending);
+	first = (uint16_t)(next_sequence - stores[report].pending);
 	for (uint16_t index = 0U; index < stores[report].pending; index++) {
 		uint16_t sequence = (uint16_t)(first + index);
 		uint16_t age = (uint16_t)(stores[report].pending - 1U - index);
-		uint16_t slot = (uint16_t)((entry->next_slot + CONFIG_KFSW_HK_HISTORY - 1U - age) %
-					   CONFIG_KFSW_HK_HISTORY);
+		struct kfsw_hk_sample sample;
 		off_t offset = (off_t)KFSW_HK_STORE_HEADER_SIZE +
 			       ((off_t)(sequence % CONFIG_KFSW_HK_STORE_CAPACITY) *
 				(off_t)stores[report].record_size);
 
-		result =
-			write_at(&file, offset, entry->ring[slot].data, stores[report].record_size);
+		result = kfsw_hk_get(report, age, &sample);
+		if (result == 0) {
+			result = write_at(&file, offset, sample.data, stores[report].record_size);
+		}
 		if (result != 0) {
 			break;
 		}
@@ -284,5 +285,101 @@ int kfsw_hk_store_flush(uint8_t report, const struct kfsw_hk_report *entry)
 	stores[report].pending = 0U;
 	return result;
 }
+
+#if CONFIG_KFSW_HK_PERSISTENCE
+static struct store_state restored_stores[CONFIG_KFSW_HK_REPORTS];
+static uint16_t restored_sequences[CONFIG_KFSW_HK_REPORTS];
+
+int kfsw_hk_store_restore_prepare(uint8_t report, uint32_t interval_ms, uint32_t period_ms,
+				  uint16_t record_size)
+{
+	struct fs_file_t file;
+	uint8_t header[KFSW_HK_STORE_HEADER_SIZE];
+	char path[64];
+	int result;
+
+	memset(&restored_stores[report], 0, sizeof(restored_stores[report]));
+	restored_sequences[report] = 0;
+	if (interval_ms == 0U) {
+		return 0;
+	}
+	store_path(report, path, sizeof(path));
+	fs_file_t_init(&file);
+	result = fs_open(&file, path, FS_O_READ);
+	if (result == -ENOENT) {
+		result = create_file(report, record_size);
+	} else if (result == 0) {
+		ssize_t read = fs_read(&file, header, sizeof(header));
+		bool have_sequence = false;
+		uint16_t newest = 0;
+
+		result = 0;
+		if (read != sizeof(header) || memcmp(header, KFSW_HK_STORE_MAGIC, 4) != 0 ||
+		    header[4] != KFSW_HK_STORE_VERSION || header[5] != report ||
+		    sys_get_be16(&header[6]) != record_size ||
+		    sys_get_be32(&header[8]) != CONFIG_KFSW_HK_STORE_CAPACITY) {
+			result = -EBADMSG;
+		}
+		for (uint32_t slot = 0; result == 0 && slot <= CONFIG_KFSW_HK_STORE_CAPACITY;
+		     slot++) {
+			uint8_t sample[CONFIG_KFSW_HK_SAMPLE_BYTES];
+
+			read = fs_read(&file, sample, record_size);
+			if (read == 0) {
+				break;
+			}
+			if (read != record_size || slot == CONFIG_KFSW_HK_STORE_CAPACITY) {
+				result = read < 0 ? (int)read : -EBADMSG;
+				break;
+			}
+			if (sample[0] == 0U) {
+				continue;
+			} /* Unwritten sparse slot. */
+			uint16_t sequence = sys_get_be16(&sample[2]);
+
+			if (sample[0] != KFSW_HK_PROTOCOL_VERSION || sample[1] != report ||
+			    sequence % CONFIG_KFSW_HK_STORE_CAPACITY != slot) {
+				result = -EBADMSG;
+				break;
+			}
+			if (!have_sequence || (int16_t)(sequence - newest) > 0) {
+				newest = sequence;
+				have_sequence = true;
+			}
+		}
+		int closed = fs_close(&file);
+
+		if (result == 0) {
+			result = closed;
+		}
+		if (have_sequence) {
+			restored_sequences[report] = newest + 1U;
+		}
+	}
+	if (result != 0) {
+		return result;
+	}
+	uint64_t every =
+		period_ms == 0U ? 1U : ((uint64_t)interval_ms + period_ms - 1U) / period_ms;
+
+	restored_stores[report] = (struct store_state){
+		.interval_ms = interval_ms,
+		.every_n = MIN(every, CONFIG_KFSW_HK_HISTORY),
+		.record_size = record_size,
+		.open = true,
+	};
+	return 0;
+}
+
+uint16_t kfsw_hk_store_restore_sequence(uint8_t report)
+{
+	return restored_sequences[report];
+}
+
+void kfsw_hk_store_restore_commit(void)
+{
+	memcpy(stores, restored_stores, sizeof(stores));
+}
+#endif
 
 #endif /* CONFIG_KFSW_HK_STORE */

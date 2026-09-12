@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <errno.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -180,18 +181,30 @@ int kfsw_command_parse_arg(const char *text, enum kfsw_command_type type,
 	arg->type = type;
 	switch (type) {
 	case KFSW_COMMAND_TYPE_U32: {
-		unsigned long parsed = strtoul(text, &end, 0);
+		const char *number = text;
+		unsigned long parsed;
 
-		if ((end == text) || (*end != '\0') || (parsed > UINT32_MAX)) {
+		while (isspace((unsigned char)*number)) {
+			number++;
+		}
+		if (*number == '-') {
+			return -EINVAL;
+		}
+		errno = 0;
+		parsed = strtoul(number, &end, 0);
+		if ((errno == ERANGE) || (end == number) || (*end != '\0') ||
+		    (parsed > UINT32_MAX)) {
 			return -EINVAL;
 		}
 		arg->value.u32 = (uint32_t)parsed;
 		break;
 	}
 	case KFSW_COMMAND_TYPE_I32: {
-		long parsed = strtol(text, &end, 0);
+		long parsed;
 
-		if ((end == text) || (*end != '\0') || (parsed > INT32_MAX) ||
+		errno = 0;
+		parsed = strtol(text, &end, 0);
+		if ((errno == ERANGE) || (end == text) || (*end != '\0') || (parsed > INT32_MAX) ||
 		    (parsed < INT32_MIN)) {
 			return -EINVAL;
 		}

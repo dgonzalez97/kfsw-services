@@ -53,6 +53,7 @@ union kfsw_param_scalar {
  */
 #define KFSW_PARAM_STRING_MAX CONFIG_KFSW_PARAM_STRING_MAX
 
+/** One typed value, with shared storage for text and bytes. */
 struct kfsw_param_value {
 	enum kfsw_param_type type;
 	/** Bytes carried: the scalar width, or the string length with its terminator.
@@ -60,9 +61,13 @@ struct kfsw_param_value {
 	size_t size;
 	union kfsw_param_scalar scalar;
 	union {
-		/** Value for KFSW_PARAM_STRING; always terminated. */
+		/** String value.
+		 * @details KFSW_PARAM_STRING includes a trailing NUL.
+		 */
 		char text[KFSW_PARAM_STRING_MAX];
-		/** Value for KFSW_PARAM_DATA; size gives the element count. */
+		/** Raw data value.
+		 * @details KFSW_PARAM_DATA uses size as the element count.
+		 */
 		uint8_t bytes[KFSW_PARAM_STRING_MAX];
 	};
 };
@@ -152,6 +157,9 @@ struct kfsw_param_table_info {
  * behaviour as a local one.
  */
 #define KFSW_PARAM_FLAG_LIVE 0x00020000UL
+
+/** Parameter may be configured locally, but remote writes are refused. */
+#define KFSW_PARAM_FLAG_LOCAL_ONLY 0x00040000UL
 
 /** Validate a proposed scalar value; return zero to accept it. */
 typedef int (*kfsw_param_validator_t)(const union kfsw_param_scalar *value);
@@ -298,6 +306,8 @@ struct kfsw_param_stats {
 	uint32_t saves;
 	/** Snapshot loads that failed for a reason other than absence. */
 	uint32_t load_failures;
+	/** Incoming CSP value requests dropped before the worker could accept them. */
+	uint32_t requests_dropped;
 };
 
 /** Read what the service knows about itself. -EINVAL for a NULL destination. */
@@ -386,7 +396,7 @@ int kfsw_param_restore_defaults(void);
 /** Register the optional CSP parameter and parameter-list endpoints once. */
 int kfsw_param_server_start(void);
 
-/** Download and cache a node's upstream version 3 parameter list. */
+/** Refresh a node's indexed v4 list; publish it only after count and CRC verification. */
 int kfsw_param_remote_refresh(uint16_t node);
 
 /** Read a scalar parameter from a selected CSP node. */
@@ -395,8 +405,8 @@ int kfsw_param_remote_get(uint16_t node, const char *name, struct kfsw_param_val
 /**
  * @brief Read several parameters from one node in as few exchanges as fit.
  *
- * The wire carries a list, so twelve values cost one or two round trips rather
- * than twelve -- and each one waits up to CONFIG_KFSW_PARAM_TIMEOUT_MS.
+ * The operation shares one list-plus-value budget. Each receive is also capped
+ * by CONFIG_KFSW_PARAM_TIMEOUT_MS; duplicate packets cannot restart the budget.
  *
  * @p values must hold @p count entries. Names are all resolved before anything
  * is requested, so an unknown name costs no round trip. Returns 0 with every
@@ -406,10 +416,20 @@ int kfsw_param_remote_get(uint16_t node, const char *name, struct kfsw_param_val
 int kfsw_param_remote_get_many(uint16_t node, const char *const *names, size_t count,
 			       struct kfsw_param_value *values);
 
+/** Same read with an absolute k_uptime_get() deadline, including mutex waits. */
+int kfsw_param_remote_get_many_until(uint16_t node, const char *const *names, size_t count,
+				     struct kfsw_param_value *values, int64_t deadline);
+
+/** Visit within an absolute uptime deadline. Copy names before returning from the callback.
+ * The callback must not call remote PARAM operations or block indefinitely.
+ */
+int kfsw_param_remote_visit_until(uint16_t node, kfsw_param_visitor_t visitor, void *context,
+				  int64_t deadline);
+
 /** Write a scalar parameter on a selected CSP node. */
 int kfsw_param_remote_set(uint16_t node, const char *name, const struct kfsw_param_value *value);
 
-/** Visit the cached parameter descriptions for a selected CSP node. */
+/** Visit a node's descriptors. Copy borrowed strings before the callback returns. */
 int kfsw_param_remote_visit(uint16_t node, kfsw_param_visitor_t visitor, void *context);
 #endif
 

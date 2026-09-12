@@ -106,7 +106,7 @@ struct kfsw_command_arg {
 struct kfsw_command_source {
 	/** CSP node that issued the request, or 0 for a local invocation. */
 	uint16_t node;
-	/** True once the request has been authenticated. Always false today. */
+	/** End-to-end command identity, separate from link protection. Currently false. */
 	bool authenticated;
 };
 

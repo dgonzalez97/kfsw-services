@@ -20,15 +20,9 @@ extern "C" {
  * Receives a firmware image into the secondary image slot and asks the
  * bootloader to try it on the next boot.
  *
- * The image goes straight into raw flash, never a file: it is larger than the
- * filesystem partition on the first target.
- *
- * Two traps are why this service exists rather than callers writing flash.
- * MCUboot swaps using an offset, so an update must land one sector into the
- * secondary slot; writing at the start is not rejected, the bootloader just
- * finds nothing to swap. And finishing checks an upgrade was actually
- * scheduled, because a request that quietly does nothing looks like success
- * until the old image answers the next poll.
+ * Images are written directly to flash. With KFSW_FWU_FILES, both slots are
+ * also available as read-only files, without using data filesystem space.
+ * The service handles the MCUboot write offset and checks upgrade scheduling.
  *
  * The CRC32 catches corruption in transit, not tampering. Authenticity is the
  * bootloader's signature check.
@@ -46,6 +40,8 @@ enum kfsw_fwu_state {
 	KFSW_FWU_READY = 2,
 	/** The transfer failed; call @ref kfsw_fwu_abort before retrying. */
 	KFSW_FWU_FAILED = 3,
+	/** Checked and flushed to flash; no upgrade requested yet. */
+	KFSW_FWU_VERIFIED = 4,
 };
 
 /** Consistent snapshot of an update in progress. */
@@ -103,7 +99,8 @@ uint32_t kfsw_fwu_slot_write_offset(void);
  * @retval -ENODEV No target partition is bound.
  * @retval -EINVAL @p total_size is zero.
  * @retval -EFBIG @p total_size exceeds @ref kfsw_fwu_max_image_size.
- * @retval -EBUSY A transfer is already in progress.
+ * @retval -EBUSY A transfer is receiving, a secondary reader is open, or
+ *                MCUboot still needs the previous image for trial rollback.
  * @return A negative errno value from the flash layer on failure.
  */
 int kfsw_fwu_begin(uint32_t total_size, uint32_t expected_crc32);
@@ -128,6 +125,35 @@ int kfsw_fwu_begin(uint32_t total_size, uint32_t expected_crc32);
 int kfsw_fwu_write(uint32_t offset, const void *data, size_t size);
 
 /**
+ * @brief Check the transfer CRC and flush all received bytes to flash.
+ *
+ * Does not schedule a boot. Repeated verification of a verified transfer
+ * succeeds. Further writes are rejected until a new transfer begins.
+ *
+ * @retval 0 The complete image is available in flash.
+ * @retval -EINVAL No transfer is receiving or verified.
+ * @retval -EAGAIN The transfer is incomplete.
+ * @retval -EILSEQ The transfer CRC does not match.
+ * @return A negative errno from flash on failure.
+ */
+int kfsw_fwu_verify(void);
+
+#if CONFIG_KFSW_FWU_FILES
+/**
+ * @brief Mount read-only MCUboot images at /kfsw/boot.
+ *
+ * firmware_1.bin reads slot0; firmware_2.bin reads slot1. Files contain the
+ * image header, payload, and TLVs, excluding slot padding and swap metadata.
+ * A secondary reader blocks erase and upgrade requests until it closes.
+ * Image visibility checks structure, not the bootloader's signature policy.
+ * Call once during service startup, before exposing file transfers.
+ *
+ * @return 0 on success, or a negative errno on failure.
+ */
+int kfsw_fwu_files_mount(void);
+#endif
+
+/**
  * @brief Verify the received image and offer it to the bootloader.
  *
  * On success the image is marked to be tried once. It becomes permanent only
@@ -135,7 +161,8 @@ int kfsw_fwu_write(uint32_t offset, const void *data, size_t size);
  * previous image.
  *
  * @retval 0 The image was accepted and a swap is scheduled.
- * @retval -EINVAL No transfer is running.
+ * @retval -EINVAL No transfer is receiving or verified.
+ * @retval -EBUSY A secondary-slot reader is open.
  * @retval -EAGAIN Fewer bytes were received than declared.
  * @retval -EILSEQ The CRC32 does not match what the sender declared.
  * @retval -EIO The bootloader did not schedule a swap despite being asked.
@@ -146,10 +173,13 @@ int kfsw_fwu_finish(void);
 /**
  * @brief Abandon a transfer and return to idle.
  *
- * Safe to call in any state. The slot is left erased, so a partial image can
- * never be mistaken for a complete one.
+ * On success the secondary slot is erased. If cleanup fails, the service
+ * retains its transfer details in the failed state; call again to retry.
+ * Erasing the rollback image during a trial boot is refused.
  *
- * @retval 0 Always.
+ * @retval 0 Cleanup completed, or no target partition is bound.
+ * @retval -EBUSY A secondary-slot reader is open.
+ * @return A negative errno from flash on cleanup failure.
  */
 int kfsw_fwu_abort(void);
 
