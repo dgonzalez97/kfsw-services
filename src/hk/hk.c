@@ -596,17 +596,6 @@ int kfsw_hk_set_store(uint8_t report, uint32_t interval_ms)
 	return result;
 }
 
-#if CONFIG_KFSW_HK_BEACON
-void kfsw_hk_beacon_persist(void)
-{
-#if CONFIG_KFSW_HK_PERSISTENCE
-	if (!loading) {
-		(void)kfsw_hk_persist_save();
-	}
-#endif
-}
-#endif
-
 int kfsw_hk_clear_store(uint8_t report)
 {
 	if (report >= CONFIG_KFSW_HK_REPORTS) {
@@ -628,6 +617,17 @@ int kfsw_hk_get_store(uint8_t report, uint32_t *interval_ms)
 	}
 	*interval_ms = kfsw_hk_store_interval(report);
 	return 0;
+}
+#endif
+
+#if CONFIG_KFSW_HK_BEACON
+void kfsw_hk_beacon_persist(void)
+{
+#if CONFIG_KFSW_HK_PERSISTENCE
+	if (!loading) {
+		(void)kfsw_hk_persist_save();
+	}
+#endif
 }
 #endif
 
