@@ -609,6 +609,15 @@ config KFSW_HK_REPORTS
 	  Each report holds its own definition and its own ring of samples, so
 	  this multiplies both the definition storage and KFSW_HK_HISTORY.
 
+config KFSW_HK_REMOTE_BUDGET_MS
+	int "Total remote read budget per HK report in milliseconds"
+	default 1000
+	range 10 60000
+	help
+	  Shared across nodes, descriptor lookup, queue admission and value reads.
+	  Expired entries remain zero and the sample is marked incomplete.
+	  Local sample callbacks and driver calls must supply their own bounds.
+
 config KFSW_HK_ENTRIES
 	int "Parameters one report may name"
 	default 16

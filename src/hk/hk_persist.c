@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include <zephyr/fs/fs.h>
+#include <zephyr/kernel.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/crc.h>
 #include <zephyr/sys/util.h>
@@ -57,6 +58,18 @@
 				    (CONFIG_KFSW_HK_ENTRIES * KFSW_HK_PERSIST_ENTRY_SIZE))))
 
 static uint8_t blob[KFSW_HK_PERSIST_MAX_SIZE];
+static K_MUTEX_DEFINE(file_lock);
+
+struct restored_report {
+	struct kfsw_hk_definition definition;
+	uint32_t period_ms;
+	uint32_t store_ms;
+	uint32_t beacon_ms;
+	uint16_t beacon_node;
+	bool present;
+};
+
+static struct restored_report restored[CONFIG_KFSW_HK_REPORTS];
 
 /* A build without the store or the beacon still writes their fields, as zero.
  * One layout on disk means a node that gains either on its next image reads
@@ -103,7 +116,7 @@ static uint32_t beacon_interval_of(uint8_t report)
 #endif
 }
 
-int kfsw_hk_persist_save(void)
+static int save_snapshot(uint64_t *revision)
 {
 	size_t offset = KFSW_HK_PERSIST_HEADER_SIZE;
 	uint16_t saved = 0U;
@@ -113,7 +126,14 @@ int kfsw_hk_persist_save(void)
 		return -ENODEV;
 	}
 
+	kfsw_hk_storage_lock();
 	kfsw_hk_lock();
+	*revision = kfsw_hk_config_revision();
+	if (kfsw_hk_save_blocked()) {
+		kfsw_hk_unlock();
+		kfsw_hk_storage_unlock();
+		return -EROFS;
+	}
 	for (uint8_t index = 0U; index < CONFIG_KFSW_HK_REPORTS; index++) {
 		const struct kfsw_hk_report *report = kfsw_hk_report_at(index);
 
@@ -138,6 +158,7 @@ int kfsw_hk_persist_save(void)
 		saved++;
 	}
 	kfsw_hk_unlock();
+	kfsw_hk_storage_unlock();
 
 	memcpy(blob, KFSW_HK_PERSIST_MAGIC, KFSW_HK_PERSIST_MAGIC_SIZE);
 	blob[4] = KFSW_HK_PERSIST_VERSION;
@@ -160,7 +181,7 @@ int kfsw_hk_persist_save(void)
 	return 0;
 }
 
-int kfsw_hk_persist_load(void)
+static int load_snapshot(void)
 {
 	struct fs_file_t file;
 	struct fs_dirent info;
@@ -208,8 +229,8 @@ int kfsw_hk_persist_load(void)
 				 KFSW_HK_PERSIST_VERSION);
 		return -EPROTONOSUPPORT;
 	}
-	report_header = (version == 1U) ? KFSW_HK_PERSIST_REPORT_HEADER_V1
-					: KFSW_HK_PERSIST_REPORT_HEADER;
+	report_header =
+		(version == 1U) ? KFSW_HK_PERSIST_REPORT_HEADER_V1 : KFSW_HK_PERSIST_REPORT_HEADER;
 
 	stored_crc = sys_get_be32(&blob[KFSW_HK_PERSIST_CRC_OFFSET]);
 	sys_put_be32(0U, &blob[KFSW_HK_PERSIST_CRC_OFFSET]);
@@ -220,72 +241,122 @@ int kfsw_hk_persist_load(void)
 	}
 
 	expected = sys_get_be16(&blob[6]);
-	for (uint16_t index = 0U; index < expected; index++) {
+	if (expected > ARRAY_SIZE(restored) || blob[5] != 0U) {
+		return -EBADMSG;
+	}
+	memset(restored, 0, sizeof(restored));
+	for (uint16_t index = 0; index < expected; index++) {
 		struct kfsw_hk_entry entries[CONFIG_KFSW_HK_ENTRIES];
 		uint8_t report;
 		uint8_t count;
-		uint32_t period;
-		uint32_t store_interval;
-		uint16_t beacon_node;
-		uint32_t beacon_interval;
 
-		if ((offset + report_header) > (size_t)info.size) {
+		if (offset + report_header > info.size) {
 			return -EBADMSG;
 		}
 		report = blob[offset];
-		count = blob[offset + 1U];
-		period = sys_get_be32(&blob[offset + 2U]);
-		if (version == 1U) {
-			store_interval = 0U;
-			beacon_node = 0U;
-			beacon_interval = 0U;
-		} else {
-			store_interval = sys_get_be32(&blob[offset + 6U]);
-			beacon_node = sys_get_be16(&blob[offset + 10U]);
-			beacon_interval = sys_get_be32(&blob[offset + 12U]);
-		}
-		offset += report_header;
-
-		if ((count == 0U) || (count > ARRAY_SIZE(entries)) ||
-		    ((offset + ((size_t)count * KFSW_HK_PERSIST_ENTRY_SIZE)) > (size_t)info.size)) {
+		count = blob[offset + 1];
+		if (report >= ARRAY_SIZE(restored) || restored[report].present || count == 0U ||
+		    count > ARRAY_SIZE(entries)) {
 			return -EBADMSG;
 		}
-		for (uint8_t entry = 0U; entry < count; entry++) {
-			entries[entry].node = sys_get_be16(&blob[offset]);
-			entries[entry].param_id = sys_get_be16(&blob[offset + 2U]);
-			offset += KFSW_HK_PERSIST_ENTRY_SIZE;
-		}
+		struct restored_report *item = &restored[report];
 
-		/* Re-validated on the way in, not trusted. A parameter named by
-		 * a definition written before an update may not exist any more,
-		 * and a report that cannot be collected should not come back
-		 * looking defined.
-		 */
-		result = kfsw_hk_define(report, entries, count);
-		if (result != 0) {
-			kfsw_log_warning("HK: saved report %u no longer defines (%d)", report,
-					 result);
-			continue;
+		item->present = true;
+		item->period_ms = sys_get_be32(&blob[offset + 2]);
+		if (version == 2U) {
+			item->store_ms = sys_get_be32(&blob[offset + 6]);
+			item->beacon_node = sys_get_be16(&blob[offset + 10]);
+			item->beacon_ms = sys_get_be32(&blob[offset + 12]);
 		}
-		if (period != 0U) {
-			(void)kfsw_hk_set_period(report, period);
+		if (item->period_ms != 0U && item->period_ms < CONFIG_KFSW_HK_PERIOD_FLOOR_MS) {
+			return -ERANGE;
 		}
-		/* After the period, because the store sizes its batch from it.
-		 * Each is best-effort: a policy that no longer fits this image
-		 * should not cost the definition that does.
-		 */
 #if CONFIG_KFSW_HK_STORE
-		if (store_interval != 0U) {
-			(void)kfsw_hk_set_store(report, store_interval);
+		if (item->store_ms != 0U && item->store_ms < CONFIG_KFSW_HK_STORE_FLOOR_MS) {
+			return -ERANGE;
 		}
 #endif
 #if CONFIG_KFSW_HK_BEACON
-		if (beacon_interval != 0U) {
-			(void)kfsw_hk_set_beacon(report, beacon_node, beacon_interval);
+		if (item->beacon_ms != 0U &&
+		    (item->beacon_ms < CONFIG_KFSW_HK_BEACON_FLOOR_MS || item->beacon_node == 0U ||
+		     item->beacon_node > 16383U)) {
+			return -ERANGE;
 		}
 #endif
+		offset += report_header;
+		if (offset + count * KFSW_HK_PERSIST_ENTRY_SIZE > info.size) {
+			return -EBADMSG;
+		}
+		for (uint8_t entry = 0; entry < count; entry++) {
+			entries[entry].node = sys_get_be16(&blob[offset]);
+			entries[entry].param_id = sys_get_be16(&blob[offset + 2]);
+			offset += KFSW_HK_PERSIST_ENTRY_SIZE;
+		}
+		result = kfsw_hk_prepare_definition(report, entries, count, &item->definition);
+		if (result != 0) {
+			return result;
+		}
 	}
+	if (offset != info.size) {
+		return -EBADMSG;
+	}
+
+	/* Prepare every store without replacing an existing sample file. */
+	kfsw_hk_storage_lock();
+#if CONFIG_KFSW_HK_STORE
+	for (uint8_t index = 0; index < ARRAY_SIZE(restored); index++) {
+		const struct restored_report *item = &restored[index];
+
+		result = kfsw_hk_store_restore_prepare(index, item->store_ms, item->period_ms,
+						       KFSW_HK_HEADER_SIZE +
+							       item->definition.payload_bytes);
+		if (result != 0) {
+			kfsw_hk_storage_unlock();
+			return result;
+		}
+	}
+#endif
+	kfsw_hk_lock();
+	for (uint8_t index = 0; index < ARRAY_SIZE(restored); index++) {
+		const struct restored_report *item = &restored[index];
+
+		kfsw_hk_restore_report(index, item->present ? &item->definition : NULL,
+				       item->period_ms);
+#if CONFIG_KFSW_HK_BEACON
+		kfsw_hk_beacon_restore(index, item->beacon_node, item->beacon_ms);
+#endif
+	}
+#if CONFIG_KFSW_HK_STORE
+	kfsw_hk_store_restore_commit();
+#endif
+	kfsw_hk_unlock();
+	kfsw_hk_storage_unlock();
 	return 0;
+}
+
+int kfsw_hk_persist_save(void)
+{
+	uint64_t revision = 0;
+	int result;
+
+	k_mutex_lock(&file_lock, K_FOREVER);
+	result = save_snapshot(&revision);
+	kfsw_hk_save_result(revision, result);
+	k_mutex_unlock(&file_lock);
+	return result;
+}
+
+int kfsw_hk_persist_load(void)
+{
+	int result;
+
+	/* Mutations release config ownership before waiting for file ownership. */
+	kfsw_hk_restore_begin();
+	k_mutex_lock(&file_lock, K_FOREVER);
+	result = load_snapshot();
+	kfsw_hk_restore_end(result);
+	k_mutex_unlock(&file_lock);
+	return result;
 }
 
 #endif /* CONFIG_KFSW_HK_PERSISTENCE */

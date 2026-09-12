@@ -61,9 +61,23 @@ struct kfsw_hk_sample {
 	uint8_t data[CONFIG_KFSW_HK_SAMPLE_BYTES];
 };
 
+/**
+ * A setting took effect in RAM, but its snapshot could not be saved.
+ * Setters return this value; last_save_error holds the filesystem error.
+ * A rejected snapshot is preserved until an explicit kfsw_hk_save().
+ */
+#define KFSW_HK_APPLIED_UNSAVED 1
+
 /** Counters this service publishes, and what it is doing now. */
 struct kfsw_hk_stats {
 	uint32_t collections;
+	uint32_t scheduled_attempts;
+	/** Elapsed periodic slots skipped after a collection, saturating. */
+	uint32_t missed_slots;
+	/** Runtime settings differ from the last successful snapshot. */
+	bool settings_dirty;
+	int last_save_error;
+	int last_load_error;
 	uint32_t failures;
 	uint32_t entries_failed;
 	uint32_t overwritten;
@@ -81,6 +95,14 @@ struct kfsw_hk_stats {
 
 /** Prepare the service. Safe to call before CSP exists. */
 int kfsw_hk_init(void);
+
+/** True after restore finishes, including diagnostic operation with defaults. */
+bool kfsw_hk_is_ready(void);
+
+#if CONFIG_KFSW_HK_PERSISTENCE
+/** Save current settings explicitly; permits replacing a rejected snapshot. */
+int kfsw_hk_save(void);
+#endif
 
 /** Start collecting reports that have been given a period. */
 int kfsw_hk_start(void);
@@ -111,6 +133,8 @@ int kfsw_hk_get_definition(uint8_t report, struct kfsw_hk_entry *entries, size_t
  *
  * Blocks: a remote entry waits for its node. Never call this from a parameter
  * sample callback, which runs under the table lock this needs.
+ * Existing samples remain readable during collection and storage writes.
+ * Returns -EAGAIN and discards the sample if the definition changed meanwhile.
  */
 int kfsw_hk_collect(uint8_t report);
 

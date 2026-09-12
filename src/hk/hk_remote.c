@@ -22,11 +22,12 @@
 #define KFSW_HK_REMOTE_WINDOW 8U
 
 struct name_search {
-	const struct kfsw_hk_report *report;
+	const struct kfsw_hk_definition *report;
 	uint16_t node;
 	/* Indices into the report, and the name each one resolved to. */
 	uint8_t indices[CONFIG_KFSW_HK_ENTRIES];
 	const char *names[CONFIG_KFSW_HK_ENTRIES];
+	char name_storage[CONFIG_KFSW_HK_ENTRIES][KFSW_PARAM_NAME_MAX + 1];
 	size_t count;
 };
 
@@ -50,18 +51,20 @@ static bool match_names(const struct kfsw_param_info *info, void *context)
 			return false;
 		}
 		search->indices[search->count] = (uint8_t)index;
-		search->names[search->count] = info->name;
+		strncpy(search->name_storage[search->count], info->name, KFSW_PARAM_NAME_MAX);
+		search->names[search->count] = search->name_storage[search->count];
 		search->count++;
 	}
 	return true;
 }
 
-int kfsw_hk_collect_remote(struct kfsw_hk_report *report, uint16_t node,
-			   struct kfsw_hk_sample *sample)
+int kfsw_hk_collect_remote(const struct kfsw_hk_definition *report, uint16_t node,
+			   struct kfsw_hk_sample *sample, uint32_t *failures, int64_t deadline)
 {
 	static struct name_search search;
 	static struct kfsw_param_value values[KFSW_HK_REMOTE_WINDOW];
 	size_t expected = 0U;
+	int first_read_error = 0;
 	int result;
 
 	if ((report == NULL) || (sample == NULL)) {
@@ -78,7 +81,7 @@ int kfsw_hk_collect_remote(struct kfsw_hk_report *report, uint16_t node,
 	search.report = report;
 	search.node = node;
 
-	result = kfsw_param_remote_visit(node, match_names, &search);
+	result = kfsw_param_remote_visit_until(node, match_names, &search, deadline);
 	if (result != 0) {
 		/* The node did not answer, so every value it owed is absent.
 		 * Their bytes are already zero and the caller marks the sample
@@ -86,7 +89,7 @@ int kfsw_hk_collect_remote(struct kfsw_hk_report *report, uint16_t node,
 		 */
 		kfsw_log_warning("HK: node %u did not list its parameters (%d)", node, result);
 		for (size_t index = 0U; index < expected; index++) {
-			kfsw_hk_count_entry_failure();
+			(*failures)++;
 		}
 		return result;
 	}
@@ -99,13 +102,17 @@ int kfsw_hk_collect_remote(struct kfsw_hk_report *report, uint16_t node,
 	for (size_t base = 0U; base < search.count; base += KFSW_HK_REMOTE_WINDOW) {
 		size_t span = MIN(search.count - base, (size_t)KFSW_HK_REMOTE_WINDOW);
 
-		result = kfsw_param_remote_get_many(node, &search.names[base], span, values);
+		result = kfsw_param_remote_get_many_until(node, &search.names[base], span, values,
+							  deadline);
 		if (result != 0) {
+			if (first_read_error == 0) {
+				first_read_error = result;
+			}
 			/* A window that failed leaves its values zero rather
 			 * than half-written, so the frame still reads.
 			 */
 			for (size_t offset = 0U; offset < span; offset++) {
-				kfsw_hk_count_entry_failure();
+				(*failures)++;
 			}
 			continue;
 		}
@@ -117,6 +124,9 @@ int kfsw_hk_collect_remote(struct kfsw_hk_report *report, uint16_t node,
 		}
 	}
 
+	if (first_read_error != 0) {
+		return first_read_error;
+	}
 	return (search.count == expected) ? 0 : -ENOENT;
 }
 

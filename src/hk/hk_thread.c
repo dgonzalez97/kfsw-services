@@ -1,100 +1,45 @@
 #include <errno.h>
-#include <stdint.h>
-
 #include <zephyr/kernel.h>
-#include <zephyr/sys/util.h>
-
 #include <kfsw/services/hk.h>
-/* Attributes this file's messages to housekeeping, so its level can be
- * raised without also raising the parameter service's. */
-#define KFSW_LOG_MODULE KFSW_LOG_MODULE_HK
-#include <kfsw/services/log.h>
-
 #include "hk_internal.h"
 
-/* How long the thread sleeps when nothing is due. Long enough not to spin,
- * short enough that a period set from the ground takes effect promptly.
- */
-#define KFSW_HK_TICK_MS 200
-
+static K_MUTEX_DEFINE(start_lock);
+static K_SEM_DEFINE(schedule_wake, 0, 1);
 static bool running;
 
-/*
- * A thread rather than a work item on the system queue.
- *
- * A remote entry blocks on its node for up to a second, and the system
- * workqueue runs at Zephyr's default stack and is shared with health, the
- * watchdog and GPIO debounce. Collection waiting there would delay all three.
- */
-static void hk_collector(void *arg1, void *arg2, void *arg3)
+void kfsw_hk_wake(void)
 {
-	ARG_UNUSED(arg1);
-	ARG_UNUSED(arg2);
-	ARG_UNUSED(arg3);
+	k_sem_give(&schedule_wake);
+}
 
-	/* Said once when the clock arrives, and again if it is ever lost, so a
-	 * log shows when timed collection actually began rather than when the
-	 * thread started.
-	 */
-	bool announced = false;
+static void hk_collector(void *a, void *b, void *c)
+{
+	ARG_UNUSED(a);
+	ARG_UNUSED(b);
+	ARG_UNUSED(c);
+	for (;;) {
+		for (uint8_t index = 0; index < CONFIG_KFSW_HK_REPORTS; index++) {
+			struct kfsw_hk_due due;
 
-	while (true) {
-		int64_t now = k_uptime_get();
-
-		/* Nothing is collected on a schedule until the node knows what
-		 * time it is. A ring full of samples stamped zero cannot be put
-		 * in order, and it would overwrite the ones that can: the
-		 * period keeps running while the clock is missing, so a node
-		 * that came up without one would discard its own history
-		 * before anybody could ask for it.
-		 *
-		 * `hk collect` still works, and marks what it produces. An
-		 * operator debugging a node with no clock wants the values.
-		 */
-		if (!kfsw_hk_enabled()) {
-			k_sleep(K_MSEC(KFSW_HK_TICK_MS));
-			continue;
-		}
-
-		if (!kfsw_hk_clock_valid()) {
-			announced = false;
-			k_sleep(K_MSEC(KFSW_HK_TICK_MS));
-			continue;
-		}
-		if (!announced) {
-			announced = true;
-			kfsw_log_info("HK: clock is set, collecting on schedule");
-		}
-
-		for (uint8_t index = 0U; index < CONFIG_KFSW_HK_REPORTS; index++) {
-			struct kfsw_hk_report *report = kfsw_hk_report_at(index);
-			bool due = false;
-
-			kfsw_hk_lock();
-			if ((report != NULL) && report->defined && (report->period_ms != 0U) &&
-			    (now >= report->next_uptime_ms)) {
-				/* Advanced before collecting, not after, so a
-				 * collection that takes longer than the period
-				 * does not immediately queue another.
-				 */
-				report->next_uptime_ms = now + (int64_t)report->period_ms;
-				due = true;
+			if (!kfsw_hk_enabled() || !kfsw_hk_clock_valid()) {
+				break;
 			}
-			kfsw_hk_unlock();
-
-			if (due) {
+			if (kfsw_hk_schedule_take(index, k_uptime_get(), &due)) {
 				(void)kfsw_hk_collect(index);
+				kfsw_hk_schedule_finish(index, &due, k_uptime_get());
 			}
 #if CONFIG_KFSW_HK_BEACON
-			/* After collecting, and behind the same gates: a
-			 * report that is not collecting has nothing new to
-			 * announce, and a node with no clock would announce it
-			 * without saying when.
-			 */
-			kfsw_hk_beacon_tick(index, now);
+			if (kfsw_hk_enabled() && kfsw_hk_clock_valid()) {
+				kfsw_hk_beacon_tick(index, k_uptime_get());
+			}
 #endif
 		}
-		k_sleep(K_MSEC(KFSW_HK_TICK_MS));
+		/* Clock changes have no wake hook yet. Poll at most every 200 ms. */
+		int64_t wait = (kfsw_hk_enabled() && kfsw_hk_clock_valid())
+				       ? kfsw_hk_schedule_wait(k_uptime_get())
+				       : 200;
+
+		(void)k_sem_take(&schedule_wake, K_MSEC(wait));
 	}
 }
 
@@ -103,11 +48,14 @@ K_THREAD_DEFINE(kfsw_hk_thread, CONFIG_KFSW_HK_STACK_SIZE, hk_collector, NULL, N
 
 int kfsw_hk_start(void)
 {
-	if (running) {
-		return 0;
+	if (!kfsw_hk_is_ready()) {
+		return -EACCES;
 	}
-	running = true;
-	k_thread_start(kfsw_hk_thread);
-	kfsw_log_info("HK: collector started");
+	k_mutex_lock(&start_lock, K_FOREVER);
+	if (!running) {
+		running = true;
+		k_thread_start(kfsw_hk_thread);
+	}
+	k_mutex_unlock(&start_lock);
 	return 0;
 }

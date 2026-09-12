@@ -30,6 +30,7 @@ BUILD_ASSERT(CONFIG_KFSW_HK_SAMPLE_BYTES <= CSP_BUFFER_SIZE,
 
 static csp_socket_t hk_socket;
 static bool running;
+static K_MUTEX_DEFINE(start_lock);
 
 /*
  * One packet per sample, not one stream.
@@ -48,7 +49,7 @@ void kfsw_hk_serve_request(csp_conn_t *connection, csp_packet_t *request)
 	uint16_t depth = 0U;
 	uint16_t sent = 0U;
 
-	if (request->length < KFSW_HK_REQUEST_SIZE) {
+	if (!kfsw_hk_is_ready() || request->length < KFSW_HK_REQUEST_SIZE) {
 		csp_buffer_free(request);
 		return;
 	}
@@ -119,7 +120,7 @@ K_THREAD_DEFINE(kfsw_hk_server_thread, CONFIG_KFSW_HK_SERVER_STACK_SIZE, hk_serv
  * reported to the caller instead of only logged from somewhere nobody is
  * watching.
  */
-int kfsw_hk_server_start(void)
+static int server_start(void)
 {
 	struct kfsw_csp_info csp_info;
 	int result;
@@ -128,7 +129,7 @@ int kfsw_hk_server_start(void)
 		return 0;
 	}
 	kfsw_csp_get_info(&csp_info);
-	if (!csp_info.initialized || !csp_info.router_running) {
+	if (!kfsw_hk_is_ready() || !csp_info.initialized || !csp_info.router_running) {
 		return -EACCES;
 	}
 
@@ -149,6 +150,16 @@ int kfsw_hk_server_start(void)
 	k_thread_start(kfsw_hk_server_thread);
 	kfsw_log_info("HK: serving on CSP port %d", CONFIG_KFSW_HK_CSP_PORT);
 	return 0;
+}
+
+int kfsw_hk_server_start(void)
+{
+	int result;
+
+	k_mutex_lock(&start_lock, K_FOREVER);
+	result = server_start();
+	k_mutex_unlock(&start_lock);
+	return result;
 }
 
 #endif /* CONFIG_KFSW_HK_CSP */
