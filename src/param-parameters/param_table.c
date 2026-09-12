@@ -17,6 +17,11 @@ static uint16_t param_persistent;
 static uint32_t param_saves;
 static uint32_t param_load_failures;
 static uint8_t param_autosave;
+#if CONFIG_KFSW_PARAM_PERSISTENCE
+static uint32_t param_persist_bytes;
+static uint32_t param_persist_max_bytes;
+static uint32_t param_persist_stage_bytes;
+#endif
 
 static void sample_stats(void)
 {
@@ -28,6 +33,11 @@ static void sample_stats(void)
 	param_count = stats.count;
 	param_tables = stats.tables;
 	param_persistent = stats.persistent;
+#if CONFIG_KFSW_PARAM_PERSISTENCE
+	param_persist_bytes = kfsw_param_persist_bytes();
+	param_persist_max_bytes = kfsw_param_persist_max_bytes();
+	param_persist_stage_bytes = kfsw_param_persist_stage_bytes();
+#endif
 	param_saves = stats.saves;
 	param_load_failures = stats.load_failures;
 }
@@ -49,6 +59,26 @@ static int validate_autosave(const union kfsw_param_scalar *value)
 {
 	return (value->u8 > 1U) ? -ERANGE : 0;
 }
+
+#if CONFIG_KFSW_PARAM_PERSISTENCE
+static void sample_persist_bytes(void *value)
+{
+	sample_stats();
+	*(uint32_t *)value = param_persist_bytes;
+}
+
+static void sample_persist_max_bytes(void *value)
+{
+	sample_stats();
+	*(uint32_t *)value = param_persist_max_bytes;
+}
+
+static void sample_persist_stage_bytes(void *value)
+{
+	sample_stats();
+	*(uint32_t *)value = param_persist_stage_bytes;
+}
+#endif
 
 static const struct kfsw_param_definition param_param_definitions[] = {
 	{
@@ -106,9 +136,55 @@ static const struct kfsw_param_definition param_param_definitions[] = {
 		.name = "param_autosave",
 		.description = "Write a snapshot after every accepted change",
 		.value = &param_autosave,
-		.default_value = {.u8 = 0U},
+		/* On, so a value marked persistent actually survives the next
+		 * reset without an operator remembering to save. Off was the
+		 * safer default for flash wear, and it meant the flag promised
+		 * something the node did not do.
+		 *
+		 * The cost is one snapshot write per accepted change to a
+		 * persistent value, which param_saves counts. Turning it off
+		 * and using `param save` by hand is still there for a campaign
+		 * that writes often.
+		 */
+		.default_value = {.u8 = 1U},
 		.validate = validate_autosave,
 	},
+#if CONFIG_KFSW_PARAM_PERSISTENCE
+	{
+		.offset = 0x14U,
+		.type = KFSW_PARAM_U32,
+		.flags = KFSW_PARAM_FLAG_READ_ONLY,
+		.name = "param_persist_bytes",
+		.description = "Space the last snapshot occupied",
+		.value = &param_persist_bytes,
+		.sample = sample_persist_bytes,
+	},
+	{
+		.offset = 0x18U,
+		.type = KFSW_PARAM_U32,
+		.flags = KFSW_PARAM_FLAG_READ_ONLY,
+		/* Read with param_persist_bytes this is the headroom, which is
+		 * the question somebody actually has.
+		 */
+		.name = "param_persist_max_bytes",
+		.description = "Most space a snapshot is allowed",
+		.value = &param_persist_max_bytes,
+		.sample = sample_persist_max_bytes,
+	},
+	{
+		.offset = 0x1cU,
+		.type = KFSW_PARAM_U32,
+		.flags = KFSW_PARAM_FLAG_READ_ONLY,
+		/* Usually the smaller of the two, and so usually the limit that
+		 * really applies: a snapshot is built in RAM before it is
+		 * written.
+		 */
+		.name = "param_persist_stage_bytes",
+		.description = "RAM a snapshot is built in",
+		.value = &param_persist_stage_bytes,
+		.sample = sample_persist_stage_bytes,
+	},
+#endif
 };
 
 const struct kfsw_param_definition_set kfsw_param_param_definitions = {

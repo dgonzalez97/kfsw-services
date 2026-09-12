@@ -15,6 +15,7 @@
 #include <kfsw/services/parameter.h>
 
 #include "../snapshot_file.h"
+#include "parameter_budget.h"
 #include "parameter_internal.h"
 
 #define KFSW_PARAM_PERSIST_DIRECTORY KFSW_STORAGE_MOUNT_POINT "/params"
@@ -28,8 +29,6 @@
 #define KFSW_PARAM_PERSIST_ENTRY_HEADER_SIZE 4U
 #define KFSW_PARAM_PERSIST_MAX_NAME_SIZE KFSW_PARAM_NAME_MAX
 #define KFSW_PARAM_PERSIST_MAX_VALUE_SIZE KFSW_PARAM_STRING_MAX
-#define KFSW_PARAM_PERSIST_MAX_ENTRY_COUNT 32U
-#define KFSW_PARAM_PERSIST_MAX_SNAPSHOT_SIZE 2048U
 
 enum persist_type {
 	PERSIST_TYPE_U8 = 1,
@@ -65,7 +64,15 @@ struct persist_entry {
 
 K_MUTEX_DEFINE(kfsw_param_persist_lock);
 
-static uint8_t snapshot[KFSW_PARAM_PERSIST_MAX_SNAPSHOT_SIZE];
+BUILD_ASSERT(KFSW_PARAM_PERSIST_STAGE_BYTES <= KFSW_PARAM_PERSIST_MAX_BYTES,
+	     "a snapshot staged larger than its own budget could never be written");
+
+static uint8_t snapshot[KFSW_PARAM_PERSIST_STAGE_BYTES];
+
+/* What the last built snapshot occupied, so the headroom is a number an
+ * operator can read rather than one they have to work out.
+ */
+static uint32_t snapshot_bytes;
 
 static size_t bounded_string_length(const char *text, size_t maximum)
 {
@@ -263,6 +270,54 @@ static int build_snapshot(size_t *snapshot_size)
 	sys_put_be32(0U, &snapshot[KFSW_PARAM_PERSIST_CRC_OFFSET]);
 	sys_put_be32(crc32_ieee(snapshot, offset), &snapshot[KFSW_PARAM_PERSIST_CRC_OFFSET]);
 	*snapshot_size = offset;
+	snapshot_bytes = (uint32_t)offset;
+	return 0;
+}
+
+uint32_t kfsw_param_persist_bytes(void)
+{
+	return snapshot_bytes;
+}
+
+uint32_t kfsw_param_persist_max_bytes(void)
+{
+	return KFSW_PARAM_PERSIST_MAX_BYTES;
+}
+
+uint32_t kfsw_param_persist_stage_bytes(void)
+{
+	return KFSW_PARAM_PERSIST_STAGE_BYTES;
+}
+
+/*
+ * Refuse a snapshot the partition cannot take, while somebody is still
+ * listening. The budget is a ceiling the project sets; the free space is what
+ * the board actually has, and the smaller of the two is the one that matters.
+ */
+static int check_budget(size_t snapshot_size)
+{
+	struct kfsw_storage_info storage;
+	int result;
+
+	if (snapshot_size > KFSW_PARAM_PERSIST_MAX_BYTES) {
+		kfsw_log_error("PARAM: a snapshot of %u bytes is over the %u byte budget",
+			       (unsigned int)snapshot_size,
+			       (unsigned int)KFSW_PARAM_PERSIST_MAX_BYTES);
+		return -EFBIG;
+	}
+
+	result = kfsw_storage_get_info(&storage);
+	if (result != 0) {
+		/* Not fatal: a partition that cannot report itself is not a
+		 * reason to stop keeping parameters.
+		 */
+		return 0;
+	}
+	if ((uint64_t)snapshot_size > storage.free_bytes) {
+		kfsw_log_error("PARAM: a snapshot needs %u bytes and %u are free",
+			       (unsigned int)snapshot_size, (unsigned int)storage.free_bytes);
+		return -ENOSPC;
+	}
 	return 0;
 }
 
@@ -486,6 +541,10 @@ static int persist_save(void)
 
 	result = fs_mkdir(KFSW_PARAM_PERSIST_DIRECTORY);
 	if ((result != 0) && (result != -EEXIST)) {
+		goto out;
+	}
+	result = check_budget(snapshot_size);
+	if (result != 0) {
 		goto out;
 	}
 	result = kfsw_snapshot_write(KFSW_PARAM_PERSIST_PATH, KFSW_PARAM_PERSIST_TEMP_PATH,

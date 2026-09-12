@@ -48,6 +48,7 @@ int kfsw_hk_set_beacon(uint8_t report, uint16_t node, uint32_t interval_ms)
 	if (interval_ms == 0U) {
 		beacons[report].interval_ms = 0U;
 		kfsw_log_info("HK: report %u stops beaconing", report);
+		kfsw_hk_beacon_persist();
 		return 0;
 	}
 	if (interval_ms < CONFIG_KFSW_HK_BEACON_FLOOR_MS) {
@@ -60,6 +61,7 @@ int kfsw_hk_set_beacon(uint8_t report, uint16_t node, uint32_t interval_ms)
 	beacons[report].interval_ms = interval_ms;
 	beacons[report].next_uptime_ms = 0;
 	kfsw_log_info("HK: report %u beacons to node %u every %u ms", report, node, interval_ms);
+	kfsw_hk_beacon_persist();
 	return 0;
 }
 
