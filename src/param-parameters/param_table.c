@@ -20,7 +20,6 @@ static uint8_t param_autosave;
 #if CONFIG_KFSW_PARAM_PERSISTENCE
 static uint32_t param_persist_bytes;
 static uint32_t param_persist_max_bytes;
-static uint32_t param_persist_stage_bytes;
 #endif
 
 static void sample_stats(void)
@@ -36,7 +35,6 @@ static void sample_stats(void)
 #if CONFIG_KFSW_PARAM_PERSISTENCE
 	param_persist_bytes = kfsw_param_persist_bytes();
 	param_persist_max_bytes = kfsw_param_persist_max_bytes();
-	param_persist_stage_bytes = kfsw_param_persist_stage_bytes();
 #endif
 	param_saves = stats.saves;
 	param_load_failures = stats.load_failures;
@@ -71,12 +69,6 @@ static void sample_persist_max_bytes(void *value)
 {
 	sample_stats();
 	*(uint32_t *)value = param_persist_max_bytes;
-}
-
-static void sample_persist_stage_bytes(void *value)
-{
-	sample_stats();
-	*(uint32_t *)value = param_persist_stage_bytes;
 }
 #endif
 
@@ -164,25 +156,14 @@ static const struct kfsw_param_definition param_param_definitions[] = {
 		.type = KFSW_PARAM_U32,
 		.flags = KFSW_PARAM_FLAG_READ_ONLY,
 		/* Read with param_persist_bytes this is the headroom, which is
-		 * the question somebody actually has.
+		 * the question somebody actually has. It is also the size of
+		 * the buffer the snapshot is built in, so it bounds the file
+		 * and the RAM together.
 		 */
 		.name = "param_persist_max_bytes",
 		.description = "Most space a snapshot is allowed",
 		.value = &param_persist_max_bytes,
 		.sample = sample_persist_max_bytes,
-	},
-	{
-		.offset = 0x1cU,
-		.type = KFSW_PARAM_U32,
-		.flags = KFSW_PARAM_FLAG_READ_ONLY,
-		/* Usually the smaller of the two, and so usually the limit that
-		 * really applies: a snapshot is built in RAM before it is
-		 * written.
-		 */
-		.name = "param_persist_stage_bytes",
-		.description = "RAM a snapshot is built in",
-		.value = &param_persist_stage_bytes,
-		.sample = sample_persist_stage_bytes,
 	},
 #endif
 };

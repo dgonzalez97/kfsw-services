@@ -345,9 +345,6 @@ uint32_t kfsw_param_persist_bytes(void);
 /** Most space a snapshot is allowed to occupy, in bytes. */
 uint32_t kfsw_param_persist_max_bytes(void);
 
-/** RAM a snapshot is built in, which is usually the smaller limit. */
-uint32_t kfsw_param_persist_stage_bytes(void);
-
 /** Restore persistent parameters to their compiled defaults in RAM only. */
 int kfsw_param_restore_defaults(void);
 #endif

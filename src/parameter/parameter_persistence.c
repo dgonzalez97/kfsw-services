@@ -64,10 +64,10 @@ struct persist_entry {
 
 K_MUTEX_DEFINE(kfsw_param_persist_lock);
 
-BUILD_ASSERT(KFSW_PARAM_PERSIST_STAGE_BYTES <= KFSW_PARAM_PERSIST_MAX_BYTES,
-	     "a snapshot staged larger than its own budget could never be written");
+BUILD_ASSERT(KFSW_PARAM_PERSIST_MAX_BYTES > KFSW_PARAM_PERSIST_HEADER_SIZE,
+	     "the budget has to leave room for the header before any value fits");
 
-static uint8_t snapshot[KFSW_PARAM_PERSIST_STAGE_BYTES];
+static uint8_t snapshot[KFSW_PARAM_PERSIST_MAX_BYTES];
 
 /* What the last built snapshot occupied, so the headroom is a number an
  * operator can read rather than one they have to work out.
@@ -284,11 +284,6 @@ uint32_t kfsw_param_persist_max_bytes(void)
 	return KFSW_PARAM_PERSIST_MAX_BYTES;
 }
 
-uint32_t kfsw_param_persist_stage_bytes(void)
-{
-	return KFSW_PARAM_PERSIST_STAGE_BYTES;
-}
-
 /*
  * Refuse a snapshot the partition cannot take, while somebody is still
  * listening. The budget is a ceiling the project sets; the free space is what
@@ -300,6 +295,10 @@ static int check_budget(size_t snapshot_size)
 	int result;
 
 	if (snapshot_size > KFSW_PARAM_PERSIST_MAX_BYTES) {
+		/* Unreachable while the snapshot is built in a buffer of this
+		 * size, and kept because that is a property of the code rather
+		 * than of the format: a streaming writer would reach it.
+		 */
 		kfsw_log_error("PARAM: a snapshot of %u bytes is over the %u byte budget",
 			       (unsigned int)snapshot_size,
 			       (unsigned int)KFSW_PARAM_PERSIST_MAX_BYTES);
