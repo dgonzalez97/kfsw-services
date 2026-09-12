@@ -53,6 +53,7 @@ union kfsw_param_scalar {
  */
 #define KFSW_PARAM_STRING_MAX CONFIG_KFSW_PARAM_STRING_MAX
 
+/** One typed value, with shared storage for text and bytes. */
 struct kfsw_param_value {
 	enum kfsw_param_type type;
 	/** Bytes carried: the scalar width, or the string length with its terminator.
@@ -60,9 +61,13 @@ struct kfsw_param_value {
 	size_t size;
 	union kfsw_param_scalar scalar;
 	union {
-		/** Value for KFSW_PARAM_STRING; always terminated. */
+		/** String value.
+		 * @details KFSW_PARAM_STRING includes a trailing NUL.
+		 */
 		char text[KFSW_PARAM_STRING_MAX];
-		/** Value for KFSW_PARAM_DATA; size gives the element count. */
+		/** Raw data value.
+		 * @details KFSW_PARAM_DATA uses size as the element count.
+		 */
 		uint8_t bytes[KFSW_PARAM_STRING_MAX];
 	};
 };
