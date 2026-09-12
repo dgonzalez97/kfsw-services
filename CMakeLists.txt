@@ -17,6 +17,7 @@ endif()
 # from, or comparing a node against a build record proves nothing. Resolved
 # from the composition repository rather than this one, because that is what
 # pins every other repository. The fallback keeps a source tarball buildable.
+zephyr_get(KFSW_IMAGE_VERSION SYSBUILD LOCAL)
 if(NOT DEFINED KFSW_IMAGE_VERSION)
     find_package(Git QUIET)
     set(KFSW_IMAGE_VERSION "unknown")
@@ -54,6 +55,10 @@ if(NOT DEFINED KFSW_IMAGE_VERSION)
             endif()
         endif()
     endif()
+endif()
+zephyr_get(KFSW_RELEASE_SOURCE SYSBUILD LOCAL)
+if(NOT KFSW_RELEASE_SOURCE)
+    set(KFSW_RELEASE_SOURCE "development")
 endif()
 message(STATUS "K-FSW image version: ${KFSW_IMAGE_VERSION}")
 
@@ -246,6 +251,7 @@ target_include_directories(kfsw_services
 target_compile_definitions(kfsw_services
     PRIVATE
         KFSW_IMAGE_VERSION="${KFSW_IMAGE_VERSION}"
+        KFSW_SOURCE_REVISION="${KFSW_RELEASE_SOURCE}"
 )
 
 target_link_libraries(kfsw_services

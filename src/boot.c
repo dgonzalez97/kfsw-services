@@ -119,6 +119,7 @@ void kfsw_boot_service_start(void)
 	}
 #endif
 
+	printk("@SOURCE %s\n", KFSW_SOURCE_REVISION);
 	printk("@READY uptime_ms=%lld\n", (long long)kfsw_time_monotonic_ms());
 }
 
