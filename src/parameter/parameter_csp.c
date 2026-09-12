@@ -4,7 +4,10 @@
 #include <string.h>
 
 #include <zephyr/kernel.h>
+#include <zephyr/sys/atomic.h>
 #include <zephyr/sys/util.h>
+#include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/crc.h>
 
 #include <csp/csp.h>
 #include <csp/csp_id.h>
@@ -30,17 +33,21 @@
 #define KFSW_PARAM_PROTOCOL_VERSION 2
 #define KFSW_PARAM_LIST_VERSION 3
 
-/* The list has no acknowledgement of its own, so a lost descriptor leaves a
- * hole the caller cannot see. Reliable delivery is what makes a listing over a
- * radio mean anything.
- */
-#define KFSW_PARAM_LIST_CONNECTION_OPTIONS                                                         \
-	(CSP_O_CRC32 | (IS_ENABLED(CONFIG_KFSW_PARAM_LIST_RDP) ? CSP_O_RDP : 0))
-#define KFSW_PARAM_LIST_SOCKET_OPTIONS                                                             \
-	(CSP_SO_CRC32REQ | (IS_ENABLED(CONFIG_KFSW_PARAM_LIST_RDP) ? CSP_SO_RDPREQ : 0))
+/* v4: one indexed descriptor per CRC-protected request/reply. v3 remains
+ * available to legacy clients, including their RDP handshake-only requests. */
+#define KFSW_PARAM_LIST_INDEXED_VERSION 4U
+#define KFSW_PARAM_LIST_REPLY_HEADER 10U
+#define KFSW_PARAM_LIST_REQUEST_SIZE 7U
+#define KFSW_PARAM_LIST_ITEM 0U
+#define KFSW_PARAM_LIST_END 1U
+#define KFSW_PARAM_LIST_CHANGED 2U
+#define KFSW_PARAM_REMOTE_BATCH_MAX 16U
+#define KFSW_PARAM_REPLY_MAX_PACKETS 64U
+#define KFSW_PARAM_LIST_SOCKET_OPTIONS CSP_SO_CRC32REQ
 
 static param_t local_parameters[KFSW_PARAM_MAX_DEFINITIONS];
 static bool local_parameters_registered;
+static uint32_t local_list_crc;
 
 static size_t scalar_size(enum kfsw_param_type type);
 
@@ -127,12 +134,13 @@ static int register_local_parameters(void)
 	return 0;
 }
 
-_Static_assert(sizeof(param_transfer3_t) <= CSP_BUFFER_SIZE,
+_Static_assert(sizeof(param_transfer3_t) + KFSW_PARAM_LIST_REPLY_HEADER <= CSP_BUFFER_SIZE,
 	       "CSP buffers must fit an upstream parameter-list entry");
 
 K_MUTEX_DEFINE(kfsw_param_remote_lock);
 
 static bool server_started;
+static K_MUTEX_DEFINE(server_start_lock);
 static csp_socket_t list_socket;
 
 static enum kfsw_param_type from_libparam_type(param_type_e type)
@@ -386,7 +394,23 @@ static bool push_allowed(csp_packet_t *packet)
 	return true;
 }
 
-static void param_server_callback(csp_packet_t *packet)
+BUILD_ASSERT(CONFIG_KFSW_PARAM_VALUE_PRIORITY > CONFIG_KFSW_CSP_ROUTER_PRIORITY,
+	     "PARAM value worker must run below the CSP router");
+BUILD_ASSERT(CONFIG_KFSW_PARAM_VALUE_PRIORITY < CONFIG_NUM_PREEMPT_PRIORITIES,
+	     "PARAM value worker priority is outside the preemptible range");
+BUILD_ASSERT(CONFIG_KFSW_PARAM_VALUE_QUEUE_DEPTH + 4U <= CSP_BUFFER_COUNT,
+	     "Reserve CSP buffers for the worker, its reply, routing and list traffic");
+
+K_MSGQ_DEFINE(value_requests, sizeof(csp_packet_t *), CONFIG_KFSW_PARAM_VALUE_QUEUE_DEPTH,
+	      sizeof(void *));
+static atomic_t value_requests_dropped;
+
+uint32_t kfsw_param_csp_dropped_requests(void)
+{
+	return (uint32_t)atomic_get(&value_requests_dropped);
+}
+
+static void serve_values(csp_packet_t *packet)
 {
 	if (!kfsw_param_is_initialized()) {
 		csp_buffer_free(packet);
@@ -406,93 +430,145 @@ static void param_server_callback(csp_packet_t *packet)
 	kfsw_param_table_unlock();
 }
 
-/* How long to wait for a buffer before giving up on the rest of the table.
- * Generous because listing a table is a deliberate operator action on a slow
- * link: taking several seconds is fine, and returning half a table is not.
- */
-#define KFSW_PARAM_LIST_PACE_MS 5
-#define KFSW_PARAM_LIST_MAX_WAITS 2000U
+static void param_server_callback(csp_packet_t *packet)
+{
+	if (!kfsw_param_is_initialized() ||
+	    (k_msgq_put(&value_requests, &packet, K_NO_WAIT) != 0)) {
+		atomic_inc(&value_requests_dropped);
+		csp_buffer_free(packet);
+	}
+}
+
+static void value_server(void *a, void *b, void *c)
+{
+	ARG_UNUSED(a);
+	ARG_UNUSED(b);
+	ARG_UNUSED(c);
+	for (;;) {
+		csp_packet_t *packet;
+
+		k_msgq_get(&value_requests, &packet, K_FOREVER);
+		serve_values(packet);
+	}
+}
+
+K_THREAD_DEFINE(kfsw_param_value_thread, CONFIG_KFSW_PARAM_VALUE_STACK_SIZE, value_server, NULL,
+		NULL, NULL, CONFIG_KFSW_PARAM_VALUE_PRIORITY, 0, SYS_FOREVER_MS);
+
+static uint32_t remaining_ms(int64_t deadline)
+{
+	return (uint32_t)CLAMP(deadline - k_uptime_get(), 0, UINT32_MAX);
+}
+
+static const param_t *list_entry(uint16_t wanted, uint16_t *total)
+{
+	const param_t *found = NULL;
+
+	*total = 0;
+	for (size_t i = 0; i < kfsw_param_entry_count(); i++) {
+		const param_t *param = &local_parameters[i];
+
+		if ((param->mask & PM_HIDDEN) != 0U) {
+			continue;
+		}
+		if ((*total)++ == wanted) {
+			found = param;
+		}
+	}
+	return found;
+}
+
+static size_t encode_descriptor(const param_t *param, uint8_t *data)
+{
+	param_transfer3_t *wire = (param_transfer3_t *)data;
+
+	memset(wire, 0, sizeof(*wire));
+	wire->id = htobe16(param->id);
+	wire->type = param->type;
+	wire->size = param->array_size;
+	wire->mask = htobe32(param->mask);
+	strncpy(wire->name, param->name, sizeof(wire->name) - 1U);
+	if (param->vmem != NULL) {
+		wire->storage_type = param->vmem->type;
+	}
+	if (param->unit != NULL) {
+		strncpy(wire->unit, param->unit, sizeof(wire->unit) - 1U);
+	}
+	if (param->docstr != NULL) {
+		strncpy(wire->help, param->docstr, sizeof(wire->help) - 1U);
+	}
+	return offsetof(param_transfer3_t, help) + strlen(wire->help) + 1U;
+}
+
+static uint32_t list_fingerprint(void)
+{
+	param_transfer3_t wire;
+	uint32_t crc = 0;
+
+	for (size_t i = 0; i < kfsw_param_entry_count(); i++) {
+		if ((local_parameters[i].mask & PM_HIDDEN) == 0U) {
+			size_t size = encode_descriptor(&local_parameters[i], (uint8_t *)&wire);
+
+			crc = crc32_ieee_update(crc, (uint8_t *)&wire, size);
+		}
+	}
+	return crc;
+}
 
 static void serve_list(csp_conn_t *connection)
 {
-	param_list_iterator iterator = {0};
-	const param_t *param;
-	uint32_t waits = 0U;
-	uint32_t sent = 0U;
+	int64_t deadline = k_uptime_get() + CONFIG_KFSW_PARAM_LIST_TIMEOUT_MS;
+	uint16_t total;
 
-	kfsw_param_table_lock();
-	while ((param = param_list_iterate(&iterator)) != NULL) {
-		param_transfer3_t *wire;
-		csp_packet_t *packet;
-		size_t help_length = 0U;
+	for (uint16_t index = 0;; index++) {
+		const param_t *param = list_entry(index, &total);
+		csp_packet_t *packet = NULL;
 
-		if ((*param->node != 0U) || ((param->mask & PM_HIDDEN) != 0U)) {
-			continue;
+		if (param == NULL) {
+			return;
 		}
-
-		/* One descriptor per packet, so a table of any size becomes a
-		 * burst. The buffer pool is shared with everything else on the
-		 * node, so running it dry here would stall traffic that has
-		 * nothing to do with parameters. Waiting for a buffer rather
-		 * than abandoning the walk keeps the list complete: a listing
-		 * that stops half way is worse than one that takes longer,
-		 * because the caller cannot tell it was truncated.
-		 */
-		packet = csp_buffer_get(CSP_BUFFER_SIZE);
-		if (packet == NULL) {
-			if (waits >= KFSW_PARAM_LIST_MAX_WAITS) {
-				/* Said out loud: a caller cannot tell a short
-				 * list from a complete one, so a truncation
-				 * that is never reported is a silent wrong
-				 * answer. */
-				kfsw_log_warning(
-					"PARAM: list truncated at %u of %u; no buffer for the rest",
-					(unsigned int)sent, (unsigned int)kfsw_param_entry_count());
-				break;
+		/* Retry this descriptor; allocation failure must not advance the index. */
+		while (remaining_ms(deadline) != 0U && packet == NULL) {
+			packet = csp_buffer_get(CSP_BUFFER_SIZE);
+			if (packet == NULL) {
+				k_sleep(K_MSEC(5));
 			}
-			waits++;
-			kfsw_param_table_unlock();
-			k_sleep(K_MSEC(KFSW_PARAM_LIST_PACE_MS));
-			kfsw_param_table_lock();
-			/* The table cannot change while a node is up, so the
-			 * iterator stays valid across the pause. */
-			continue;
 		}
-		waits = 0U;
-		memset(packet->data, 0, CSP_BUFFER_SIZE);
-		wire = (param_transfer3_t *)packet->data;
-		wire->id = htobe16(param->id);
-		wire->node = 0U;
-		wire->type = param->type;
-		wire->size = param->array_size;
-		wire->mask = htobe32(param->mask);
-		strncpy(wire->name, param->name, sizeof(wire->name) - 1U);
-		if (param->vmem != NULL) {
-			wire->storage_type = param->vmem->type;
+		if (packet == NULL) {
+			return;
 		}
-		if (param->unit != NULL) {
-			strncpy(wire->unit, param->unit, sizeof(wire->unit) - 1U);
-		}
-		if (param->docstr != NULL) {
-			strncpy(wire->help, param->docstr, sizeof(wire->help) - 1U);
-			help_length = strnlen(param->docstr, sizeof(wire->help) - 1U);
-		}
-
-		packet->length = offsetof(param_transfer3_t, help) + help_length + 1U;
+		packet->length = encode_descriptor(param, packet->data);
+		/* Metadata is fixed after registration. No PARAM lock across a send. */
 		csp_send(connection, packet);
-		sent++;
-
-		/* Give the link and the reader a chance between descriptors.
-		 * Without this the whole table is queued faster than a client
-		 * can drain it, and a client with a small buffer pool starves:
-		 * every buffer sits on its receive queue while the interface
-		 * has none left to assemble the next frame.
-		 */
-		kfsw_param_table_unlock();
 		k_yield();
-		kfsw_param_table_lock();
 	}
-	kfsw_param_table_unlock();
+}
+
+static void serve_indexed_list(csp_conn_t *connection, const csp_packet_t *request)
+{
+	uint16_t index = sys_get_be16(&request->data[1]);
+	uint16_t total;
+	uint32_t expected = sys_get_be32(&request->data[3]);
+	const param_t *param = list_entry(index, &total);
+	uint32_t crc = local_list_crc;
+	csp_packet_t *reply = csp_buffer_get(CSP_BUFFER_SIZE);
+
+	if (reply == NULL) {
+		return;
+	}
+	reply->data[0] = KFSW_PARAM_LIST_INDEXED_VERSION;
+	reply->data[1] = (index != 0U && expected != crc) || index > total
+				 ? KFSW_PARAM_LIST_CHANGED
+				 : (param == NULL ? KFSW_PARAM_LIST_END : KFSW_PARAM_LIST_ITEM);
+	sys_put_be16(index, &reply->data[2]);
+	sys_put_be16(total, &reply->data[4]);
+	sys_put_be32(crc, &reply->data[6]);
+	reply->length = KFSW_PARAM_LIST_REPLY_HEADER;
+	if (reply->data[1] == KFSW_PARAM_LIST_ITEM) {
+		reply->length +=
+			encode_descriptor(param, &reply->data[KFSW_PARAM_LIST_REPLY_HEADER]);
+	}
+	csp_send(connection, reply);
 }
 
 static void list_server(void *arg1, void *arg2, void *arg3)
@@ -507,7 +583,23 @@ static void list_server(void *arg1, void *arg2, void *arg3)
 		if (connection == NULL) {
 			continue;
 		}
-		serve_list(connection);
+		if ((csp_conn_flags(connection) & CSP_FRDP) != 0 &&
+		    !IS_ENABLED(CONFIG_KFSW_PARAM_LIST_RDP)) {
+			csp_close(connection);
+			continue;
+		}
+		csp_packet_t *request = csp_read(connection, 0);
+
+		if (request != NULL && request->length == KFSW_PARAM_LIST_REQUEST_SIZE &&
+		    request->data[0] == KFSW_PARAM_LIST_INDEXED_VERSION) {
+			serve_indexed_list(connection, request);
+		} else if (request == NULL ||
+			   (request->length == 1U && request->data[0] == KFSW_PARAM_LIST_VERSION)) {
+			serve_list(connection);
+		}
+		if (request != NULL) {
+			csp_buffer_free(request);
+		}
 		csp_close(connection);
 	}
 }
@@ -515,7 +607,7 @@ static void list_server(void *arg1, void *arg2, void *arg3)
 K_THREAD_DEFINE(kfsw_param_list_thread, CONFIG_KFSW_PARAM_LIST_STACK_SIZE, list_server, NULL, NULL,
 		NULL, CONFIG_KFSW_PARAM_LIST_PRIORITY, 0, SYS_FOREVER_MS);
 
-int kfsw_param_server_start(void)
+static int server_start(void)
 {
 	struct kfsw_csp_info csp_info;
 	int result;
@@ -539,15 +631,18 @@ int kfsw_param_server_start(void)
 		return result;
 	}
 
+	local_list_crc = list_fingerprint();
+	memset(&list_socket, 0, sizeof(list_socket));
 	list_socket.opts = KFSW_PARAM_LIST_SOCKET_OPTIONS;
-	result = csp_bind(&list_socket, CONFIG_KFSW_PARAM_LIST_PORT);
-	if (result != CSP_ERR_NONE) {
-		return -EADDRINUSE;
-	}
 	result = csp_listen(&list_socket, 4U);
 	if (result != CSP_ERR_NONE) {
 		(void)csp_socket_close(&list_socket);
 		return -EIO;
+	}
+	result = csp_bind(&list_socket, CONFIG_KFSW_PARAM_LIST_PORT);
+	if (result != CSP_ERR_NONE) {
+		(void)csp_socket_close(&list_socket);
+		return -EADDRINUSE;
 	}
 	result = csp_bind_callback(param_server_callback, CONFIG_KFSW_PARAM_PORT);
 	if (result != CSP_ERR_NONE) {
@@ -556,8 +651,19 @@ int kfsw_param_server_start(void)
 	}
 
 	k_thread_start(kfsw_param_list_thread);
+	k_thread_start(kfsw_param_value_thread);
 	server_started = true;
 	return 0;
+}
+
+int kfsw_param_server_start(void)
+{
+	int result;
+
+	k_mutex_lock(&server_start_lock, K_FOREVER);
+	result = server_start();
+	k_mutex_unlock(&server_start_lock);
+	return result;
 }
 
 static int validate_remote_node(uint16_t node)
@@ -575,184 +681,406 @@ static int validate_remote_node(uint16_t node)
 	return 0;
 }
 
-static bool node_is_cached(uint16_t node)
-{
-	param_list_iterator iterator = {0};
-	const param_t *param;
+/* One remote node owns the upstream static pool at a time. Its destructor
+ * resets the whole pool, so every descriptor is unlinked before reusing it. */
+static uint16_t cached_node;
+static bool cache_complete;
+static const param_t *cached[CONFIG_KFSW_PARAM_REMOTE_POOL_SIZE];
+static size_t cached_count;
 
-	while ((param = param_list_iterate(&iterator)) != NULL) {
-		if (*param->node == node) {
-			return true;
+static void clear_remote_cache(void)
+{
+	if (cache_complete) {
+		for (size_t i = 0; i < cached_count; i++) {
+			param_list_remove_specific(cached[i], 0, 0);
 		}
 	}
-	return false;
+	if (cached_count != 0U) {
+		param_list_destroy(cached[0]);
+	}
+	cached_count = 0;
+	cache_complete = false;
+	cached_node = 0;
+}
+
+static int validate_descriptor(const uint8_t *data, size_t size)
+{
+	const param_transfer3_t *wire = (const param_transfer3_t *)data;
+
+	if (size < offsetof(param_transfer3_t, help) + 1U || size > sizeof(*wire) ||
+	    wire->node != 0U || wire->size == 0U || wire->size == 255U ||
+	    from_libparam_type(wire->type) == KFSW_PARAM_INVALID || wire->name[0] == '\0' ||
+	    memchr(wire->name, '\0', sizeof(wire->name)) == NULL ||
+	    strnlen(wire->name, sizeof(wire->name)) > KFSW_PARAM_NAME_MAX ||
+	    memchr(wire->unit, '\0', sizeof(wire->unit)) == NULL || data[size - 1] != 0U) {
+		return -EBADMSG;
+	}
+	return 0;
+}
+
+static int refresh_remote(uint16_t node, int64_t deadline, bool force)
+{
+	uint32_t crc = 0;
+	uint32_t received_crc = 0;
+	uint16_t total = 0;
+	int result = validate_remote_node(node);
+
+	if (result != 0 || node == 0U) {
+		return result != 0 ? result : -EINVAL;
+	}
+	if (!force && cache_complete && cached_node == node) {
+		return 0;
+	}
+	if (kfsw_param_table_lock_until(deadline) != 0) {
+		return -ETIMEDOUT;
+	}
+	clear_remote_cache();
+	cached_node = node;
+	kfsw_param_table_unlock();
+
+	for (uint16_t index = 0; index <= CONFIG_KFSW_PARAM_REMOTE_POOL_SIZE; index++) {
+		uint32_t remaining = remaining_ms(deadline);
+		csp_conn_t *connection;
+		csp_packet_t *packet;
+
+		if (remaining == 0U) {
+			result = -ETIMEDOUT;
+			break;
+		}
+		connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_PARAM_LIST_PORT, 0,
+					 CSP_O_CRC32);
+		if (connection == NULL) {
+			result = -ECONNREFUSED;
+			break;
+		}
+		packet = csp_buffer_get(KFSW_PARAM_LIST_REQUEST_SIZE);
+		if (packet == NULL) {
+			csp_close(connection);
+			result = -ENOMEM;
+			break;
+		}
+		packet->data[0] = KFSW_PARAM_LIST_INDEXED_VERSION;
+		sys_put_be16(index, &packet->data[1]);
+		sys_put_be32(crc, &packet->data[3]);
+		packet->length = KFSW_PARAM_LIST_REQUEST_SIZE;
+		csp_send(connection, packet);
+		remaining = remaining_ms(deadline);
+		packet = remaining == 0U ? NULL : csp_read(connection, remaining);
+		csp_close(connection);
+		if (packet == NULL) {
+			result = -ETIMEDOUT;
+			break;
+		}
+		result = -EBADMSG;
+		if (packet->length < KFSW_PARAM_LIST_REPLY_HEADER ||
+		    packet->data[0] != KFSW_PARAM_LIST_INDEXED_VERSION) {
+			csp_buffer_free(packet);
+			break;
+		}
+		uint16_t offered = sys_get_be16(&packet->data[4]);
+		uint32_t fingerprint = sys_get_be32(&packet->data[6]);
+		uint8_t status = packet->data[1];
+
+		if (index == 0U) {
+			total = offered;
+			crc = fingerprint;
+		}
+		if (sys_get_be16(&packet->data[2]) != index || offered != total ||
+		    fingerprint != crc || total > CONFIG_KFSW_PARAM_REMOTE_POOL_SIZE) {
+			csp_buffer_free(packet);
+			break;
+		}
+		if (status == KFSW_PARAM_LIST_END && index == total &&
+		    packet->length == KFSW_PARAM_LIST_REPLY_HEADER && received_crc == crc) {
+			csp_buffer_free(packet);
+			if (kfsw_param_table_lock_until(deadline) != 0) {
+				result = -ETIMEDOUT;
+				break;
+			}
+			for (size_t i = 0; i < cached_count; i++) {
+				/* Node and ID/name uniqueness were checked before allocation. */
+				(void)param_list_add((param_t *)cached[i]);
+			}
+			cache_complete = true;
+			kfsw_param_table_unlock();
+			return 0;
+		}
+		uint8_t *data = &packet->data[KFSW_PARAM_LIST_REPLY_HEADER];
+		size_t size = packet->length - KFSW_PARAM_LIST_REPLY_HEADER;
+
+		if (status != KFSW_PARAM_LIST_ITEM || index >= total ||
+		    validate_descriptor(data, size) != 0) {
+			csp_buffer_free(packet);
+			break;
+		}
+		received_crc = crc32_ieee_update(received_crc, data, size);
+		param_transfer3_t *wire = (param_transfer3_t *)data;
+		bool duplicate = false;
+
+		for (size_t i = 0; i < cached_count; i++) {
+			duplicate |= cached[i]->id == sys_get_be16(data) ||
+				     strcmp(cached[i]->name, wire->name) == 0;
+		}
+		if (duplicate) {
+			result = -EBADMSG;
+		} else {
+			memset(data + size, 0, sizeof(*wire) - size);
+			const param_t *param = param_list_create_remote(
+				sys_get_be16(data), node, wire->type,
+				sys_get_be32((uint8_t *)&wire->mask) | PM_REMOTE, wire->size,
+				wire->name, wire->unit, wire->help, wire->storage_type);
+
+			result = param == NULL ? -ENOSPC : 0;
+			if (param != NULL) {
+				cached[cached_count++] = param;
+			}
+		}
+		csp_buffer_free(packet);
+		if (result != 0) {
+			break;
+		}
+	}
+	/* Staged descriptors were never linked into the shared table. */
+	clear_remote_cache();
+	return result == 0 ? -EBADMSG : result;
 }
 
 int kfsw_param_remote_refresh(uint16_t node)
 {
-	csp_conn_t *connection;
-	csp_packet_t *packet;
-	int downloaded = 0;
-	int result;
+	int64_t deadline = k_uptime_get() + CONFIG_KFSW_PARAM_LIST_TIMEOUT_MS;
+	int result = k_mutex_lock(&kfsw_param_remote_lock, K_MSEC(remaining_ms(deadline)));
 
-	result = validate_remote_node(node);
 	if (result != 0) {
-		return result;
+		return -ETIMEDOUT;
 	}
-
-	k_mutex_lock(&kfsw_param_remote_lock, K_FOREVER);
-	kfsw_param_table_lock();
-	if (node_is_cached(node)) {
-		kfsw_param_table_unlock();
-		k_mutex_unlock(&kfsw_param_remote_lock);
-		return 0;
-	}
-	kfsw_param_table_unlock();
-
-	connection = csp_connect(CSP_PRIO_HIGH, node, CONFIG_KFSW_PARAM_LIST_PORT,
-				 CONFIG_KFSW_PARAM_TIMEOUT_MS, KFSW_PARAM_LIST_CONNECTION_OPTIONS);
-	if (connection == NULL) {
-		k_mutex_unlock(&kfsw_param_remote_lock);
-		return -ECONNREFUSED;
-	}
-
-	/*
-	 * Upstream's list client uses an RDP handshake to make the server accept
-	 * the connection. K-FSW keeps libcsp RDP disabled, so carry the requested
-	 * upstream list version in a small connectionless trigger instead.
-	 */
-	packet = csp_buffer_get(1U);
-	if (packet == NULL) {
-		(void)csp_close(connection);
-		k_mutex_unlock(&kfsw_param_remote_lock);
-		return -ENOMEM;
-	}
-	packet->data[0] = KFSW_PARAM_LIST_VERSION;
-	packet->length = 1U;
-	csp_send(connection, packet);
-
-	while ((packet = csp_read(connection, CONFIG_KFSW_PARAM_TIMEOUT_MS)) != NULL) {
-		int unpack_result;
-		const size_t minimum_length = offsetof(param_transfer3_t, help) + 1U;
-
-		if ((packet->length < minimum_length) ||
-		    (packet->length > sizeof(param_transfer3_t))) {
-			csp_buffer_free(packet);
-			result = -EBADMSG;
-			goto close_connection;
-		}
-
-		kfsw_param_table_lock();
-		unpack_result = param_list_unpack(node, packet->data, packet->length,
-						  KFSW_PARAM_LIST_VERSION, 0);
-		kfsw_param_table_unlock();
-		csp_buffer_free(packet);
-		if (unpack_result < 0) {
-			result = -ENOSPC;
-			goto close_connection;
-		}
-		if (unpack_result == 0) {
-			downloaded++;
-		}
-	}
-	result = (downloaded > 0) ? 0 : -ETIMEDOUT;
-
-close_connection:
-	(void)csp_close(connection);
+	result = refresh_remote(node, deadline, true);
 	k_mutex_unlock(&kfsw_param_remote_lock);
 	return result;
 }
 
-/*
- * One request asks for as many parameters as the queue will hold.
- *
- * Reading N values one at a time costs N round trips, each waiting up to
- * CONFIG_KFSW_PARAM_TIMEOUT_MS. Over a radio that is the difference between a
- * pass that reads a subsystem and one that reads a handful of values, and the
- * wire format already allowed better: the queue is a list, and nothing but the
- * caller was putting one entry in it.
- *
- * @p consumed reports how many the exchange took, so a caller with more than
- * fits continues with the remainder rather than starting again.
- */
-static int pull_remote_batch(uint16_t node, const param_t *const *params, size_t count,
-			     size_t *consumed)
+static int decode_value(mpack_reader_t *reader, const param_t *param,
+			struct kfsw_param_value *value)
 {
+	memset(value, 0, sizeof(*value));
+	value->type = from_libparam_type(param->type);
+	value->size = scalar_size(value->type);
+	if (value->size != 0U && param->array_size != 1U) {
+		return -ENOTSUP;
+	}
+	switch (value->type) {
+	case KFSW_PARAM_U8:
+	case KFSW_PARAM_X8:
+		value->scalar.u8 = mpack_expect_u8(reader);
+		break;
+	case KFSW_PARAM_U16:
+	case KFSW_PARAM_X16:
+		value->scalar.u16 = mpack_expect_u16(reader);
+		break;
+	case KFSW_PARAM_U32:
+	case KFSW_PARAM_X32:
+		value->scalar.u32 = mpack_expect_u32(reader);
+		break;
+	case KFSW_PARAM_U64:
+	case KFSW_PARAM_X64:
+		value->scalar.u64 = mpack_expect_u64(reader);
+		break;
+	case KFSW_PARAM_I8:
+		value->scalar.i8 = mpack_expect_i8(reader);
+		break;
+	case KFSW_PARAM_I16:
+		value->scalar.i16 = mpack_expect_i16(reader);
+		break;
+	case KFSW_PARAM_I32:
+		value->scalar.i32 = mpack_expect_i32(reader);
+		break;
+	case KFSW_PARAM_I64:
+		value->scalar.i64 = mpack_expect_i64(reader);
+		break;
+	case KFSW_PARAM_FLOAT:
+		if (mpack_peek_tag(reader).type != mpack_type_float) {
+			return -EBADMSG;
+		}
+		value->scalar.f32 = mpack_expect_float(reader);
+		break;
+	case KFSW_PARAM_DOUBLE:
+		if (mpack_peek_tag(reader).type != mpack_type_double) {
+			return -EBADMSG;
+		}
+		value->scalar.f64 = mpack_expect_double(reader);
+		break;
+	case KFSW_PARAM_STRING: {
+		size_t size = mpack_expect_str(reader);
+
+		if (size >= param->array_size || size >= sizeof(value->text)) {
+			return -EBADMSG;
+		}
+		mpack_read_bytes(reader, value->text, size);
+		mpack_done_str(reader);
+		if (memchr(value->text, 0, size) != NULL) {
+			return -EBADMSG;
+		}
+		value->size = size + 1;
+		break;
+	}
+	case KFSW_PARAM_DATA: {
+		size_t size = mpack_expect_bin(reader);
+
+		if (size != param->array_size || size > sizeof(value->bytes)) {
+			return -EBADMSG;
+		}
+		mpack_read_bytes(reader, (char *)value->bytes, size);
+		mpack_done_bin(reader);
+		value->size = size;
+		break;
+	}
+	default:
+		return -ENOTSUP;
+	}
+	return mpack_reader_error(reader) == mpack_ok ? 0 : -EBADMSG;
+}
+
+static void store_remote_value(const param_t *param, const struct kfsw_param_value *value)
+{
+	if (value->type == KFSW_PARAM_STRING) {
+		param_set_string(param, value->text, value->size);
+	} else if (value->type == KFSW_PARAM_DATA) {
+		param_set_data(param, value->bytes, value->size);
+	} else {
+		param_set(param, 0, (void *)&value->scalar);
+	}
+}
+
+static int decode_reply(uint16_t node, csp_packet_t *packet, const param_t *const *params,
+			size_t count, struct kfsw_param_value *values, bool *seen)
+{
+	param_queue_t queue = {0};
+	mpack_reader_t reader;
+
+	param_queue_init(&queue, &packet->data[2], packet->length - 2, packet->length - 2,
+			 PARAM_QUEUE_TYPE_SET, KFSW_PARAM_PROTOCOL_VERSION);
+	mpack_reader_init_data(&reader, queue.buffer, queue.used);
+	while (reader.data < reader.end) {
+		struct kfsw_param_value value;
+		csp_timestamp_t timestamp = {0};
+		int offset = -1, id = 0, source = 0;
+		/* Bit 10 is reserved. Check it before using the pinned ID decoder. */
+		mpack_reader_t peek = reader;
+		uint16_t header = be16toh(mpack_expect_u16(&peek));
+
+		if (mpack_reader_error(&peek) != mpack_ok || (header & BIT(10)) != 0U ||
+		    ((header & BIT(11)) != 0U && (header & BIT(13)) == 0U)) {
+			return -EBADMSG;
+		}
+		param_deserialize_id(&reader, &id, &source, &timestamp, &offset, &queue);
+		if (mpack_reader_error(&reader) != mpack_ok || offset > 0 || offset < -1 ||
+		    (source != 0 && source != node)) {
+			return -EBADMSG;
+		}
+		size_t index;
+
+		for (index = 0; index < count && params[index]->id != id; index++) {
+		}
+		if (index == count || decode_value(&reader, params[index], &value) != 0) {
+			return -EBADMSG;
+		}
+		for (; index < count; index++) {
+			if (params[index]->id != id) {
+				continue;
+			}
+			if (seen[index] && memcmp(&values[index], &value, sizeof(value)) != 0) {
+				return -EBADMSG;
+			}
+			values[index] = value;
+			seen[index] = true;
+		}
+	}
+	return mpack_reader_error(&reader) == mpack_ok ? 0 : -EBADMSG;
+}
+
+static int pull_remote_batch(uint16_t node, const param_t *const *params, size_t count,
+			     size_t *consumed, int64_t deadline)
+{
+	static struct kfsw_param_value staged[KFSW_PARAM_REMOTE_BATCH_MAX];
+	bool seen[KFSW_PARAM_REMOTE_BATCH_MAX] = {0};
+	bool end_seen = false;
 	csp_conn_t *connection;
 	csp_packet_t *packet;
-	param_queue_t queue;
-	size_t added = 0U;
+	param_queue_t queue = {0};
+	size_t added = 0;
 	int result = -ETIMEDOUT;
 
+	*consumed = 0;
 	packet = csp_buffer_get(PARAM_SERVER_MTU);
 	if (packet == NULL) {
 		return -ENOMEM;
 	}
 	packet->data[0] = PARAM_PULL_REQUEST_V2;
-	packet->data[1] = 0U;
+	packet->data[1] = 0;
 	param_queue_init(&queue, &packet->data[2], PARAM_SERVER_MTU - 2, 0, PARAM_QUEUE_TYPE_GET,
 			 KFSW_PARAM_PROTOCOL_VERSION);
-
-	/* A refused add means the queue is full, and it leaves `used` alone, so
-	 * what has accumulated is still a valid request. Stop and send it.
-	 */
-	while (added < count) {
+	while (added < count && added < ARRAY_SIZE(staged)) {
 		if (param_queue_add(&queue, params[added], -1, NULL) != 0) {
 			break;
 		}
 		added++;
 	}
-	if (added == 0U) {
-		/* One identifier did not fit an empty queue, so no smaller
-		 * request exists to fall back to.
-		 */
+	if (added == 0 || remaining_ms(deadline) == 0) {
 		csp_buffer_free(packet);
-		return -EMSGSIZE;
+		return added == 0 ? -EMSGSIZE : -ETIMEDOUT;
 	}
-	packet->length = queue.used + 2U;
-
+	packet->length = queue.used + 2;
 	connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_PARAM_PORT, 0, CSP_O_CRC32);
 	if (connection == NULL) {
 		csp_buffer_free(packet);
 		return -ECONNREFUSED;
 	}
 	csp_send(connection, packet);
+	for (size_t packets = 0; packets < KFSW_PARAM_REPLY_MAX_PACKETS; packets++) {
+		uint32_t remaining = MIN(remaining_ms(deadline), CONFIG_KFSW_PARAM_TIMEOUT_MS);
 
-	while ((packet = csp_read(connection, CONFIG_KFSW_PARAM_TIMEOUT_MS)) != NULL) {
-		bool end;
-
-		if ((packet->length < 2U) || (packet->data[0] != PARAM_PULL_RESPONSE_V2)) {
+		packet = remaining == 0 ? NULL : csp_read(connection, remaining);
+		if (packet == NULL) {
+			result = -ETIMEDOUT;
+			break;
+		}
+		if (packet->length < 2U || packet->data[0] != PARAM_PULL_RESPONSE_V2 ||
+		    (packet->data[1] & ~PARAM_FLAG_END) != 0U) {
 			csp_buffer_free(packet);
 			result = -EBADMSG;
 			break;
 		}
-
-		end = (packet->data[1] & PARAM_FLAG_END) != 0U;
-		param_queue_init(&queue, &packet->data[2], packet->length - 2U, packet->length - 2U,
-				 PARAM_QUEUE_TYPE_SET, KFSW_PARAM_PROTOCOL_VERSION);
-		kfsw_param_table_lock();
-		result = (param_queue_apply(&queue, node, 0) == 0) ? 0 : -EBADMSG;
-		kfsw_param_table_unlock();
+		result = decode_reply(node, packet, params, added, staged, seen);
+		end_seen = (packet->data[1] & PARAM_FLAG_END) != 0U;
 		csp_buffer_free(packet);
-		if ((result != 0) || end) {
+		if (result != 0 || end_seen) {
 			break;
 		}
 	}
-	(void)csp_close(connection);
-	if (result == 0) {
-		*consumed = added;
+	csp_close(connection);
+	if (result == 0 && !end_seen) {
+		result = -ETIMEDOUT;
 	}
-	return result;
+	for (size_t i = 0; result == 0 && i < added; i++) {
+		if (!seen[i]) {
+			result = -EBADMSG;
+		}
+	}
+	if (result != 0) {
+		return result;
+	}
+	if (kfsw_param_table_lock_until(deadline) != 0) {
+		return -ETIMEDOUT;
+	}
+	for (size_t i = 0; i < added; i++) {
+		store_remote_value(params[i], &staged[i]);
+	}
+	kfsw_param_table_unlock();
+	*consumed = added;
+	return 0;
 }
 
-static int pull_remote(const param_t *param, uint16_t node)
-{
-	size_t consumed = 0U;
-
-	return pull_remote_batch(node, &param, 1U, &consumed);
-}
-
-static int push_remote(const param_t *param, uint16_t node, const struct kfsw_param_value *value)
+static int push_remote(const param_t *param, uint16_t node, const struct kfsw_param_value *value,
+		       int64_t deadline)
 {
 	csp_conn_t *connection;
 	csp_packet_t *packet;
@@ -767,7 +1095,10 @@ static int push_remote(const param_t *param, uint16_t node, const struct kfsw_pa
 	packet->data[1] = 0U;
 	param_queue_init(&queue, &packet->data[2], PARAM_SERVER_MTU - 2, 0, PARAM_QUEUE_TYPE_SET,
 			 KFSW_PARAM_PROTOCOL_VERSION);
-	if (param_queue_add(&queue, param, -1, (void *)&value->scalar) != 0) {
+	if (param_queue_add(&queue, param, -1,
+			    (value->type == KFSW_PARAM_STRING || value->type == KFSW_PARAM_DATA)
+				    ? (void *)value->bytes
+				    : (void *)&value->scalar) != 0) {
 		csp_buffer_free(packet);
 		return -EMSGSIZE;
 	}
@@ -779,7 +1110,9 @@ static int push_remote(const param_t *param, uint16_t node, const struct kfsw_pa
 		return -ECONNREFUSED;
 	}
 	csp_send(connection, packet);
-	packet = csp_read(connection, CONFIG_KFSW_PARAM_TIMEOUT_MS);
+	uint32_t remaining = MIN(remaining_ms(deadline), CONFIG_KFSW_PARAM_TIMEOUT_MS);
+
+	packet = remaining == 0 ? NULL : csp_read(connection, remaining);
 	if (packet != NULL) {
 		if ((packet->length >= 2U) && (packet->data[0] == PARAM_PUSH_RESPONSE) &&
 		    ((packet->data[1] & PARAM_FLAG_END) != 0U)) {
@@ -793,72 +1126,25 @@ static int push_remote(const param_t *param, uint16_t node, const struct kfsw_pa
 	return result;
 }
 
-/*
- * The descriptor list is one packet per parameter, so downloading it to read a
- * single value costs as much as reading the whole table -- on exactly the link
- * where that matters most. A node's descriptors do not change while it is up,
- * so they are fetched once and reused; only a name this node has never seen
- * pays for a refresh.
- */
-static int find_remote(uint16_t node, const char *name, const param_t **found)
+/* All callers hold remote ownership until names, reads and callbacks finish. */
+static int find_remote(uint16_t node, const char *name, const param_t **found, int64_t deadline)
 {
-	const param_t *param;
-	int result;
+	int result = refresh_remote(node, deadline, false);
 
-	kfsw_param_table_lock();
-	param = param_list_find_name(node, name);
-	kfsw_param_table_unlock();
-	if (param != NULL) {
-		*found = param;
-		return 0;
-	}
-
-	result = kfsw_param_remote_refresh(node);
 	if (result != 0) {
 		return result;
 	}
-
-	kfsw_param_table_lock();
-	param = param_list_find_name(node, name);
-	kfsw_param_table_unlock();
-	if (param == NULL) {
-		return -ENOENT;
+	for (size_t i = 0; i < cached_count; i++) {
+		if (strcmp(cached[i]->name, name) == 0) {
+			*found = cached[i];
+			return 0;
+		}
 	}
-	*found = param;
-	return 0;
+	return -ENOENT;
 }
 
-int kfsw_param_remote_get(uint16_t node, const char *name, struct kfsw_param_value *value)
-{
-	const param_t *param;
-	int result;
-
-	if ((name == NULL) || (value == NULL)) {
-		return -EINVAL;
-	}
-	result = find_remote(node, name, &param);
-	if (result != 0) {
-		return result;
-	}
-
-	result = pull_remote(param, node);
-	if (result != 0) {
-		return result;
-	}
-
-	kfsw_param_table_lock();
-	result = read_scalar(param, value);
-	kfsw_param_table_unlock();
-	return result;
-}
-
-/* Resolved a window at a time so nothing is allocated. Sixteen pointers is 64
- * bytes of stack, and more than one request's worth of identifiers anyway.
- */
-#define KFSW_PARAM_REMOTE_BATCH_MAX 16U
-
-int kfsw_param_remote_get_many(uint16_t node, const char *const *names, size_t count,
-			       struct kfsw_param_value *values)
+static int get_many(uint16_t node, const char *const *names, size_t count,
+		    struct kfsw_param_value *values, int64_t deadline)
 {
 	size_t done = 0U;
 
@@ -878,7 +1164,10 @@ int kfsw_param_remote_get_many(uint16_t node, const char *const *names, size_t c
 		 * without spending a round trip on the ones that are fine.
 		 */
 		for (index = 0U; index < window_count; index++) {
-			result = find_remote(node, names[done + index], &window[index]);
+			result = names[done + index] == NULL
+					 ? -EINVAL
+					 : find_remote(node, names[done + index], &window[index],
+						       deadline);
 			if (result != 0) {
 				return result;
 			}
@@ -888,14 +1177,16 @@ int kfsw_param_remote_get_many(uint16_t node, const char *const *names, size_t c
 			size_t consumed = 0U;
 
 			result = pull_remote_batch(node, &window[pulled], window_count - pulled,
-						   &consumed);
+						   &consumed, deadline);
 			if (result != 0) {
 				return result;
 			}
 			pulled += consumed;
 		}
 
-		kfsw_param_table_lock();
+		if (kfsw_param_table_lock_until(deadline) != 0) {
+			return -ETIMEDOUT;
+		}
 		for (index = 0U; index < window_count; index++) {
 			result = read_scalar(window[index], &values[done + index]);
 			if (result != 0) {
@@ -911,7 +1202,8 @@ int kfsw_param_remote_get_many(uint16_t node, const char *const *names, size_t c
 	return 0;
 }
 
-int kfsw_param_remote_set(uint16_t node, const char *name, const struct kfsw_param_value *value)
+static int set_remote(uint16_t node, const char *name, const struct kfsw_param_value *value,
+		      int64_t deadline)
 {
 	const param_t *param;
 	int result;
@@ -919,12 +1211,14 @@ int kfsw_param_remote_set(uint16_t node, const char *name, const struct kfsw_par
 	if ((name == NULL) || (value == NULL)) {
 		return -EINVAL;
 	}
-	result = find_remote(node, name, &param);
+	result = find_remote(node, name, &param, deadline);
 	if (result != 0) {
 		return result;
 	}
 
-	kfsw_param_table_lock();
+	if (kfsw_param_table_lock_until(deadline) != 0) {
+		return -ETIMEDOUT;
+	}
 	if (param == NULL) {
 		result = -ENOENT;
 	} else if ((param->mask & PM_READONLY) != 0U) {
@@ -937,9 +1231,11 @@ int kfsw_param_remote_set(uint16_t node, const char *name, const struct kfsw_par
 		return result;
 	}
 
-	result = push_remote(param, node, value);
+	result = push_remote(param, node, value, deadline);
 	if (result == 0) {
-		kfsw_param_table_lock();
+		if (kfsw_param_table_lock_until(deadline) != 0) {
+			return -ETIMEDOUT;
+		}
 		if (value->type == KFSW_PARAM_STRING) {
 			param_set_string(param, value->text, (int)value->size);
 		} else if (value->type == KFSW_PARAM_DATA) {
@@ -952,10 +1248,9 @@ int kfsw_param_remote_set(uint16_t node, const char *name, const struct kfsw_par
 	return result;
 }
 
-int kfsw_param_remote_visit(uint16_t node, kfsw_param_visitor_t visitor, void *context)
+static int visit_remote(uint16_t node, kfsw_param_visitor_t visitor, void *context,
+			int64_t deadline)
 {
-	param_list_iterator iterator = {0};
-	const param_t *param;
 	struct kfsw_param_info info;
 	uint16_t previous_id = 0U;
 	bool emitted = false;
@@ -964,7 +1259,7 @@ int kfsw_param_remote_visit(uint16_t node, kfsw_param_visitor_t visitor, void *c
 	if (visitor == NULL) {
 		return -EINVAL;
 	}
-	result = kfsw_param_remote_refresh(node);
+	result = refresh_remote(node, deadline, false);
 	if (result != 0) {
 		return result;
 	}
@@ -976,19 +1271,20 @@ int kfsw_param_remote_visit(uint16_t node, kfsw_param_visitor_t visitor, void *c
 	 * of the descriptors: the tables are bounded and this is an operator
 	 * command, so the extra passes cost nothing worth saving.
 	 */
-	kfsw_param_table_lock();
+
 	for (;;) {
+		if (remaining_ms(deadline) == 0) {
+			return -ETIMEDOUT;
+		}
 		const param_t *next = NULL;
 
-		iterator = (param_list_iterator){0};
-		while ((param = param_list_iterate(&iterator)) != NULL) {
-			if (*param->node != node) {
+		for (size_t i = 0; i < cached_count; i++) {
+			const param_t *param = cached[i];
+
+			if (emitted && param->id <= previous_id) {
 				continue;
 			}
-			if (emitted && (param->id <= previous_id)) {
-				continue;
-			}
-			if ((next == NULL) || (param->id < next->id)) {
+			if (next == NULL || param->id < next->id) {
 				next = param;
 			}
 		}
@@ -1003,6 +1299,64 @@ int kfsw_param_remote_visit(uint16_t node, kfsw_param_visitor_t visitor, void *c
 			break;
 		}
 	}
-	kfsw_param_table_unlock();
+
 	return 0;
+}
+
+int kfsw_param_remote_get_many_until(uint16_t node, const char *const *names, size_t count,
+				     struct kfsw_param_value *values, int64_t deadline)
+{
+	if (remaining_ms(deadline) == 0 ||
+	    k_mutex_lock(&kfsw_param_remote_lock, K_MSEC(remaining_ms(deadline))) != 0) {
+		return -ETIMEDOUT;
+	}
+	int result = get_many(node, names, count, values, deadline);
+
+	k_mutex_unlock(&kfsw_param_remote_lock);
+	return result;
+}
+
+int kfsw_param_remote_get_many(uint16_t node, const char *const *names, size_t count,
+			       struct kfsw_param_value *values)
+{
+	return kfsw_param_remote_get_many_until(node, names, count, values,
+						k_uptime_get() + CONFIG_KFSW_PARAM_LIST_TIMEOUT_MS +
+							CONFIG_KFSW_PARAM_TIMEOUT_MS);
+}
+
+int kfsw_param_remote_get(uint16_t node, const char *name, struct kfsw_param_value *value)
+{
+	return kfsw_param_remote_get_many(node, &name, 1, value);
+}
+
+int kfsw_param_remote_set(uint16_t node, const char *name, const struct kfsw_param_value *value)
+{
+	int64_t deadline =
+		k_uptime_get() + CONFIG_KFSW_PARAM_LIST_TIMEOUT_MS + CONFIG_KFSW_PARAM_TIMEOUT_MS;
+	if (k_mutex_lock(&kfsw_param_remote_lock, K_MSEC(remaining_ms(deadline))) != 0) {
+		return -ETIMEDOUT;
+	}
+	int result = set_remote(node, name, value, deadline);
+
+	k_mutex_unlock(&kfsw_param_remote_lock);
+	return result;
+}
+
+int kfsw_param_remote_visit_until(uint16_t node, kfsw_param_visitor_t visitor, void *context,
+				  int64_t deadline)
+{
+	if (remaining_ms(deadline) == 0 ||
+	    k_mutex_lock(&kfsw_param_remote_lock, K_MSEC(remaining_ms(deadline))) != 0) {
+		return -ETIMEDOUT;
+	}
+	int result = visit_remote(node, visitor, context, deadline);
+
+	k_mutex_unlock(&kfsw_param_remote_lock);
+	return result;
+}
+
+int kfsw_param_remote_visit(uint16_t node, kfsw_param_visitor_t visitor, void *context)
+{
+	return kfsw_param_remote_visit_until(node, visitor, context,
+					     k_uptime_get() + CONFIG_KFSW_PARAM_LIST_TIMEOUT_MS);
 }

@@ -93,6 +93,7 @@ endif # KFSW_PARAM
 config KFSW_PARAM_CSP
 	bool "K-FSW parameter CSP adapter"
 	depends on KFSW_PARAM && KFSW_CSP
+	select CRC
 	help
 	  Expose the local parameter table over the established libparam CSP wire
 	  protocol and enable remote parameter client/cache operations.
@@ -132,24 +133,17 @@ config KFSW_PARAM_TIMEOUT_MS
 	range 10 60000
 	default 1000
 
+config KFSW_PARAM_LIST_TIMEOUT_MS
+	int "Total remote descriptor refresh budget in milliseconds"
+	range 100 120000
+	default 10000
+
 config KFSW_PARAM_LIST_RDP
-	bool "Use reliable delivery for the parameter list"
-	depends on KFSW_PARAM_CSP
+	bool "Allow legacy parameter-list clients using RDP"
 	default y
 	help
-	  The list is one packet per parameter with no acknowledgement of its
-	  own, so a single lost descriptor leaves a hole the caller cannot see:
-	  a short list looks exactly like a small table. Over a radio that
-	  happens on nearly every transfer. Reliable delivery retransmits the
-	  losses instead, at the cost of a connection handshake.
-
-	  Unlike the firmware upload, this has no per-item checksum and repeat
-	  of its own to fall back on, which is why it is on by default here and
-	  off there.
-
-	  Requires the CSP_USE_RDP CMake option, which the K-FSW compositions
-	  set. RDP is a build option of the vendored libcsp rather than a
-	  Kconfig symbol, so it cannot be expressed as a dependency here.
+	  Legacy v3 clients can use RDP when libcsp is built with CSP_USE_RDP.
+	  K-FSW clients use indexed v4 replies with a count and table CRC.
 
 config KFSW_PARAM_LIST_STACK_SIZE
 	int "Parameter-list server thread stack size"
@@ -158,6 +152,26 @@ config KFSW_PARAM_LIST_STACK_SIZE
 config KFSW_PARAM_LIST_PRIORITY
 	int "Parameter-list server thread priority"
 	default 1
+
+config KFSW_PARAM_VALUE_QUEUE_DEPTH
+	int "Queued parameter value requests"
+	range 1 8
+	default 2
+	help
+	  Each queued request holds one CSP packet, plus one in the worker.
+	  Leave buffer capacity for routing, replies and list transfers.
+
+config KFSW_PARAM_VALUE_STACK_SIZE
+	int "Parameter value worker stack size"
+	range 1536 8192
+	default 3072
+
+config KFSW_PARAM_VALUE_PRIORITY
+	int "Parameter value worker priority"
+	range 2 15
+	default 3
+	help
+	  Keep below the CSP router. Sampling and change callbacks run here.
 
 endif # KFSW_PARAM_CSP
 

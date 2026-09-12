@@ -102,6 +102,13 @@ void kfsw_param_table_lock(void)
 	k_mutex_lock(&kfsw_param_lock, K_FOREVER);
 }
 
+int kfsw_param_table_lock_until(int64_t deadline)
+{
+	int64_t remaining = deadline - k_uptime_get();
+
+	return remaining <= 0 ? -ETIMEDOUT : k_mutex_lock(&kfsw_param_lock, K_MSEC(remaining));
+}
+
 void kfsw_param_table_unlock(void)
 {
 	k_mutex_unlock(&kfsw_param_lock);
@@ -813,6 +820,10 @@ int kfsw_param_get_stats(struct kfsw_param_stats *stats)
 
 	stats->saves = (uint32_t)atomic_get(&param_saves);
 	stats->load_failures = (uint32_t)atomic_get(&param_load_failures);
+	stats->requests_dropped = 0U;
+#if CONFIG_KFSW_PARAM_CSP
+	stats->requests_dropped = kfsw_param_csp_dropped_requests();
+#endif
 	return 0;
 }
 
