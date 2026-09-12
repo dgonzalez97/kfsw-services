@@ -896,21 +896,38 @@ const char *kfsw_param_band_name(uint8_t table)
 	return "invalid";
 }
 
+/*
+ * One letter per property, the way libparam prints its own mask, rather than a
+ * name for each combination.
+ *
+ * The combinations were the problem: "b" used to mean stored *and* not live,
+ * so an operator could not tell whether a value was kept across a reset, or
+ * only applied at the next one, or both. They are different questions with
+ * different consequences, and a set answers all of them at once.
+ *
+ *   r  read-only
+ *   w  writable
+ *   p  persistent, so it survives a reset
+ *   b  boot: the write is accepted now and read when the node next starts
+ *
+ * A parameter with no "b" applies its value as soon as it is set.
+ */
 const char *kfsw_param_mode_name(uint32_t flags)
 {
-	const bool live = (flags & KFSW_PARAM_FLAG_LIVE) != 0U;
-	const bool stored = (flags & KFSW_PARAM_FLAG_PERSISTENT) != 0U;
+	const bool persistent = (flags & KFSW_PARAM_FLAG_PERSISTENT) != 0U;
 
+	/* Literals rather than a buffer that is filled in: the shell and the
+	 * CSP server both list parameters, and a single static buffer would
+	 * hand one thread the other's answer. There are only six of them.
+	 */
 	if ((flags & KFSW_PARAM_FLAG_READ_ONLY) != 0U) {
-		return "r";
+		/* A read-only value is never applied, so "b" would say nothing. */
+		return persistent ? "rp" : "r";
 	}
-	if (live && stored) {
-		return "wb";
+	if ((flags & KFSW_PARAM_FLAG_LIVE) != 0U) {
+		return persistent ? "wp" : "w";
 	}
-	if (stored) {
-		return "b";
-	}
-	return "w";
+	return persistent ? "wpb" : "wb";
 }
 
 const char *kfsw_param_type_name(enum kfsw_param_type type)
