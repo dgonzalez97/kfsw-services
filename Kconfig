@@ -508,6 +508,7 @@ config KFSW_FWU_STREAM_BUFFER_SIZE
 config KFSW_FBO
 	bool "File based operations"
 	depends on KFSW_COMMAND && KFSW_STORAGE
+	select KFSW_EVENT
 	help
 	  Carry out a sequence of commands written in a file, so a node can be
 	  handed a pass plan or a recovery sequence and get on with it without
@@ -527,6 +528,15 @@ config KFSW_FBO_LINES_MAX
 	  A ceiling, so a corrupted or over-ambitious file cannot become a job
 	  that runs for the rest of the pass. Blank and comment lines are not
 	  counted against it.
+
+config KFSW_FBO_BYTES_MAX
+	int "Maximum procedure file size in bytes"
+	depends on KFSW_FBO
+	range 128 1048576
+	default 65536
+	help
+	  Includes blank lines and comments. Reading stops at this limit even
+	  if the file grows after the run was accepted.
 
 config KFSW_FBO_LINE_MAX
 	int "Longest line in bytes"

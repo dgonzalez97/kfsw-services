@@ -201,10 +201,10 @@ if(CONFIG_KFSW_COMMAND)
 endif()
 
 if(CONFIG_KFSW_FBO)
-    list(APPEND kfsw_services_sources
-        src/fbo/fbo.c
-        src/fbo-parameters/fbo_table.c
-    )
+    list(APPEND kfsw_services_sources src/fbo/fbo.c)
+    if(CONFIG_KFSW_PARAM)
+        list(APPEND kfsw_services_sources src/fbo-parameters/fbo_table.c)
+    endif()
 endif()
 
 if(CONFIG_KFSW_HK)

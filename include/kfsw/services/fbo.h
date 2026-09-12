@@ -51,6 +51,8 @@ struct kfsw_fbo_status {
 	uint32_t runs;
 	/** Line the current or last run stopped on, 1-based, 0 before any. */
 	uint16_t line;
+	/** Last completed run: 0 on success, negative errno on failure or cancellation. */
+	int last_result;
 };
 
 /**
@@ -74,14 +76,16 @@ int kfsw_fbo_init(void);
  * @retval -EBUSY A procedure is already running.
  * @retval -ENOENT No such procedure.
  * @retval -ENODEV There is no storage.
+ * @retval -EISDIR The name refers to a directory.
+ * @retval -EFBIG The file exceeds CONFIG_KFSW_FBO_BYTES_MAX.
  */
 int kfsw_fbo_run(const char *name);
 
 /**
  * @brief Ask a running procedure to stop.
  *
- * Takes effect before the next line, so a `wait` already under way finishes
- * first. A procedure that is not running is not an error.
+ * Wakes a `wait` immediately. Other command handlers finish before the stop
+ * takes effect. Stopping while idle has no effect on the next run.
  *
  * @retval 0 A stop was requested, or nothing was running.
  */
