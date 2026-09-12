@@ -327,6 +327,23 @@ const char *kfsw_param_band_name(uint8_t table);
  * @return "r" read-only, "w" applied immediately, "b" stored until reboot,
  *         "wb" both.
  */
+/**
+ * @brief How a parameter may be written, as a set of letters.
+ *
+ * One letter per property rather than a name per combination, so each question
+ * is answered separately:
+ *
+ *   r    read-only
+ *   w    writable
+ *   p    persistent: the value survives a reset
+ *   b    boot: the write is accepted now and read when the node next starts
+ *
+ * So `wp` is written and kept and applies immediately, `wpb` is written and
+ * kept and applies at the next start, and `w` is written, applied, and gone
+ * when the node restarts.
+ *
+ * The returned pointer is a literal and is safe to hold.
+ */
 const char *kfsw_param_mode_name(uint32_t flags);
 
 #if CONFIG_KFSW_PARAM_PERSISTENCE
