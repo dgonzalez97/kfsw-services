@@ -594,6 +594,15 @@ static int persist_load(void)
 	if (result == 0) {
 		result = apply_snapshot(entry.size, entry_count);
 	}
+	if (result == 0) {
+		/* Recorded on the way in as well as on the way out. A node that
+		 * has just booted has not built a snapshot, and reporting zero
+		 * there answers "how much room are the parameters using" with
+		 * the one number that is certainly wrong, at the moment it is
+		 * most likely to be asked.
+		 */
+		snapshot_bytes = (uint32_t)entry.size;
+	}
 
 out:
 	k_mutex_unlock(&kfsw_param_persist_lock);
