@@ -339,6 +339,22 @@ int kfsw_param_persist_load(void);
 /** Delete the active persistent snapshot and any abandoned temporary file. */
 int kfsw_param_persist_clear(void);
 
+/**
+ * @brief How many of one table's parameters a snapshot carries.
+ *
+ * The snapshot is a single file covering every persistent value, so saving is
+ * always whole-file. This answers the question an operator actually has after
+ * changing a table — did what I just set reach flash, and how much of this
+ * table is kept at all.
+ *
+ * @param table Table identifier.
+ * @param[out] count Persistent parameters in that table.
+ * @retval 0 Counted.
+ * @retval -EINVAL NULL destination.
+ * @retval -ENOENT No such table.
+ */
+int kfsw_param_persist_table_count(uint8_t table, uint16_t *count);
+
 /** Space the last built snapshot occupied, in bytes. */
 uint32_t kfsw_param_persist_bytes(void);
 

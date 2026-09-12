@@ -61,6 +61,24 @@ config KFSW_PARAM_MAX_TABLES
 	  full composition reached exactly 17 the day housekeeping was added, so
 	  it now leaves room for several more.
 
+config KFSW_PARAM_PERSIST_SAVE_WARN
+	int "Snapshots in one boot before the log says so"
+	depends on KFSW_PARAM_PERSISTENCE
+	default 1000
+	range 0 1000000
+	help
+	  Every snapshot costs an erase cycle. With autosave on, one accepted
+	  change to a persistent value is one snapshot, so a campaign that sets
+	  parameters in a loop can spend a partition's budget without anyone
+	  watching it happen.
+
+	  Crossing this count logs once, naming the number. It is not a
+	  prediction and nothing is refused: it is the point at which an
+	  operator should decide whether to turn param_autosave off and use
+	  `param persist` to write only when asked.
+
+	  0 disables the warning.
+
 config KFSW_PARAM_PERSISTENCE
 	bool "Explicit LittleFS parameter snapshots"
 	depends on KFSW_STORAGE
