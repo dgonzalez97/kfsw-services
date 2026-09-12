@@ -14,6 +14,7 @@
 #include <kfsw/services/log.h>
 #include <kfsw/services/parameter.h>
 
+#include "../snapshot_file.h"
 #include "parameter_internal.h"
 
 #define KFSW_PARAM_PERSIST_DIRECTORY KFSW_STORAGE_MOUNT_POINT "/params"
@@ -265,24 +266,6 @@ static int build_snapshot(size_t *snapshot_size)
 	return 0;
 }
 
-static int write_all(struct fs_file_t *file, const uint8_t *data, size_t size)
-{
-	size_t offset = 0U;
-
-	while (offset < size) {
-		ssize_t written = fs_write(file, &data[offset], size - offset);
-
-		if (written < 0) {
-			return (int)written;
-		}
-		if (written == 0) {
-			return -EIO;
-		}
-		offset += (size_t)written;
-	}
-	return 0;
-}
-
 static int read_all(struct fs_file_t *file, uint8_t *data, size_t size)
 {
 	size_t offset = 0U;
@@ -488,9 +471,7 @@ static int apply_snapshot(size_t size, uint16_t entry_count)
 
 static int persist_save(void)
 {
-	struct fs_file_t file;
 	size_t snapshot_size;
-	int close_result;
 	int result;
 
 	if (!kfsw_param_is_initialized() || !kfsw_storage_is_ready()) {
@@ -507,28 +488,8 @@ static int persist_save(void)
 	if ((result != 0) && (result != -EEXIST)) {
 		goto out;
 	}
-	(void)fs_unlink(KFSW_PARAM_PERSIST_TEMP_PATH);
-	fs_file_t_init(&file);
-	result =
-		fs_open(&file, KFSW_PARAM_PERSIST_TEMP_PATH, FS_O_CREATE | FS_O_WRITE | FS_O_TRUNC);
-	if (result != 0) {
-		goto out;
-	}
-
-	result = write_all(&file, snapshot, snapshot_size);
-	if (result == 0) {
-		result = fs_sync(&file);
-	}
-	close_result = fs_close(&file);
-	if (result == 0) {
-		result = close_result;
-	}
-	if (result == 0) {
-		result = fs_rename(KFSW_PARAM_PERSIST_TEMP_PATH, KFSW_PARAM_PERSIST_PATH);
-	}
-	if (result != 0) {
-		(void)fs_unlink(KFSW_PARAM_PERSIST_TEMP_PATH);
-	}
+	result = kfsw_snapshot_write(KFSW_PARAM_PERSIST_PATH, KFSW_PARAM_PERSIST_TEMP_PATH,
+				     snapshot, snapshot_size);
 
 out:
 	k_mutex_unlock(&kfsw_param_persist_lock);
