@@ -158,6 +158,9 @@ struct kfsw_param_table_info {
  */
 #define KFSW_PARAM_FLAG_LIVE 0x00020000UL
 
+/** Parameter may be configured locally, but remote writes are refused. */
+#define KFSW_PARAM_FLAG_LOCAL_ONLY 0x00040000UL
+
 /** Validate a proposed scalar value; return zero to accept it. */
 typedef int (*kfsw_param_validator_t)(const union kfsw_param_scalar *value);
 /**

@@ -380,7 +380,8 @@ static bool push_allowed(csp_packet_t *packet)
 		}
 
 		param = param_list_find_id(node, id);
-		if ((param == NULL) || ((param->mask & PM_READONLY) != 0U) ||
+		if ((param == NULL) ||
+		    ((param->mask & (PM_READONLY | KFSW_PARAM_FLAG_LOCAL_ONLY)) != 0U) ||
 		    ((offset >= 0) && (offset >= param->array_size))) {
 			return false;
 		}
