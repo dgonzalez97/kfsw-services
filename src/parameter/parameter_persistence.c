@@ -630,6 +630,32 @@ int kfsw_param_persist_clear(void)
 }
 
 /*
+ * Every snapshot costs an erase cycle on a part that has a finite number of
+ * them. Nothing here can know how long a mission is, so the warning is not a
+ * prediction: it is a count crossing a line, said once, with the number an
+ * operator would need to decide whether to turn autosave off and persist
+ * deliberately instead.
+ */
+static void warn_about_wear(void)
+{
+#if CONFIG_KFSW_PARAM_PERSIST_SAVE_WARN > 0
+	static bool warned;
+	struct kfsw_param_stats stats;
+
+	if (warned || (kfsw_param_get_stats(&stats) != 0)) {
+		return;
+	}
+	if (stats.saves < CONFIG_KFSW_PARAM_PERSIST_SAVE_WARN) {
+		return;
+	}
+	warned = true;
+	kfsw_log_warning("PARAM: %u snapshots written since boot, each one an erase cycle; "
+			 "param_autosave off and 'param persist' writes only when asked",
+			 stats.saves);
+#endif
+}
+
+/*
  * Counted at one exit each rather than at every return inside. A snapshot that
  * fails to load is the difference between running on stored settings and
  * running on compiled defaults, and nothing else records which happened.
@@ -640,8 +666,43 @@ int kfsw_param_persist_save(void)
 
 	if (result == 0) {
 		kfsw_param_count_save();
+		warn_about_wear();
 	}
 	return result;
+}
+
+int kfsw_param_persist_table_count(uint8_t table, uint16_t *count)
+{
+	uint16_t found = 0U;
+
+	bool table_seen = false;
+
+	if (count == NULL) {
+		return -EINVAL;
+	}
+
+	/* Existence is derived from the entries rather than asked of the table
+	 * list, so this takes the one lock instead of nesting two.
+	 */
+	kfsw_param_table_lock();
+	for (size_t index = 0U; index < kfsw_param_entry_count(); index++) {
+		const struct kfsw_param_entry *entry = kfsw_param_entry_at(index);
+
+		if ((entry == NULL) || ((uint8_t)(entry->info.id >> 8) != table)) {
+			continue;
+		}
+		table_seen = true;
+		if ((entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) != 0U) {
+			found++;
+		}
+	}
+	kfsw_param_table_unlock();
+
+	if (!table_seen) {
+		return -ENOENT;
+	}
+	*count = found;
+	return 0;
 }
 
 int kfsw_param_persist_load(void)
