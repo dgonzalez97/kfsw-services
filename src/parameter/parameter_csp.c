@@ -38,6 +38,12 @@
 #define KFSW_PARAM_LIST_INDEXED_VERSION 4U
 #define KFSW_PARAM_LIST_REPLY_HEADER 10U
 #define KFSW_PARAM_LIST_REQUEST_SIZE 7U
+/* Ask for one named descriptor instead of walking the whole list. Reading a
+ * single remote value otherwise costs one exchange per parameter the node
+ * owns, which is the whole list to answer a question about one entry. A node
+ * that predates this answers nothing, so the caller falls back to the walk. */
+#define KFSW_PARAM_LIST_LOOKUP_VERSION 5U
+#define KFSW_PARAM_LIST_LOOKUP_HEADER 2U
 #define KFSW_PARAM_LIST_ITEM 0U
 #define KFSW_PARAM_LIST_END 1U
 #define KFSW_PARAM_LIST_CHANGED 2U
@@ -479,6 +485,25 @@ static const param_t *list_entry(uint16_t wanted, uint16_t *total)
 	return found;
 }
 
+/* Matched the same way list_entry() enumerates: over this node's own table,
+ * skipping what the list hides, so a lookup can never answer with something a
+ * walk of the list would not have offered.
+ */
+static const param_t *local_entry_by_name(const char *name)
+{
+	for (size_t i = 0; i < kfsw_param_entry_count(); i++) {
+		const param_t *param = &local_parameters[i];
+
+		if ((param->mask & PM_HIDDEN) != 0U) {
+			continue;
+		}
+		if (strcmp(param->name, name) == 0) {
+			return param;
+		}
+	}
+	return NULL;
+}
+
 static size_t encode_descriptor(const param_t *param, uint8_t *data)
 {
 	param_transfer3_t *wire = (param_transfer3_t *)data;
@@ -572,6 +597,34 @@ static void serve_indexed_list(csp_conn_t *connection, const csp_packet_t *reque
 	csp_send(connection, reply);
 }
 
+static void serve_lookup(csp_conn_t *connection, const csp_packet_t *request)
+{
+	char name[KFSW_PARAM_NAME_MAX + 1U];
+	size_t length = request->length - 1U;
+	const param_t *param;
+	csp_packet_t *reply;
+
+	if ((length == 0U) || (length > KFSW_PARAM_NAME_MAX)) {
+		return;
+	}
+	memcpy(name, &request->data[1], length);
+	name[length] = '\0';
+
+	param = local_entry_by_name(name);
+	reply = csp_buffer_get(CSP_BUFFER_SIZE);
+	if (reply == NULL) {
+		return;
+	}
+	reply->data[0] = KFSW_PARAM_LIST_LOOKUP_VERSION;
+	reply->data[1] = (param == NULL) ? KFSW_PARAM_LIST_END : KFSW_PARAM_LIST_ITEM;
+	reply->length = KFSW_PARAM_LIST_LOOKUP_HEADER;
+	if (param != NULL) {
+		reply->length +=
+			encode_descriptor(param, &reply->data[KFSW_PARAM_LIST_LOOKUP_HEADER]);
+	}
+	csp_send(connection, reply);
+}
+
 static void list_server(void *arg1, void *arg2, void *arg3)
 {
 	ARG_UNUSED(arg1);
@@ -591,8 +644,11 @@ static void list_server(void *arg1, void *arg2, void *arg3)
 		}
 		csp_packet_t *request = csp_read(connection, 0);
 
-		if (request != NULL && request->length == KFSW_PARAM_LIST_REQUEST_SIZE &&
-		    request->data[0] == KFSW_PARAM_LIST_INDEXED_VERSION) {
+		if (request != NULL && request->length > 1U &&
+		    request->data[0] == KFSW_PARAM_LIST_LOOKUP_VERSION) {
+			serve_lookup(connection, request);
+		} else if (request != NULL && request->length == KFSW_PARAM_LIST_REQUEST_SIZE &&
+			   request->data[0] == KFSW_PARAM_LIST_INDEXED_VERSION) {
 			serve_indexed_list(connection, request);
 		} else if (request == NULL ||
 			   (request->length == 1U && request->data[0] == KFSW_PARAM_LIST_VERSION)) {
@@ -688,18 +744,21 @@ static uint16_t cached_node;
 static bool cache_complete;
 static const param_t *cached[CONFIG_KFSW_PARAM_REMOTE_POOL_SIZE];
 static size_t cached_count;
+/* Descriptors already linked into the shared list. A full download links all
+ * of them at the end, a single lookup links the one it fetched, so the count
+ * is tracked rather than inferred from cache_complete. */
+static size_t cached_linked;
 
 static void clear_remote_cache(void)
 {
-	if (cache_complete) {
-		for (size_t i = 0; i < cached_count; i++) {
-			param_list_remove_specific(cached[i], 0, 0);
-		}
+	for (size_t i = 0; i < cached_linked; i++) {
+		param_list_remove_specific(cached[i], 0, 0);
 	}
 	if (cached_count != 0U) {
 		param_list_destroy(cached[0]);
 	}
 	cached_count = 0;
+	cached_linked = 0;
 	cache_complete = false;
 	cached_node = 0;
 }
@@ -716,6 +775,47 @@ static int validate_descriptor(const uint8_t *data, size_t size)
 	    memchr(wire->unit, '\0', sizeof(wire->unit)) == NULL || data[size - 1] != 0U) {
 		return -EBADMSG;
 	}
+	return 0;
+}
+
+/* Turn one validated descriptor into a cached remote parameter, linked into
+ * the shared list so a value pull and a listing both see it. Shared by the
+ * single lookup and the full walk, which differ only in how many they fetch.
+ */
+static int stage_remote_descriptor(uint16_t node, param_transfer3_t *wire, const uint8_t *data,
+				   int64_t deadline)
+{
+	const param_t *param;
+
+	if (cached_count >= ARRAY_SIZE(cached)) {
+		return -ENOSPC;
+	}
+	if (kfsw_param_table_lock_until(deadline) != 0) {
+		return -ETIMEDOUT;
+	}
+	if (cached_node != node) {
+		clear_remote_cache();
+		cached_node = node;
+	}
+	for (size_t i = 0; i < cached_count; i++) {
+		if ((cached[i]->id == sys_get_be16(data)) ||
+		    (strcmp(cached[i]->name, wire->name) == 0)) {
+			kfsw_param_table_unlock();
+			return -EEXIST;
+		}
+	}
+	param = param_list_create_remote(sys_get_be16(data), node, wire->type,
+					 sys_get_be32((uint8_t *)&wire->mask) | PM_REMOTE,
+					 wire->size, wire->name, wire->unit, wire->help,
+					 wire->storage_type);
+	if (param == NULL) {
+		kfsw_param_table_unlock();
+		return -ENOSPC;
+	}
+	cached[cached_count++] = param;
+	(void)param_list_add((param_t *)param);
+	cached_linked = cached_count;
+	kfsw_param_table_unlock();
 	return 0;
 }
 
@@ -802,6 +902,7 @@ static int refresh_remote(uint16_t node, int64_t deadline, bool force)
 				/* Node and ID/name uniqueness were checked before allocation. */
 				(void)param_list_add((param_t *)cached[i]);
 			}
+			cached_linked = cached_count;
 			cache_complete = true;
 			kfsw_param_table_unlock();
 			return 0;
@@ -1128,10 +1229,117 @@ static int push_remote(const param_t *param, uint16_t node, const struct kfsw_pa
 }
 
 /* All callers hold remote ownership until names, reads and callbacks finish. */
+/* One exchange for the one descriptor asked for.
+ *
+ * Returns -ENOTSUP when the node did not answer the lookup at all, which is
+ * what a node built before this protocol does, so the caller can fall back to
+ * walking the list rather than reporting the parameter as missing.
+ */
+static int lookup_remote(uint16_t node, const char *name, int64_t deadline)
+{
+	size_t length = strlen(name);
+	csp_conn_t *connection;
+	csp_packet_t *packet;
+	uint32_t remaining;
+	int result;
+
+	if ((length == 0U) || (length > KFSW_PARAM_NAME_MAX)) {
+		return -EINVAL;
+	}
+	result = validate_remote_node(node);
+	if ((result != 0) || (node == 0U)) {
+		return (result != 0) ? result : -EINVAL;
+	}
+	if (cached_count >= ARRAY_SIZE(cached)) {
+		return -ENOSPC;
+	}
+
+	remaining = remaining_ms(deadline);
+	if (remaining == 0U) {
+		return -ETIMEDOUT;
+	}
+	connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_PARAM_LIST_PORT, 0, CSP_O_CRC32);
+	if (connection == NULL) {
+		return -ECONNREFUSED;
+	}
+	packet = csp_buffer_get(KFSW_PARAM_LIST_LOOKUP_HEADER + KFSW_PARAM_NAME_MAX);
+	if (packet == NULL) {
+		csp_close(connection);
+		return -ENOMEM;
+	}
+	packet->data[0] = KFSW_PARAM_LIST_LOOKUP_VERSION;
+	memcpy(&packet->data[1], name, length);
+	packet->length = (uint16_t)(1U + length);
+	csp_send(connection, packet);
+
+	/* Bounded by one transaction rather than by the whole deadline. A node
+	 * that does not serve lookups answers with silence, and waiting the
+	 * full budget on it would leave nothing for the walk that follows.
+	 */
+	remaining = MIN(remaining_ms(deadline), (uint32_t)CONFIG_KFSW_PARAM_TIMEOUT_MS);
+	packet = (remaining == 0U) ? NULL : csp_read(connection, remaining);
+	csp_close(connection);
+	if (packet == NULL) {
+		/* Silence is what an older node answers with, and it is not
+		 * evidence that the parameter is absent. */
+		return -ENOTSUP;
+	}
+
+	result = -EBADMSG;
+	if ((packet->length >= KFSW_PARAM_LIST_LOOKUP_HEADER) &&
+	    (packet->data[0] == KFSW_PARAM_LIST_LOOKUP_VERSION)) {
+		if (packet->data[1] == KFSW_PARAM_LIST_END) {
+			result = -ENOENT;
+		} else if (packet->data[1] == KFSW_PARAM_LIST_ITEM) {
+			uint8_t *data = &packet->data[KFSW_PARAM_LIST_LOOKUP_HEADER];
+			size_t size = packet->length - KFSW_PARAM_LIST_LOOKUP_HEADER;
+
+			result = validate_descriptor(data, size);
+			if (result == 0) {
+				param_transfer3_t *wire = (param_transfer3_t *)data;
+
+				if (strcmp(wire->name, name) != 0) {
+					result = -EBADMSG;
+				} else {
+					memset(data + size, 0, sizeof(*wire) - size);
+					result =
+						stage_remote_descriptor(node, wire, data, deadline);
+				}
+			}
+		}
+	}
+	csp_buffer_free(packet);
+	return result;
+}
+
 static int find_remote(uint16_t node, const char *name, const param_t **found, int64_t deadline)
 {
-	int result = refresh_remote(node, deadline, false);
+	int result;
 
+	/* A descriptor already held answers without a packet at all. */
+	if (cached_node == node) {
+		for (size_t i = 0; i < cached_count; i++) {
+			if (strcmp(cached[i]->name, name) == 0) {
+				*found = cached[i];
+				return 0;
+			}
+		}
+		if (cache_complete) {
+			return -ENOENT;
+		}
+	}
+
+	result = lookup_remote(node, name, deadline);
+	if (result == 0) {
+		*found = cached[cached_count - 1U];
+		return 0;
+	}
+	if (result != -ENOTSUP) {
+		return result;
+	}
+
+	/* The node does not serve lookups. Walk its list, as before. */
+	result = refresh_remote(node, deadline, false);
 	if (result != 0) {
 		return result;
 	}
