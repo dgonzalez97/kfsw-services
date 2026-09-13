@@ -48,6 +48,17 @@ int kfsw_boot_get_reset_result(void);
 /** Version of the running image, from the build. */
 const char *kfsw_boot_get_image_version(void);
 
+/**
+ * @brief Identifier this unit's silicon was manufactured with.
+ *
+ * Latched at boot and reported on the boot marker, so a console log names the
+ * unit it came from. Everything else on that line is a build option and is
+ * identical across a bench of boards flashed with the same image.
+ *
+ * Never NULL. Empty when the SoC does not report one.
+ */
+const char *kfsw_boot_get_hardware_id(void);
+
 #if CONFIG_KFSW_LASTWORDS
 #include <kfsw/platform/lastwords.h>
 

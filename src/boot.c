@@ -4,6 +4,7 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/printk.h>
 
+#include <kfsw/platform/hardware.h>
 #include <kfsw/platform/reset.h>
 #include <kfsw/platform/time.h>
 #include <kfsw/services/boot.h>
@@ -25,6 +26,16 @@ static uint32_t boot_reset_cause;
 static struct kfsw_lastwords boot_lastwords;
 #endif
 static int boot_reset_rc = -EAGAIN;
+/* Read once and kept for the same reason the reset cause is: several readers
+ * want it — the boot marker, the shell and the board table — and a fact
+ * reported from two sources eventually disagrees.
+ */
+static char boot_hardware_id[KFSW_HARDWARE_ID_TEXT_SIZE];
+
+const char *kfsw_boot_get_hardware_id(void)
+{
+	return boot_hardware_id;
+}
 
 uint32_t kfsw_boot_get_reset_cause(void)
 {
@@ -53,6 +64,10 @@ void kfsw_boot_service_start(void)
 	(void)kfsw_lastwords_take(&boot_lastwords);
 #endif
 
+	if (kfsw_platform_get_hardware_id(boot_hardware_id, sizeof(boot_hardware_id)) != 0) {
+		boot_hardware_id[0] = '\0';
+	}
+
 	reset_rc = kfsw_platform_get_reset_cause(&reset_cause);
 	boot_reset_cause = reset_cause;
 	boot_reset_rc = reset_rc;
@@ -65,8 +80,10 @@ void kfsw_boot_service_start(void)
 	 * appended rather than replacing the raw mask: the mask can latch
 	 * several causes at once and the name reports only the first.
 	 */
-	printk("@BOOT sw=%s board=%s reset=0x%08x reset_rc=%d reset_cause=%s\n", KFSW_IMAGE_VERSION,
-	       CONFIG_BOARD_TARGET, (unsigned int)reset_cause, reset_rc,
+	printk("@BOOT sw=%s board=%s unit=%s reset=0x%08x reset_rc=%d reset_cause=%s\n",
+	       KFSW_IMAGE_VERSION, CONFIG_BOARD_TARGET,
+	       (boot_hardware_id[0] != '\0') ? boot_hardware_id : "unknown",
+	       (unsigned int)reset_cause, reset_rc,
 	       kfsw_platform_reset_cause_name(reset_cause));
 
 	if (kfsw_platform_reset_cause_is_watchdog(reset_cause)) {
