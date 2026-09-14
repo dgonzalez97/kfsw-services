@@ -13,23 +13,10 @@ extern "C" {
  * @defgroup kfsw_services_fwu_lite K-FSW lightweight firmware upload
  * @ingroup kfsw_services
  *
- * A direct CSP path for putting a firmware image on a node, alongside the file
- * transfer route. Both feed the same update service, and both may be built in;
- * whichever starts a transfer first holds it, and the other is told the service
- * is busy.
- *
- * They differ in what they assume about the link. File transfer needs the image
- * to exist as a file and a reliable connection; this route sends blocks from
- * wherever the sender has them and checks each one on arrival.
- *
- * Per-block checking is the point: a whole-image checksum tells you an eight
- * minute upload failed, a per-block one tells you which 192 bytes to send
- * again. A failed block is not written and does not advance the transfer, so
- * repeating it is just sending it once more.
- *
- * Reliable delivery is available but off by default. The per-block repeat
- * already recovers losses, and a second retry layer underneath adds timeouts
- * that stall a marginal link instead of naming the block to resend.
+ * A direct CSP path for uploading a firmware image, next to the file transfer
+ * route. Both use the same update service, and a second transfer gets busy.
+ * Each block has its own checksum and a failed block is sent again. RDP is
+ * available but off by default.
  *
  * @{
  */
@@ -123,9 +110,8 @@ int kfsw_fwu_lite_decode(const uint8_t *buffer, size_t size, struct kfsw_fwu_lit
 /**
  * @brief Apply a decoded request and produce the reply.
  *
- * Holds no transport state, so it is exercised directly by tests without a
- * link. The reply is always well formed: a rejected request produces a reply
- * saying why, never silence.
+ * Has no transport state, so tests call it directly. A rejected request still
+ * gets a reply with the reason.
  *
  * @param request Decoded request.
  * @param[out] reply Reply to send back.
@@ -178,13 +164,8 @@ int kfsw_fwu_lite_set_retries(uint8_t retries);
 /**
  * @brief Send an image file to a node, block by block.
  *
- * The image is read a block at a time rather than held in memory: a firmware
- * image is larger than the RAM of the node it is destined for, and often of
- * the node sending it.
- *
- * Each block is repeated up to the configured retry count if the node reports
- * it did not arrive intact. A block that fails costs one block, not the
- * transfer around it.
+ * The file is read one block at a time. A block the node reports as damaged is
+ * resent up to the configured retry count.
  *
  * @param node Destination CSP address.
  * @param path Image file on the sending node.

@@ -5,12 +5,7 @@
 #include <kfsw/services/fbo.h>
 #include <kfsw/services/parameter.h>
 
-/*
- * What a procedure has done, for a pass that wants to know without reading the
- * event ring. `fbo_lines_failed` beside `fbo_lines_run` is the pair that says
- * whether a plan worked; `fbo_running` is what tells an operator to wait
- * rather than send another.
- */
+/* Procedure counters and state. */
 
 static char fbo_name[KFSW_FBO_NAME_MAX];
 static uint8_t fbo_running;

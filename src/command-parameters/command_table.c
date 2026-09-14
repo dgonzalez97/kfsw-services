@@ -140,9 +140,7 @@ static const struct kfsw_param_definition command_param_definitions[] = {
 	{
 		.offset = 0x18U,
 		.type = KFSW_PARAM_U8,
-		/* Off by default: the shell repeats every input byte, so a
-		 * session driven by a script shows each command twice. Live,
-		 * because it is worth toggling while watching the console. */
+		/* Off by default so scripted sessions don't show every command twice. */
 		.flags = KFSW_PARAM_FLAG_CONFIGURATION,
 		.name = "echo_enabled",
 		.description = "Console repeats what is typed at it",

@@ -17,10 +17,7 @@
 #include "ftp_link.h"
 
 /*
- * The one send loop and the one receive loop. Client PUT and server GET send;
- * client GET and server PUT receive. The roles differ only in which data
- * opcode they carry, so both directions run the same code and the same
- * validation.
+ * The send and receive loops, shared by the client and the server.
  */
 
 static int write_all(struct fs_file_t *file, const uint8_t *data, size_t size)
@@ -75,9 +72,7 @@ int kfsw_ftp_transfer_send(struct kfsw_ftp_transfer *transfer)
 		return -EINVAL;
 	}
 	while ((result == 0) && (transfer->offset < transfer->total_size)) {
-		/* The buffer is sized at build time; the runtime value only ever
-		 * shortens what is put in it, which is what makes a smaller
-		 * chunk safe to set on a link that loses long frames. */
+		/* The runtime chunk size can only be smaller than the buffer. */
 		ssize_t bytes_read = fs_read(
 			&transfer->file, transfer->workspace->chunk,
 			MIN((size_t)kfsw_ftp_get_chunk_size(), sizeof(transfer->workspace->chunk)));
@@ -118,10 +113,7 @@ bool kfsw_ftp_path_is_firmware(const uint8_t *path, uint16_t path_size)
 	static const char reserved[] = CONFIG_KFSW_FTP_FIRMWARE_PATH;
 	const size_t reserved_size = sizeof(reserved) - 1U;
 
-	/* The path on the wire carries its own length and is not terminated, so
-	 * it is compared by length rather than as a string. Treating it as one
-	 * reads whatever follows it in the packet.
-	 */
+	/* The path on the wire is not terminated, so compare it by length. */
 	if ((path == NULL) || (path_size == 0U)) {
 		return false;
 	}
@@ -205,10 +197,7 @@ int kfsw_ftp_transfer_finish(struct kfsw_ftp_transfer *transfer, const char *tar
 
 #if CONFIG_KFSW_FWU
 	if (transfer->firmware) {
-		/* No file was ever opened, so there is nothing to sync, close or
-		 * rename. The update service owns verifying the image and
-		 * leaving the slot erased if it is rejected.
-		 */
+		/* No file was opened; the update service handles a rejected image. */
 		if (result == 0) {
 			result = kfsw_fwu_finish();
 		}

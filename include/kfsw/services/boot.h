@@ -12,19 +12,14 @@ extern "C" {
 #endif
 
 /**
- * Event identifiers owned by the boot service.
- *
- * Numbers are stable and never reused. Payload layouts are documented here
- * because ground tooling decodes them.
+ * Event IDs of the boot service. IDs are never reused.
  */
 enum kfsw_event_boot_id {
 	/** Startup finished. Payload: reset cause big-endian u32, then a byte
 	 *  that is non-zero when the cause could not be read. */
 	KFSW_EVENT_BOOT_READY = 1,
-	/** The previous run left a note before it went away. Payload: reason
-	 *  byte, then detail, uptime in milliseconds and boot count, each a
-	 *  big-endian u32. Absent when the previous run said nothing, which is
-	 *  itself informative: the node lost power or was cut off mid-word. */
+	/** The previous run left a note. Payload: reason byte, then detail, uptime
+	 *  in milliseconds and boot count, each a big-endian u32. */
 	KFSW_EVENT_BOOT_LASTWORDS = 2,
 };
 
@@ -34,9 +29,8 @@ enum kfsw_event_boot_id {
 void kfsw_boot_service_start(void);
 
 /*
- * Reading the reset cause clears the latched hardware flags, and this service
- * is the first reader. Anything else that wants the cause must take it from
- * here; calling the platform again reports an empty register.
+ * Reading the reset cause clears it, and this service reads it first. Get it
+ * from here instead of the platform.
  */
 
 /** Reset cause latched at boot. Zero before the service has run. */
@@ -49,13 +43,7 @@ int kfsw_boot_get_reset_result(void);
 const char *kfsw_boot_get_image_version(void);
 
 /**
- * @brief Identifier this unit's silicon was manufactured with.
- *
- * Latched at boot and reported on the boot marker, so a console log names the
- * unit it came from. Everything else on that line is a build option and is
- * identical across a bench of boards flashed with the same image.
- *
- * Never NULL. Empty when the SoC does not report one.
+ * @brief The chip's unique ID, read at boot. Never NULL; empty when the SoC has none.
  */
 const char *kfsw_boot_get_hardware_id(void);
 
@@ -63,17 +51,15 @@ const char *kfsw_boot_get_hardware_id(void);
 #include <kfsw/platform/lastwords.h>
 
 /**
- * @brief What the previous run said on its way down, if anything.
+ * @brief The note the previous run left, read once at start-up.
  *
- * Taken once during start-up and kept here, so several readers can ask without
- * the first one consuming it. Reason is KFSW_LASTWORDS_NONE when nothing valid
- * was left behind.
+ * Reason is KFSW_LASTWORDS_NONE when there was no valid note.
  */
 const struct kfsw_lastwords *kfsw_boot_get_lastwords(void);
 #endif
 
 #if CONFIG_KFSW_PARAM
-/** Parameter table owned by this service, in the service band. */
+/** Parameter table of this service, in the service band. */
 #define KFSW_BOOT_PARAM_TABLE_ID 32U
 /** Stable logical name paired with KFSW_BOOT_PARAM_TABLE_ID. */
 #define KFSW_BOOT_PARAM_TABLE_NAME "boot"
@@ -82,11 +68,10 @@ const struct kfsw_lastwords *kfsw_boot_get_lastwords(void);
 extern const struct kfsw_param_definition_set kfsw_boot_param_definitions;
 
 /**
- * @brief Record one more restart.
+ * @brief Count a restart.
  *
- * Called by the composition after the persistent snapshot has been restored,
- * so the count continues from what was stored rather than from zero. Saturates
- * rather than wrapping: a counter that wraps hides the thing it was counting.
+ * Called after the snapshot is restored, so the count continues from the saved
+ * value. The count saturates.
  */
 void kfsw_boot_count_restart(void);
 

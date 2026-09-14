@@ -12,20 +12,14 @@ config KFSW_LOG_COLOR
 	bool "Colour log lines on the console"
 	default y
 	help
-	  Severity is easier to see than to read. Errors are red, warnings
-	  yellow, information white and debug dim; the escape sequences sit
-	  outside the "[LEVEL] message" text so anything matching on that text
-	  still matches.
-
-	  Turn off for a console or capture that does not understand VT100
-	  escapes.
+	  Colour log lines by level: errors red, warnings yellow, info white and
+	  debug dim. Turn it off for consoles that don't support VT100 escapes.
 
 config KFSW_PARAM
 	bool "K-FSW parameter service"
 	select CBPRINTF_FP_SUPPORT
 	help
-	  Enable the deterministic local K-FSW parameter table and API. This
-	  capability does not require CSP; persistence remains a local option.
+	  Enable the local parameter tables and API. CSP is not needed.
 
 if KFSW_PARAM
 
@@ -34,9 +28,8 @@ config KFSW_PARAM_MAX_DEFINITIONS
 	default 160
 	range 1 512
 	help
-	  Total parameters across every registered table. Registration is
-	  refused once the table is full rather than overrunning it, so this
-	  must cover every composed component.
+	  Total parameters across all tables. Registration is refused once this
+	  is full.
 
 config KFSW_PARAM_STRING_MAX
 	int "Longest string parameter, including the terminator"
@@ -52,14 +45,8 @@ config KFSW_PARAM_MAX_TABLES
 	default 24
 	range 1 100
 	help
-	  Distinct tables across every composed component. A table is owned by
-	  exactly one component, so this is the number of components that
-	  publish parameters.
-
-	  A composition that exceeds this loses the tables registered last, with
-	  one error line, rather than failing to build. The default was 16 and a
-	  full composition reached exactly 17 the day housekeeping was added, so
-	  it now leaves room for several more.
+	  Number of parameter tables. Tables registered after this limit are
+	  rejected with an error.
 
 config KFSW_PARAM_PERSIST_SAVE_WARN
 	int "Snapshots in one boot before the log says so"
@@ -67,26 +54,17 @@ config KFSW_PARAM_PERSIST_SAVE_WARN
 	default 1000
 	range 0 1000000
 	help
-	  Every snapshot costs an erase cycle. With autosave on, one accepted
-	  change to a persistent value is one snapshot, so a campaign that sets
-	  parameters in a loop can spend a partition's budget without anyone
-	  watching it happen.
-
-	  Crossing this count logs once, naming the number. It is not a
-	  prediction and nothing is refused: it is the point at which an
-	  operator should decide whether to turn param_autosave off and use
-	  `param persist` to write only when asked.
-
-	  0 disables the warning.
+	  Log a warning once this many snapshots have been written since boot.
+	  With autosave on, each accepted change to a persistent value writes
+	  one. 0 disables the warning.
 
 config KFSW_PARAM_PERSISTENCE
 	bool "Explicit LittleFS parameter snapshots"
 	depends on KFSW_STORAGE
 	select CRC
 	help
-	  Save and restore explicitly selected local parameters using a bounded,
-	  versioned snapshot under /kfsw/params. Runtime parameter changes remain
-	  in RAM until an explicit save operation.
+	  Save persistent parameters in a versioned snapshot under /kfsw/params
+	  and restore them at boot.
 
 endif # KFSW_PARAM
 
@@ -120,13 +98,9 @@ config KFSW_PARAM_REMOTE_POOL_SIZE
 	range 5 512
 	default KFSW_PARAM_MAX_DEFINITIONS
 	help
-	  Number of remote parameter descriptions cached without dynamic memory.
-
-	  This must be at least as large as the biggest table set a node will be
-	  asked to list, which is why it follows the local bound by default: a
-	  pool smaller than the remote node's table makes the download fail part
-	  way through with -ENOSPC, and the descriptors that did arrive are of no
-	  use because the ones after them are missing.
+	  Remote parameter descriptors cached without dynamic memory. It has to
+	  hold the largest table set a node lists, or the download fails with
+	  -ENOSPC.
 
 config KFSW_PARAM_TIMEOUT_MS
 	int "Remote parameter timeout in milliseconds"
@@ -138,20 +112,9 @@ config KFSW_PARAM_LIST_TIMEOUT_MS
 	range 100 120000
 	default 10000
 	help
-	  A remote read resolves a name before it can fetch a value, and a node
-	  whose descriptors are not cached downloads all of them first. This is
-	  the budget for that download, not for one value, so it has to fit the
-	  slowest link the node will ask over.
-
-	  Measured: about a hundred descriptors take well under a second over
-	  CAN at 500 kbit/s, and 35 seconds over a 57600 baud UHF modem. The
-	  10 second default therefore works on a bus and fails on a radio, and
-	  it fails as a plain timeout on the first remote read, which looks
-	  like an unreachable node rather than a budget that was too small.
-
-	  Raise it in the composition that carries the slow link rather than
-	  here: a node that only speaks over a bus should not wait a minute
-	  before reporting a peer as absent.
+	  Time limit for downloading a remote node's descriptors. About a
+	  hundred descriptors take under a second over CAN at 500 kbit/s and
+	  35 seconds over a 57600 baud radio, so raise it for radio links.
 
 config KFSW_PARAM_LIST_RDP
 	bool "Allow legacy parameter-list clients using RDP"
@@ -236,10 +199,8 @@ endif # KFSW_FTP
 config KFSW_EVENT
 	bool "K-FSW structured event record"
 	help
-	  Record numeric events in a bounded RAM ring: stable identifier,
-	  monotonic timestamp, sequence number and a small opaque payload. This
-	  is the record an operator reads after the fact; it does not replace
-	  the console log. The ring does not survive a reset.
+	  Record numeric events in a RAM ring: ID, timestamp, sequence number
+	  and a small payload. The ring does not survive a reset.
 
 if KFSW_EVENT
 
@@ -249,16 +210,15 @@ config KFSW_EVENT_RING_DEPTH
 	default 32
 	help
 	  When the ring is full the oldest record is overwritten and the
-	  overwritten counter increases, so lost history stays visible.
+	  overwritten counter increases.
 
 endif # KFSW_EVENT
 
 config KFSW_COMMAND
 	bool "K-FSW command service"
 	help
-	  Enable the command registry. Commands are contributed as compile-time
-	  sets by their owning component and reached by name from the shell or
-	  by numeric identifier over CSP, through one validation path.
+	  Enable the command registry. Commands are registered at build time and
+	  called by name from the shell or by ID over CSP.
 
 if KFSW_COMMAND
 
@@ -311,13 +271,10 @@ config KFSW_FWU
 	select STREAM_FLASH
 	select CRC
 	help
-	  Receive a firmware image into the secondary image slot selected by the
-	  kfsw,fwu-partition devicetree chosen property, verify it against a
-	  CRC32, and offer it to the bootloader.
-
-	  The image is streamed into raw flash rather than staged as a file. An
-	  application image is larger than the filesystem partition on the first
-	  target, so staging it as a file is not possible there.
+	  Receive a firmware image into the secondary slot selected by the
+	  kfsw,fwu-partition chosen property, check its CRC32 and offer it to
+	  the bootloader. The image is written straight to flash because it
+	  doesn't fit in the filesystem partition.
 
 config KFSW_FWU_MCUBOOT
 	bool "Offer completed images to MCUboot"
@@ -326,12 +283,9 @@ config KFSW_FWU_MCUBOOT
 	depends on IMG_MANAGER
 	default y
 	help
-	  Mark a completed image to be tried on the next boot, and confirm that
-	  the bootloader actually scheduled a swap.
-
-	  Turn this off to receive and verify images without asking for a
-	  reboot, which is what the unit tests do: they exercise the transfer
-	  and its rejections on a target that has no bootloader.
+	  Mark a completed image for a trial boot and check that the bootloader
+	  scheduled the swap. The unit tests turn this off because they have no
+	  bootloader.
 
 config KFSW_FWU_FILES
 	bool "Read firmware slots as files"
@@ -354,30 +308,19 @@ config KFSW_FWU_SLOT_OFFSET_SECTORS
 	default 1
 	range 0 8
 	help
-	  MCUboot's swap-using-offset mode requires an update to be written one
-	  sector into the secondary slot rather than at its start. Writing at
-	  the start is not rejected: the bootloader finds nothing to swap and
-	  carries on with the old image, which from the ground is
-	  indistinguishable from a successful update.
+	  MCUboot's swap-using-offset mode expects the image one sector into the
+	  secondary slot. An image written at the start is not swapped and the
+	  old image keeps running.
 
-	  Set to 0 only for a bootloader whose swap mode places the image at the
-	  slot start.
+	  Set to 0 only for a swap mode that expects the image at the slot start.
 
 config KFSW_HEALTH
 	bool "K-FSW health monitoring"
 	depends on KFSW_WATCHDOG
 	help
-	  Decide whether the system is still working, and stop feeding the
-	  watchdog when it is not.
-
-	  The platform feeds the watchdog on a timer, which keeps a board alive
-	  but proves only that a timer is running. This takes the feeding over
-	  and makes it conditional on registered components saying they are
-	  still running.
-
-	  That is what closes the recovery chain: a component that stops
-	  reporting stops the feed, the watchdog resets the part, and the
-	  bootloader replaces an image that was still on trial.
+	  Supervise registered components and stop feeding the watchdog when one
+	  misses its deadline, so the watchdog resets the board and MCUboot can
+	  revert an unconfirmed image.
 
 config KFSW_HEALTH_MAX_COMPONENTS
 	int "Components that can be watched"
@@ -385,8 +328,7 @@ config KFSW_HEALTH_MAX_COMPONENTS
 	default 8
 	range 1 32
 	help
-	  Fixed table, sized at build time. Registration is explicit, so this is
-	  the number of components a composition actually watches.
+	  Number of components that can be watched.
 
 config KFSW_HEALTH_INTERVAL_MS
 	int "How often deadlines are checked, in milliseconds"
@@ -394,23 +336,17 @@ config KFSW_HEALTH_INTERVAL_MS
 	default 1000
 	range 50 60000
 	help
-	  Must be well below the watchdog feed interval, since the watchdog is
-	  fed only by a check that finds everything healthy. A check slower than
-	  the feed interval resets the board even when nothing is wrong.
+	  Must be well below the watchdog feed interval; a slower check resets
+	  the board even when nothing is wrong.
 
 config KFSW_FWU_LITE
 	bool "K-FSW lightweight firmware upload"
 	depends on KFSW_FWU
 	select CRC
 	help
-	  A direct path for putting a firmware image on a node, alongside the
-	  file transfer route. Both feed the same update service and may be
-	  built together; whichever starts a transfer first holds it and the
-	  other is told the service is busy.
-
-	  Blocks carry their own checksum and are checked before anything is
-	  written. A whole-image checksum tells you an eight minute upload
-	  failed; a per-block one tells you which block to send again.
+	  Direct CSP path for uploading a firmware image, next to the file
+	  transfer route. Both use the same update service, and while one
+	  transfer runs the other gets busy. Each block has its own checksum.
 
 config KFSW_FWU_LITE_BLOCK_SIZE
 	int "Image block size in bytes"
@@ -418,14 +354,8 @@ config KFSW_FWU_LITE_BLOCK_SIZE
 	default 192
 	range 16 512
 	help
-	  Payload carried by one block message. The default matches the file
-	  transfer chunk, which is sized so a message and its transport overhead
-	  fit one CSP buffer.
-
-	  Every block but the last must be exactly this size: the receiving node
-	  works out which block it expects from how much it already holds, and a
-	  short block in the middle would desynchronise the two without either
-	  noticing.
+	  Payload of one block, the same as the file transfer chunk so a block
+	  fits one CSP buffer. Every block except the last must have this size.
 
 config KFSW_FWU_LITE_CSP
 	bool "Serve lightweight firmware upload over CSP"
@@ -433,9 +363,8 @@ config KFSW_FWU_LITE_CSP
 	depends on KFSW_CSP
 	default y
 	help
-	  Bind the upload server to a CSP port and provide the sending side.
-	  Turn this off to build the protocol without a transport, which is what
-	  the unit tests do.
+	  Bind the upload server to a CSP port and add the sending side. The
+	  unit tests build the protocol without it.
 
 config KFSW_FWU_LITE_CSP_PORT
 	int "CSP port for firmware upload"
@@ -452,10 +381,8 @@ config KFSW_FWU_LITE_RDP
 	depends on KFSW_FWU_LITE_CSP
 	default n
 	help
-	  Off by default. The per-block checksum and repeat already recover
-	  losses, and adding a second retry mechanism underneath brings
-	  connection state and timeouts that can stall a transfer on a marginal
-	  link instead of reporting the block that needs resending.
+	  Off by default. Blocks are already checked and resent, and RDP adds
+	  timeouts that can stall a transfer on a bad link.
 
 config KFSW_FWU_LITE_TIMEOUT_MS
 	int "Reply timeout in milliseconds"
@@ -469,15 +396,9 @@ config KFSW_FWU_LITE_HOST_FILES
 	depends on ARCH_POSIX
 	default y
 	help
-	  Where a node runs as a process on a host, let it send an image from a
-	  host path rather than requiring the image to be copied into its
-	  simulated flash first. A ground station already has the image on the
-	  machine it runs on, and a firmware image is larger than the storage
-	  partition it would otherwise have to be staged in.
-
-	  A path under the node's own mount point is a node file; anything else
-	  is a host path. The distinction is positional rather than guessed, and
-	  no board can take the host branch because it is not compiled there.
+	  On a node running as a host process, send an image from a host path
+	  without copying it into the simulated flash. Paths under the node's
+	  mount point are node files; any other path is a host file.
 
 config KFSW_FWU_LITE_STACK_SIZE
 	int "Upload server stack size in bytes"
@@ -502,14 +423,9 @@ config KFSW_FTP_FIRMWARE_PATH
 	depends on KFSW_FTP
 	default "firmware.bin"
 	help
-	  A put to this path inside the transfer root is written into the
-	  firmware update slot instead of the filesystem. The client sends the
-	  size and CRC32 the update service needs as part of an ordinary put,
-	  so nothing about the wire protocol changes.
-
-	  The name is reserved: a file uploaded to it is never stored. It is
-	  still safe, because an image that is not a valid signed firmware is
-	  refused by the bootloader and the previous image continues to run.
+	  A put to this path in the transfer root is written to the firmware
+	  update slot instead of the filesystem. The file is never stored, and
+	  MCUboot rejects an image without a valid signature.
 
 config KFSW_FWU_STREAM_BUFFER_SIZE
 	int "Flash write buffer size in bytes"
@@ -525,14 +441,8 @@ config KFSW_FBO
 	depends on KFSW_COMMAND && KFSW_STORAGE
 	select KFSW_EVENT
 	help
-	  Carry out a sequence of commands written in a file, so a node can be
-	  handed a pass plan or a recovery sequence and get on with it without
-	  an operator on the link for every step.
-
-	  Every line is a command the command service already validates, so a
-	  file cannot ask for anything the radio could not. There are no loops
-	  and no jumps: a procedure terminates by construction, which is what
-	  makes it safe to run unattended.
+	  Run a list of commands from a file. Every line is a normal command,
+	  and there are no loops or jumps.
 
 config KFSW_FBO_LINES_MAX
 	int "Lines one procedure may carry out"
@@ -540,9 +450,7 @@ config KFSW_FBO_LINES_MAX
 	range 1 4096
 	default 128
 	help
-	  A ceiling, so a corrupted or over-ambitious file cannot become a job
-	  that runs for the rest of the pass. Blank and comment lines are not
-	  counted against it.
+	  Maximum number of lines run. Blank and comment lines don't count.
 
 config KFSW_FBO_BYTES_MAX
 	int "Maximum procedure file size in bytes"
@@ -559,8 +467,8 @@ config KFSW_FBO_LINE_MAX
 	range 32 512
 	default 128
 	help
-	  Long enough for a command and four arguments. A longer line is cut,
-	  which fails the line rather than the procedure.
+	  Long enough for a command and four arguments. A longer line is cut and
+	  fails.
 
 config KFSW_FBO_WAIT_MAX_S
 	int "Longest a wait line may ask for"
@@ -568,8 +476,7 @@ config KFSW_FBO_WAIT_MAX_S
 	range 1 86400
 	default 600
 	help
-	  Bounded on purpose. A procedure that could wait for ever would be a
-	  procedure that can hold the node, and nothing else here can.
+	  Longest wait a procedure can ask for.
 
 config KFSW_FBO_EVENT_LOOKBACK
 	int "Events an if-event line looks back through"
@@ -577,9 +484,8 @@ config KFSW_FBO_EVENT_LOOKBACK
 	range 1 256
 	default 32
 	help
-	  How far into the event ring a guard reads before deciding an event
-	  did not happen. Keep it below the ring depth, or a guard answers
-	  about events that were overwritten.
+	  How many recent events an if-event guard checks. Keep it below the
+	  ring depth.
 
 config KFSW_FBO_STACK_SIZE
 	int "Procedure thread stack size"
@@ -587,10 +493,7 @@ config KFSW_FBO_STACK_SIZE
 	range 1024 8192
 	default 3072
 	help
-	  The thread runs command handlers, so it needs what the deepest of
-	  them needs. Its own thread rather than a work item because a wait
-	  line blocks, and the system workqueue is shared with health and the
-	  watchdog.
+	  Stack of the procedure thread, which runs the command handlers.
 
 config KFSW_FBO_PRIORITY
 	int "Procedure thread priority"
@@ -598,21 +501,14 @@ config KFSW_FBO_PRIORITY
 	range 0 15
 	default 5
 	help
-	  Below the router and the servers. A procedure is not urgent; the link
-	  that can stop it is.
+	  Below the router and the servers.
 
 config KFSW_HK
 	bool "K-FSW housekeeping service"
 	depends on KFSW_PARAM
 	help
-	  Name a set of parameters once, and afterwards ask for the set rather
-	  than its members. Reading a node one value at a time costs one round
-	  trip each, which over a radio is the difference between knowing how a
-	  spacecraft is and guessing.
-
-	  Collection is local by default; reading from another node needs
-	  KFSW_PARAM_CSP, and answering a request from the ground needs
-	  KFSW_HK_CSP.
+	  Collect a set of parameters in one request. Reading remote values
+	  needs KFSW_PARAM_CSP, and serving requests needs KFSW_HK_CSP.
 
 if KFSW_HK
 
@@ -647,10 +543,8 @@ config KFSW_HK_HISTORY
 	default 16
 	range 1 256
 	help
-	  Depth and period together set how far back a pass can look, and that
-	  is the number worth choosing on purpose. Sixteen samples is sixteen
-	  minutes at a one-minute period and about eighty at five -- roughly one
-	  orbit. A pass gap of ninety minutes is only covered at the slower end.
+	  Samples kept per report. At a one-minute period, 16 samples cover 16
+	  minutes.
 
 	  Costs KFSW_HK_REPORTS * this * KFSW_HK_SAMPLE_BYTES of static RAM.
 
@@ -659,18 +553,15 @@ config KFSW_HK_SAMPLE_BYTES
 	default 192
 	range 32 240
 	help
-	  A sample is one CSP packet, so a bad link loses one sample rather than
-	  the answer. 192 is what file transfer, commands and firmware update
-	  already use.
+	  Largest sample, which is one CSP packet. 192 matches file transfer,
+	  commands and firmware update.
 
 config KFSW_HK_PERIOD_FLOOR_MS
 	int "Shortest period a report may be given"
 	default 1000
 	range 100 3600000
 	help
-	  A report collecting faster than this is refused. Collection samples
-	  hardware and can reach across a radio, so an operator asking for
-	  milliseconds would be asking the node to do nothing else.
+	  Shortest collection period accepted.
 
 config KFSW_HK_STACK_SIZE
 	int "Collection thread stack size"
@@ -684,18 +575,14 @@ config KFSW_HK_PRIORITY
 	int "Collection thread priority"
 	default 4
 	help
-	  Below the router and the servers. Housekeeping must never delay a
-	  packet to sample a value.
+	  Below the router and the servers.
 
 config KFSW_HK_STORE
 	bool "Keep collected samples in a file"
 	depends on KFSW_STORAGE
 	help
-	  Write samples to /kfsw/hk so a pass can be read after a reset. The
-	  file is a ring of fixed-size records, one file per report, and it
-	  never grows: the oldest record is overwritten in place.
-
-	  Without this the samples live only in RAM and a reset loses them.
+	  Write samples to /kfsw/hk so they survive a reset. Each report has one
+	  fixed-size ring file that doesn't grow.
 
 config KFSW_HK_STORE_CAPACITY
 	int "Samples one report's file holds"
@@ -703,14 +590,8 @@ config KFSW_HK_STORE_CAPACITY
 	range 8 8192
 	default 256
 	help
-	  Records per file. Multiply by the record size — ten bytes of header
-	  plus the report's values — for the bytes one report costs, and check
-	  it against the free space a node reports in fs_free_kb: a 64 kB
-	  partition gives about 40 kB back once LittleFS has taken its share.
-
-	  Capacity and period together set how far back a file reaches. 256
-	  samples is eight hours at a two-minute period and eight minutes at
-	  two seconds.
+	  Records per file. A record is ten bytes of header plus the report's
+	  values. A 64 kB partition has about 40 kB free after LittleFS.
 
 config KFSW_HK_STORE_FLOOR_MS
 	int "Shortest store interval a report may be given"
@@ -718,12 +599,7 @@ config KFSW_HK_STORE_FLOOR_MS
 	range 1000 3600000
 	default 10000
 	help
-	  Refused below this, because internal flash wears out. Every write
-	  eventually costs an erase, and an interval of a second spends a
-	  small partition's budget in days rather than years.
-
-	  Raise it on a board whose storage is more precious than this one's,
-	  and lower it only where the backing store is not flash.
+	  Shortest store interval accepted, to limit flash wear.
 
 config KFSW_HK_STORE_ADVISED_MS
 	int "Store interval below which a warning is logged"
@@ -731,9 +607,8 @@ config KFSW_HK_STORE_ADVISED_MS
 	range 1000 86400000
 	default 600000
 	help
-	  Accepted but warned about between the floor and here. The warning
-	  names the writes a day and the partition's erase budget, so an
-	  operator can judge it rather than be told it is bad.
+	  Store intervals between the floor and this value are accepted with a
+	  warning showing the writes per day and the erase budget.
 
 config KFSW_HK_STORE_ERASE_CYCLES
 	int "Erase cycles one flash block is rated for"
@@ -741,32 +616,23 @@ config KFSW_HK_STORE_ERASE_CYCLES
 	range 100 1000000
 	default 10000
 	help
-	  Used only to state the erase budget in the warning above. The default
-	  suits the STM32L4 internal flash; check the datasheet of the part
-	  actually being flown, because this is the number an operator will
-	  weigh a store interval against.
+	  Erase cycles of the storage flash, used in the store interval warning.
+	  The default suits the STM32L4 internal flash.
 
 config KFSW_HK_CSP
 	bool "Answer housekeeping requests over CSP"
 	depends on KFSW_CSP
 	default y
 	help
-	  Serve collected samples to a ground node. Without this the service
-	  still collects and the shell still reads it, which is what a bench
-	  bring-up needs.
+	  Serve collected samples to other nodes over CSP.
 
 config KFSW_HK_BEACON
 	bool "Send samples unprompted"
 	depends on KFSW_HK_CSP
 	help
-	  Put the newest sample on the link without being asked, so a pass
-	  learns how a node is in its first seconds rather than after a round
-	  trip. The frame is the one the request path sends, to the same port,
-	  so the ground decodes it with what it already has.
-
-	  A node that transmits unprompted can flood a link. This has a period
-	  floor it cannot go below, an enable an operator can take away, and a
-	  buffer reserve it will not spend.
+	  Send a report's newest sample periodically without a request. Beacons
+	  have a minimum interval, can be turned off, and are skipped when CSP
+	  buffers are short.
 
 config KFSW_HK_BEACON_FLOOR_MS
 	int "Shortest beacon interval a report may be given"
@@ -774,10 +640,7 @@ config KFSW_HK_BEACON_FLOOR_MS
 	range 1000 3600000
 	default 5000
 	help
-	  Refused below this. The number that matters is how much of the link a
-	  beacon may take: a 25-byte sample every five seconds is a few bytes a
-	  second, which a 57600 baud radio will not notice, and the same sample
-	  every 100 ms would be a quarter of it.
+	  Shortest beacon interval accepted.
 
 config KFSW_HK_BEACON_PORT
 	int "CSP port a beacon is addressed to"
@@ -785,14 +648,8 @@ config KFSW_HK_BEACON_PORT
 	range 1 16
 	default 15
 	help
-	  Deliberately not the port housekeeping serves on. A beacon addressed
-	  there would land on another node's request handler, and a frame whose
-	  first byte is also a version number could be read as a request.
-
-	  Nothing binds this port, so a node that receives a beacon drops it
-	  cleanly. A ground listener does not bind either: it recognises
-	  housekeeping by the port a frame came *from*, which is the serving
-	  port either way.
+	  Destination port of beacons. Nothing binds it, so a beacon can't reach
+	  another node's request handler. Ground listeners use the source port.
 
 config KFSW_HK_BEACON_BUFFER_RESERVE
 	int "CSP buffers a beacon will not take"
@@ -800,9 +657,7 @@ config KFSW_HK_BEACON_BUFFER_RESERVE
 	range 1 64
 	default 4
 	help
-	  A beacon is skipped rather than sent when fewer than this many buffers
-	  are free. A reply somebody is waiting for outranks a broadcast nobody
-	  asked for, and the skip is counted so a quiet beacon can be explained.
+	  Skip a beacon when fewer CSP buffers than this are free.
 
 config KFSW_HK_CSP_PORT
 	int "CSP port for housekeeping requests"
@@ -830,9 +685,8 @@ config KFSW_HK_PERSISTENCE
 	select CRC
 	default y
 	help
-	  Definitions are written to /kfsw/hk with a CRC, through a temporary
-	  file, so a reset mid-write leaves the previous set intact. Without
-	  this a definition works until the node restarts.
+	  Save report definitions to /kfsw/hk with a CRC, through a temporary
+	  file. Without this, definitions are lost at reset.
 
 endif # KFSW_HK
 

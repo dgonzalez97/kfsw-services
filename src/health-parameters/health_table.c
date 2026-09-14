@@ -59,11 +59,7 @@ static void sample_interval(void *value)
 	*(uint16_t *)value = (uint16_t)kfsw_health_get_interval_ms();
 }
 
-/* The service owns the decision, not this table: it is the one that knows what
- * the watchdog was armed with. Refusing happens here, before the value is
- * stored, so a rejected interval is reported as rejected rather than written
- * and quietly undone.
- */
+/* Refuse an interval the watchdog can't tolerate before it is stored. */
 static int validate_interval(const union kfsw_param_scalar *value)
 {
 	return kfsw_health_check_interval_ms(value->u16);

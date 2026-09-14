@@ -9,11 +9,7 @@
 
 #include <kfsw/services/event.h>
 
-/*
- * A fixed ring of records with a monotonic sequence number. Emitting takes a
- * short spinlock rather than a mutex so any context can record, including one
- * that must not sleep. Nothing here touches a link or a filesystem.
- */
+/* Fixed ring of records. A spinlock allows recording from any context. */
 
 static struct kfsw_event_record ring[CONFIG_KFSW_EVENT_RING_DEPTH];
 static struct k_spinlock ring_lock;
@@ -98,10 +94,7 @@ void kfsw_event_visit(kfsw_event_visitor_t visitor, void *context)
 			k_spin_unlock(&ring_lock, key);
 			return;
 		}
-		/*
-		 * Copy under the lock and call the visitor outside it, so a
-		 * visitor that prints cannot hold off a producer.
-		 */
+		/* Copy under the lock, call the visitor outside it. */
 		copy = ring[(oldest_index + index) % ARRAY_SIZE(ring)];
 		k_spin_unlock(&ring_lock, key);
 

@@ -17,7 +17,6 @@
 
 #include <kfsw/services/fwu.h>
 #include "fwu_internal.h"
-/* Attributes this file's messages, so its level can be raised alone. */
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_FWU
 #include <kfsw/services/log.h>
 
@@ -29,10 +28,7 @@
 #define KFSW_FWU_PARTITION_SIZE DT_REG_SIZE(KFSW_FWU_PARTITION_NODE)
 #endif
 
-/* The bootloader keeps its own trailer at the end of the slot. Reserving a
- * sector for it stops a maximum-sized image from overwriting the metadata that
- * says the image is there.
- */
+/* Reserve the last sector for the bootloader trailer. */
 #define KFSW_FWU_TRAILER_SECTORS 1U
 
 K_MUTEX_DEFINE(fwu_lock);
@@ -77,10 +73,7 @@ static struct stream_flash_ctx fwu_stream;
 static const struct flash_area *fwu_area;
 static bool fwu_stream_open;
 
-/* Uses its own handle rather than the shared one. An earlier version borrowed
- * the transfer's area pointer and closed it, which set the shared pointer to
- * NULL underneath an expression that was still about to dereference it.
- */
+/* Uses its own flash area handle instead of the shared one. */
 static int fwu_sector_size(void)
 {
 	const struct flash_area *area;
@@ -157,9 +150,7 @@ static void fwu_close_stream(void)
 	fwu_stream_open = false;
 }
 
-/* Caller holds fwu_lock. Leaves the slot erased so that a partial image can
- * never be mistaken for a complete one.
- */
+/* Caller holds fwu_lock. Leaves the slot erased. */
 static int fwu_erase_slot(void)
 {
 	int result;
@@ -205,8 +196,7 @@ int kfsw_fwu_begin(uint32_t total_size, uint32_t expected_crc32)
 
 	result = fwu_erase_slot();
 	if (result != 0) {
-		/* A refusal that says nothing leaves an operator with a failed
-		 * upload and no way to tell a full slot from a broken one. */
+		/* Log why the image was refused. */
 		kfsw_log_error("Firmware update: could not erase the slot (%d)", result);
 		fwu_state.state = KFSW_FWU_FAILED;
 		fwu_state.failed++;
@@ -225,15 +215,8 @@ int kfsw_fwu_begin(uint32_t total_size, uint32_t expected_crc32)
 		return result;
 	}
 
-	/* The region handed to the streaming writer is the space it may use, not
-	 * the length of this image. It must be a whole number of write blocks,
-	 * and an image is whatever length the linker produced: passing the image
-	 * length rejects every image whose byte count is not a multiple of the
-	 * write block, for a reason that has nothing to do with the image.
-	 *
-	 * How much of the region this image occupies is tracked here, and a
-	 * write past its declared size is refused, so the bound does not depend
-	 * on the region being tight.
+	/* The stream writer gets the whole region, which is a multiple of the write
+	 * block size; the image size limit is checked here instead.
 	 */
 	result = stream_flash_init(&fwu_stream, flash_area_get_device(fwu_area), fwu_stream_buffer,
 				   sizeof(fwu_stream_buffer), fwu_area->fa_off + write_offset,
@@ -400,11 +383,7 @@ int kfsw_fwu_finish(void)
 		return result;
 	}
 
-	/* Asking is not the same as being heard. An image written to the wrong
-	 * offset leaves the bootloader with nothing to swap, and it says so
-	 * only by quietly running the old image on the next boot -- which from
-	 * the ground looks exactly like a successful update.
-	 */
+	/* Check that the bootloader scheduled the swap; otherwise it boots the old image. */
 	if (mcuboot_swap_type() != BOOT_SWAP_TYPE_TEST) {
 		kfsw_log_error("Firmware update: no swap was scheduled");
 		fwu_state.state = KFSW_FWU_FAILED;

@@ -6,9 +6,7 @@
 #include <kfsw/services/parameter.h>
 
 /*
- * The parameter service describing itself. Worth having because an empty table
- * and a table whose snapshot failed to load look identical from the ground
- * otherwise: both answer every read with a compiled default.
+ * Parameter service counters and settings.
  */
 
 static uint16_t param_count;
@@ -124,23 +122,13 @@ static const struct kfsw_param_definition param_param_definitions[] = {
 	{
 		.offset = 0x10U,
 		.type = KFSW_PARAM_U8,
-		/* Stored as well as live: an operator who turns this on wants it
-		 * to survive the reboot they are about to cause. */
+		/* Stored and live. */
 		.flags = KFSW_PARAM_FLAG_CONFIGURATION | KFSW_PARAM_FLAG_PERSISTENT |
 			 KFSW_PARAM_FLAG_LIVE,
 		.name = "param_autosave",
 		.description = "Write a snapshot after every accepted change",
 		.value = &param_autosave,
-		/* On, so a value marked persistent actually survives the next
-		 * reset without an operator remembering to save. Off was the
-		 * safer default for flash wear, and it meant the flag promised
-		 * something the node did not do.
-		 *
-		 * The cost is one snapshot write per accepted change to a
-		 * persistent value, which param_saves counts. Turning it off
-		 * and using `param save` by hand is still there for a campaign
-		 * that writes often.
-		 */
+		/* On by default: an accepted change to a persistent value writes the snapshot. */
 		.default_value = {.u8 = 1U},
 		.validate = validate_autosave,
 	},
@@ -158,11 +146,7 @@ static const struct kfsw_param_definition param_param_definitions[] = {
 		.offset = 0x18U,
 		.type = KFSW_PARAM_U32,
 		.flags = KFSW_PARAM_FLAG_READ_ONLY,
-		/* Read with param_persist_bytes this is the headroom, which is
-		 * the question somebody actually has. It is also the size of
-		 * the buffer the snapshot is built in, so it bounds the file
-		 * and the RAM together.
-		 */
+		/* Snapshot size limit, also the size of its buffer. */
 		.name = "param_persist_max_bytes",
 		.description = "Most space a snapshot is allowed",
 		.value = &param_persist_max_bytes,

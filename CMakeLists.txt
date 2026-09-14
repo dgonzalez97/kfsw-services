@@ -3,8 +3,7 @@ set(kfsw_services_sources
     src/log.c
 )
 
-# Two services keep a snapshot on the filesystem and both want the same
-# guarantee, so the sequence that provides it lives in one place.
+# Atomic snapshot writes, shared by parameters and housekeeping.
 if(CONFIG_KFSW_PARAM_PERSISTENCE OR CONFIG_KFSW_HK_PERSISTENCE)
     list(APPEND kfsw_services_sources src/snapshot_file.c)
 endif()
@@ -13,10 +12,8 @@ if(CONFIG_KFSW_PARAM)
     list(APPEND kfsw_services_sources src/boot-parameters/boot_table.c)
 endif()
 
-# The image version an operator reads back has to name the source it was built
-# from, or comparing a node against a build record proves nothing. Resolved
-# from the composition repository rather than this one, because that is what
-# pins every other repository. The fallback keeps a source tarball buildable.
+# Image version from git describe of the k-fsw repository. The fallback keeps
+# a source tarball buildable.
 zephyr_get(KFSW_IMAGE_VERSION SYSBUILD LOCAL)
 if(NOT DEFINED KFSW_IMAGE_VERSION)
     find_package(Git QUIET)
@@ -34,12 +31,8 @@ if(NOT DEFINED KFSW_IMAGE_VERSION)
             set(KFSW_IMAGE_VERSION "${kfsw_git_describe}")
         endif()
 
-        # Resolved once, at configure time, so an incremental build after a
-        # commit or a checkout would otherwise keep reporting the commit that
-        # was current when the build directory was first configured. Watching
-        # HEAD and the ref it names makes CMake reconfigure when either moves.
-        # The "-dirty" suffix still only reflects the tree as it was then;
-        # naming the commit is what a build record is compared against.
+        # Reconfigure when HEAD or the branch it points to moves, so incremental
+        # builds report the current commit.
         set(kfsw_git_dir "${CMAKE_CURRENT_LIST_DIR}/../k-fsw/.git")
         if(EXISTS "${kfsw_git_dir}/HEAD")
             set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
@@ -115,11 +108,8 @@ if(CONFIG_KFSW_PARAM_CSP)
         PROPERTIES COMPILE_OPTIONS "-Wno-double-promotion"
     )
 
-    # libparam prints its diagnostics with printf, one line per parameter while
-    # a descriptor list downloads. That buries the value an operator asked for.
-    # The library is vendored at an upstream revision west manages, so it is not
-    # edited; its printf is redirected here instead, into a debug-level log line
-    # attributed to the parameter module. See src/parameter/libparam_print.c.
+    # libparam prints diagnostics with printf. They are redirected to debug log
+    # lines in src/parameter/libparam_print.c instead of editing the library.
     target_compile_options(kfsw_libparam
         PRIVATE -include "${CMAKE_CURRENT_LIST_DIR}/src/parameter/libparam_print.h"
     )

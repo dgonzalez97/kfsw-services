@@ -8,13 +8,7 @@
 #include "ftp_internal.h"
 
 /*
- * Counters and the settings an operator may change from the ground. They live
- * with the service rather than the table that publishes them, because the
- * service is what applies them.
- *
- * Outcomes were events and counted nowhere, which answers "what happened" but
- * not "how often" -- and reading a ring costs more of a pass than reading a
- * number.
+ * Counters and settings that can be changed from the ground.
  */
 
 static atomic_t ftp_transfers;
@@ -54,12 +48,8 @@ uint32_t kfsw_ftp_get_timeout_ms(void)
 
 int kfsw_ftp_check_timeout_ms(uint32_t timeout_ms)
 {
-	/* The bound matches the Kconfig range, so a value accepted here is one
-	 * the composition could have been built with.
-	 *
-	 * Separate from applying it because a change callback cannot refuse: by
-	 * the time one runs the value is already stored, and undoing it
-	 * afterwards still reports success for something rejected.
+	/* Same range as Kconfig. Checked separately because a change callback
+	 * can't refuse a value.
 	 */
 	if ((timeout_ms < KFSW_FTP_TIMEOUT_MIN_MS) || (timeout_ms > KFSW_FTP_TIMEOUT_MAX_MS)) {
 		return -ERANGE;
@@ -85,10 +75,7 @@ uint16_t kfsw_ftp_get_chunk_size(void)
 
 int kfsw_ftp_check_chunk_size(uint16_t chunk_size)
 {
-	/* The workspace buffer is sized at build time and the protocol codec
-	 * refuses anything larger, so a bigger value would be accepted here and
-	 * rejected at the first transfer. Refuse it where it can be explained.
-	 */
+	/* The buffer is sized at build time, so a larger chunk is refused here. */
 	if ((chunk_size == 0U) || (chunk_size > KFSW_FTP_CHUNK_SIZE)) {
 		return -ERANGE;
 	}

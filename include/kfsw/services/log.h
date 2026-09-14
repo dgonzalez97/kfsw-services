@@ -19,11 +19,8 @@ extern "C" {
 #endif
 
 /**
- * Modules a message can be attributed to.
- *
- * Every slot is allocated now, including for components that do not log yet,
- * because the number is a position in the level array and in the snapshot. A
- * renumbering would silently move every stored level onto a different module.
+ * Modules a message can be attributed to. The order matches the level array
+ * and the snapshot, so don't renumber them.
  */
 enum kfsw_log_module {
 	KFSW_LOG_MODULE_APP = 0,
@@ -45,9 +42,8 @@ enum kfsw_log_module {
 };
 
 /*
- * A file says which module it is by defining KFSW_LOG_MODULE before including
- * this header. Anything that does not is attributed to the application, which
- * is the honest default: an unattributed message is the composition's.
+ * Define KFSW_LOG_MODULE before including this header to set a file's module.
+ * Files that don't are logged as the application.
  */
 #ifndef KFSW_LOG_MODULE
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_APP
@@ -79,12 +75,12 @@ int kfsw_log_set_level(uint8_t level);
 uint8_t kfsw_log_get_level(void);
 
 #if CONFIG_KFSW_PARAM
-/** Parameter table owned by the log service, in the service band. */
+/** Parameter table of the log service, in the service band. */
 #define KFSW_LOG_PARAM_TABLE_ID 25U
 /** Stable logical name paired with KFSW_LOG_PARAM_TABLE_ID. */
 #define KFSW_LOG_PARAM_TABLE_NAME "log"
 
-/** Logging-owned runtime policy parameter definitions. */
+/** Parameter definitions of the log service. */
 extern const struct kfsw_param_definition_set kfsw_log_param_definitions;
 #endif
 

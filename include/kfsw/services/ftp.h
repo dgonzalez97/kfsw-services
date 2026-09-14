@@ -17,11 +17,8 @@ extern "C" {
 #define KFSW_FTP_STORAGE_ROOT "/kfsw/ftp"
 
 /**
- * A second root, served read-only.
- *
- * Housekeeping owns its files and a remote peer must not be able to delete a
- * node's own record of a pass, so this path is readable and nothing more:
- * every write, rename, delete and mkdir under it is refused.
+ * A second, read-only root with the housekeeping files. Writes, renames,
+ * deletes and mkdir under it are refused.
  */
 #define KFSW_FTP_READONLY_ROOT "/kfsw/hk"
 /* Matches the Kconfig range, so a value accepted at runtime is one the
@@ -67,10 +64,9 @@ struct kfsw_ftp_stats {
 typedef bool (*kfsw_ftp_list_visitor_t)(const struct kfsw_ftp_entry *entry, void *context);
 
 /**
- * Event identifiers owned by the file-transfer service.
- *
- * Numbers are stable and never reused. Transfer payloads are the peer node as
- * a big-endian u16, then the byte count and CRC32 as big-endian u32.
+ * Event IDs of the file transfer service. IDs are never reused. Transfer
+ * payload: peer node as big-endian u16, then the byte count and CRC32 as
+ * big-endian u32.
  */
 enum kfsw_event_ftp_id {
 	/** An upload committed on the peer. */
@@ -172,7 +168,7 @@ int kfsw_ftp_get(uint16_t node, const char *remote_path, const char *local_path,
 		 struct kfsw_ftp_transfer_result *result);
 
 #if CONFIG_KFSW_PARAM
-/** Parameter table owned by this service, in the service band. */
+/** Parameter table of this service, in the service band. */
 #define KFSW_FTP_PARAM_TABLE_ID 29U
 /** Stable logical name paired with KFSW_FTP_PARAM_TABLE_ID. */
 #define KFSW_FTP_PARAM_TABLE_NAME "ftp"

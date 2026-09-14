@@ -5,11 +5,7 @@
 #include <kfsw/services/event.h>
 #include <kfsw/services/parameter.h>
 
-/* Everything the event record already counts, published so it can be read from
- * the ground without pulling the records themselves. `overwritten` is the one
- * worth watching: a record that quietly discards is not a record, and the only
- * way to know it wrapped is to count what it lost.
- */
+/* Event record counters. */
 static uint32_t event_recorded;
 static uint32_t event_rejected;
 static uint32_t event_overwritten;

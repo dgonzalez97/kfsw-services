@@ -19,10 +19,7 @@ struct kfsw_hk_definition {
 /** A report: what it collects, how often, and what it has collected. */
 struct kfsw_hk_report {
 	struct kfsw_hk_entry entries[CONFIG_KFSW_HK_ENTRIES];
-	/* Resolved once when the report is defined. Looking a width up per
-	 * entry per collection would walk the parameter list every time, which
-	 * is the cost this service exists to avoid paying.
-	 */
+	/* Resolved when the report is defined. */
 	uint16_t widths[CONFIG_KFSW_HK_ENTRIES];
 	uint16_t offsets[CONFIG_KFSW_HK_ENTRIES];
 	uint8_t entry_count;
@@ -74,10 +71,7 @@ void kfsw_hk_storage_unlock(void);
 
 #if CONFIG_KFSW_PARAM_CSP
 /**
- * Read every entry belonging to one remote node in as few exchanges as fit.
- *
- * Grouped by node because the descriptor cache holds one node at a time, so
- * alternating between two would re-download a list over the radio.
+ * Read every entry of one remote node in as few exchanges as possible.
  */
 int kfsw_hk_collect_remote(const struct kfsw_hk_definition *entry, uint16_t node,
 			   struct kfsw_hk_sample *sample, uint32_t *failures, int64_t deadline);
@@ -113,10 +107,7 @@ uint16_t kfsw_hk_store_restore_sequence(uint8_t report);
 #if CONFIG_KFSW_HK_BEACON
 void kfsw_hk_beacon_stats(uint32_t *sent, uint32_t *skipped);
 
-/* Keeps a beacon across a reset, the way a period is kept. Defined next to the
- * rest of the saving so the beacon file does not need to know whether this
- * build persists anything.
- */
+/* Save a beacon setting, like a period. */
 void kfsw_hk_beacon_restore(uint8_t report, uint16_t node, uint32_t interval_ms);
 void kfsw_hk_beacon_tick(uint8_t report, int64_t now);
 int64_t kfsw_hk_beacon_wait(uint8_t report, int64_t now);
@@ -125,18 +116,14 @@ int64_t kfsw_hk_beacon_wait(uint8_t report, int64_t now);
 #if CONFIG_KFSW_HK_CSP
 int kfsw_hk_server_start(void);
 
-/* Named rather than included: this header is read by files that have no
- * business pulling in the CSP headers.
- */
+/* Forward declaration, to keep the CSP headers out. */
 struct csp_conn_s;
 struct csp_packet_s;
 
 /**
  * @brief Answer one request, sending a packet per sample on @p connection.
  *
- * Separate from the accept loop so what a request means can be exercised
- * without a router: the loop around it only accepts, reads and closes.
- * Takes ownership of @p request.
+ * Separate from the accept loop so tests can call it. Frees @p request.
  */
 void kfsw_hk_serve_request(struct csp_conn_s *connection, struct csp_packet_s *request);
 #endif

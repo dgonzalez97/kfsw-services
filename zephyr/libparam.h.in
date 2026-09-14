@@ -13,9 +13,9 @@ size_t kfsw_libparam_strlcpy(char *destination, const char *source,
 			    size_t destination_size);
 
 /*
- * PARAM_LIST_DYNAMIC and PARAM_HAVE_TIMESTAMP are intentionally undefined.
- * File VMEM, FRAM VMEM, and the collector are excluded by the CMake source
- * selection rather than configured through Meson.
+ * PARAM_LIST_DYNAMIC and PARAM_HAVE_TIMESTAMP are left undefined. File VMEM,
+ * FRAM VMEM and the collector are left out of the CMake sources instead of
+ * being configured through Meson.
  */
 
 #endif

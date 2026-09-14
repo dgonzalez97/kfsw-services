@@ -11,7 +11,6 @@
 
 #include <kfsw/comms/csp.h>
 #include <kfsw/services/hk.h>
-/* Attributes this file's messages, so its level can be raised alone. */
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_HK
 #include <kfsw/services/log.h>
 
@@ -33,12 +32,7 @@ static bool running;
 static K_MUTEX_DEFINE(start_lock);
 
 /*
- * One packet per sample, not one stream.
- *
- * A pass that loses a packet then loses one sample, and the sequence number in
- * each frame makes the gap visible, so ground knows it missed 41 to 47 rather
- * than believing it has everything. Streaming under RDP would turn a bad link
- * into no answer at all.
+ * One packet per sample, so a lost packet costs one sample.
  */
 void kfsw_hk_serve_request(csp_conn_t *connection, csp_packet_t *request)
 {
@@ -78,10 +72,7 @@ void kfsw_hk_serve_request(csp_conn_t *connection, csp_packet_t *request)
 
 		reply = csp_buffer_get(sample.length);
 		if (reply == NULL) {
-			/* Normal under load. Skipping costs one sample, which
-			 * the sequence numbers will show; waiting would hold a
-			 * connection open while the router needs the pool.
-			 */
+			/* No buffer: skip this sample instead of waiting. */
 			kfsw_log_warning("HK: no buffer for report %u, %u sent", report, sent);
 			break;
 		}
@@ -116,10 +107,7 @@ static void hk_server(void *arg1, void *arg2, void *arg3)
 K_THREAD_DEFINE(kfsw_hk_server_thread, CONFIG_KFSW_HK_SERVER_STACK_SIZE, hk_server, NULL, NULL,
 		NULL, CONFIG_KFSW_HK_SERVER_PRIORITY, 0, SYS_FOREVER_MS);
 
-/* Bound here rather than inside the thread, so a port that is taken is
- * reported to the caller instead of only logged from somewhere nobody is
- * watching.
- */
+/* Bound here so a port in use is reported to the caller. */
 static int server_start(void)
 {
 	struct kfsw_csp_info csp_info;

@@ -20,9 +20,6 @@
  *   4..7   argument        BEGIN: image size. BLOCK: this block's checksum.
  *   8..11  extra           BEGIN: whole-image checksum. Replies: bytes held.
  *   12..   payload         BLOCK only
- *
- * Fields are placed one at a time rather than by copying a structure, so the
- * layout does not depend on how a compiler chooses to pad or order it.
  */
 
 #define OFFSET_OPCODE 0U
@@ -169,9 +166,8 @@ static void handle_block(const struct kfsw_fwu_lite_message *request,
 		return;
 	}
 
-	/* Blocks are fixed size except the last, so the index the node expects
-	 * follows from how much it already holds. Saying which block is wanted
-	 * lets a sender recover without restarting.
+	/* Blocks have a fixed size except the last, so the expected index follows
+	 * from the bytes already held.
 	 */
 	expected_index = status.received / KFSW_FWU_LITE_MAX_BLOCK_SIZE;
 	if (request->block_index != expected_index) {
@@ -179,21 +175,14 @@ static void handle_block(const struct kfsw_fwu_lite_message *request,
 		return;
 	}
 
-	/* A block index is derived from how much the node holds, which only
-	 * works if every block but the last is full. A short block in the middle
-	 * would make the sender and the node disagree about which block comes
-	 * next, and neither would notice.
-	 */
+	/* Only the last block may be short. */
 	if (((status.received + request->data_size) < status.total_size) &&
 	    (request->data_size != KFSW_FWU_LITE_MAX_BLOCK_SIZE)) {
 		reply->status = KFSW_FWU_LITE_STATUS_INVALID;
 		return;
 	}
 
-	/* Check the block before writing it. A block that fails is not written
-	 * and does not advance the transfer, so resending it is just sending it
-	 * again rather than restarting or seeking.
-	 */
+	/* A block that fails its checksum isn't written, so it can be sent again. */
 	computed = crc32_ieee(request->data, request->data_size);
 	if (computed != request->argument) {
 		reply->status = KFSW_FWU_LITE_STATUS_BAD_BLOCK;
@@ -211,9 +200,7 @@ static void handle_verify(struct kfsw_fwu_lite_message *reply)
 
 static void handle_start_flashing(struct kfsw_fwu_lite_message *reply)
 {
-	/* Finishing verifies the image and asks the bootloader for a swap, and
-	 * reports failure if no swap was actually scheduled.
-	 */
+	/* Verify the image and fail if no swap was scheduled. */
 	reply->status = status_for_errno(kfsw_fwu_finish());
 }
 

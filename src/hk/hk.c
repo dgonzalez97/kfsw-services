@@ -11,7 +11,6 @@
 #include <kfsw/comms/csp.h>
 #endif
 #include <kfsw/services/hk.h>
-/* Attributes this file's messages, so its level can be raised alone. */
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_HK
 #include <kfsw/services/log.h>
 #include <kfsw/services/parameter.h>
@@ -70,13 +69,8 @@ struct kfsw_hk_report *kfsw_hk_report_at(uint8_t report)
 }
 
 /*
- * A value's width on the wire.
- *
- * Fixed by the declaration rather than by what a particular sample happens to
- * hold, so every sample of a report has the same layout and ground can read
- * the tenth value without parsing the nine before it. A string that is shorter
- * than its capacity is padded, which costs bytes and buys a frame that can be
- * indexed.
+ * Wire width of a value, from its declaration, so every sample of a report has
+ * the same layout. Shorter strings are padded.
  */
 static size_t entry_width(enum kfsw_param_type type, uint16_t array_size)
 {
@@ -157,12 +151,7 @@ void kfsw_hk_write_value(uint8_t *out, size_t width, const struct kfsw_param_val
 }
 
 /*
- * The declared width of one entry, without reading it.
- *
- * Sizing a definition must not depend on a value being readable right now: a
- * remote node that is briefly quiet should not make a report undefinable, and
- * a report whose size depends on what a string happens to hold would change
- * shape between collections.
+ * Declared width of one entry, without reading the value.
  */
 struct width_search {
 	uint16_t wanted;
@@ -221,11 +210,7 @@ int kfsw_hk_prepare_definition(uint8_t report, const struct kfsw_hk_entry *entri
 	    count == 0U || count > CONFIG_KFSW_HK_ENTRIES) {
 		return -EINVAL;
 	}
-	/* Every entry is priced before anything is stored, so a definition that
-	 * cannot fit leaves the report that was working exactly as it was.
-	 * The widths are kept, because resolving them again on every collection
-	 * would walk the parameter list once per value.
-	 */
+	/* Check every entry before storing anything, and keep the widths. */
 
 	for (size_t index = 0U; index < count; index++) {
 		size_t width = 0U;
@@ -288,9 +273,7 @@ static int define_impl(uint8_t report, const struct kfsw_hk_entry *entries, size
 	target->payload_bytes = definition.payload_bytes;
 	target->defined = true;
 	target->next_uptime_ms = k_uptime_get() + target->period_ms;
-	/* A redefinition invalidates what was collected: the same bytes would
-	 * mean different things under the new layout.
-	 */
+	/* A new definition discards the old samples. */
 	target->held = 0U;
 	target->next_slot = 0U;
 	stats.reports = 0U;
@@ -302,10 +285,7 @@ static int define_impl(uint8_t report, const struct kfsw_hk_entry *entries, size
 	kfsw_hk_unlock();
 
 #if CONFIG_KFSW_HK_STORE
-	/* Same rule as the ring above: a redefinition invalidates what was
-	 * collected, and a file of the old layout would decode into the wrong
-	 * parameters. Storage has to be asked for again.
-	 */
+	/* Same for the store: the old file no longer matches the layout. */
 	kfsw_hk_store_forget(report);
 #endif
 	kfsw_hk_storage_unlock();
@@ -381,9 +361,7 @@ void kfsw_hk_set_enabled(bool value)
 	}
 	kfsw_hk_unlock();
 
-	/* Logged outside the lock, and only on a change, so setting the
-	 * parameter to what it already is does not fill a pass with lines.
-	 */
+	/* Log only on a change. */
 	if (changed) {
 		kfsw_hk_wake();
 		kfsw_log_info("HK: periodic collection %s", value ? "enabled" : "disabled");
@@ -401,11 +379,7 @@ bool kfsw_hk_enabled(void)
 }
 
 /*
- * Whether the node knows what time it is.
- *
- * A composition without CSP has nowhere for a wall clock to come from, and one
- * with CSP has none until the ground sets it. Both answer false, and the
- * collector treats them the same.
+ * Whether the wall clock is set. False without CSP.
  */
 bool kfsw_hk_clock_valid(void)
 {
@@ -420,13 +394,8 @@ bool kfsw_hk_clock_valid(void)
 }
 
 /*
- * One collection.
- *
- * The timestamp is taken once, at the start, which is what the field is called:
- * a remote value arrives over a radio and cannot be simultaneous with anything.
- *
- * An unreadable entry is zero-filled and flagged, not dropped, so the layout
- * still matches the definition ground holds.
+ * One collection. The timestamp is taken at the start. An entry that can't be
+ * read is zero-filled and flagged.
  */
 int kfsw_hk_collect_report(const struct kfsw_hk_definition *entry, struct kfsw_hk_sample *sample,
 			   uint32_t *failures)
@@ -442,12 +411,7 @@ int kfsw_hk_collect_report(const struct kfsw_hk_definition *entry, struct kfsw_h
 
 	memset(sample, 0, sizeof(*sample));
 
-	/* Zero means the clock was never set, which is what a composition
-	 * without CSP has: there is nowhere for a wall clock to come from. A
-	 * sample still says what the values were, it just cannot say when, and
-	 * the flag says so rather than leaving a reader to infer it from a
-	 * timestamp that happens to be zero.
-	 */
+	/* Zero means the clock is not set; flag it. */
 	sample->seconds = 0U;
 	if (kfsw_hk_clock_valid()) {
 #if CONFIG_KFSW_CSP
@@ -462,10 +426,7 @@ int kfsw_hk_collect_report(const struct kfsw_hk_definition *entry, struct kfsw_h
 	sample->entry_count = entry->entry_count;
 	sample->length = (uint16_t)(KFSW_HK_HEADER_SIZE + entry->payload_bytes);
 
-	/* Local first, and each one straight into its reserved slot. Widths and
-	 * offsets were settled when the report was defined, so nothing here
-	 * looks a parameter up twice.
-	 */
+	/* Local entries first, straight into their slots. */
 	for (size_t index = 0U; index < entry->entry_count; index++) {
 		const struct kfsw_hk_entry *definition = &entry->entries[index];
 		struct kfsw_param_value value;
@@ -483,10 +444,7 @@ int kfsw_hk_collect_report(const struct kfsw_hk_definition *entry, struct kfsw_h
 	}
 
 #if CONFIG_KFSW_PARAM_CSP
-	/* Then one pass per remote node. Alternating between two nodes would
-	 * make the descriptor cache re-download a list over the radio, so every
-	 * entry of a node is taken before moving on.
-	 */
+	/* Then one pass per remote node, since the descriptor cache holds one node. */
 	for (size_t index = 0U; index < entry->entry_count; index++) {
 		uint16_t node = entry->entries[index].node;
 		bool seen = false;
@@ -587,7 +545,7 @@ int kfsw_hk_collect(uint8_t report)
 	stats.last_seconds = scratch.seconds;
 	kfsw_hk_unlock();
 #if CONFIG_KFSW_HK_STORE
-	/* Collection owns the ring writes; storage excludes definition changes. */
+	/* Collection writes the ring; storage blocks definition changes. */
 	if (kfsw_hk_store_interval(report) != 0U) {
 		int stored = kfsw_hk_store_flush(report, next_sequence);
 
@@ -625,11 +583,7 @@ static int set_store_impl(uint8_t report, uint32_t interval_ms)
 	record_size = (uint16_t)(KFSW_HK_HEADER_SIZE + target->payload_bytes);
 	kfsw_hk_unlock();
 
-	/* Stopping is not discarding. Turning a store off used to unlink the
-	 * file in the same call, so the command that reads as "stop writing"
-	 * also destroyed the pass it had already captured. Removing it is now
-	 * its own request.
-	 */
+	/* Stopping keeps the file; kfsw_hk_store_clear() deletes it. */
 	result = kfsw_hk_store_configure(report, interval_ms, period, record_size);
 	kfsw_hk_storage_unlock();
 	return result;
@@ -743,9 +697,7 @@ void kfsw_hk_get_stats(struct kfsw_hk_stats *out)
 	kfsw_hk_lock();
 	*out = stats;
 	kfsw_hk_unlock();
-	/* Read outside the lock: it asks the clock, not this service, and
-	 * holding the housekeeping mutex across that buys nothing.
-	 */
+	/* Read outside the lock; it only reads the clock. */
 	out->clock_valid = kfsw_hk_clock_valid();
 	out->enabled = kfsw_hk_enabled();
 #if CONFIG_KFSW_HK_BEACON
@@ -907,7 +859,7 @@ int kfsw_hk_clear_store(uint8_t report)
 #endif
 
 #if CONFIG_KFSW_HK_PERSISTENCE
-/* Save caller owns HK state. The file mutex is always acquired first. */
+/* The caller holds the HK state lock. The file mutex is taken first. */
 uint64_t kfsw_hk_config_revision(void)
 {
 	return config_revision;
@@ -963,7 +915,7 @@ void kfsw_hk_restore_end(int result)
 	kfsw_hk_wake();
 }
 
-/* The complete snapshot has already been checked. Caller holds config ownership. */
+/* The snapshot is already checked. The caller holds the config lock. */
 void kfsw_hk_restore_report(uint8_t index, const struct kfsw_hk_definition *definition,
 			    uint32_t period_ms)
 {

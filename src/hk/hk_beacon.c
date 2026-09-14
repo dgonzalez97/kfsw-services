@@ -104,10 +104,7 @@ void kfsw_hk_beacon_tick(uint8_t report, int64_t now)
 		return;
 	}
 
-	/* The rule that makes an unprompted transmitter safe to have: leave the
-	 * pool with room for the traffic somebody is waiting on. Counted rather
-	 * than logged, because a busy link would fill a pass with warnings.
-	 */
+	/* Skip the beacon when too few buffers are free, and count it. */
 	if (csp_buffer_remaining() <= CONFIG_KFSW_HK_BEACON_BUFFER_RESERVE) {
 		kfsw_hk_lock();
 		skipped_count++;
@@ -133,7 +130,7 @@ void kfsw_hk_beacon_tick(uint8_t report, int64_t now)
 	kfsw_hk_unlock();
 }
 
-/* Caller holds HK state ownership. */
+/* Caller holds the HK state lock. */
 int64_t kfsw_hk_beacon_wait(uint8_t report, int64_t now)
 {
 	return beacons[report].interval_ms == 0U ? 200

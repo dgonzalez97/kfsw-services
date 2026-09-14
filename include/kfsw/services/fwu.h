@@ -81,8 +81,7 @@ uint32_t kfsw_fwu_max_image_size(void);
 /**
  * @brief Byte offset within the target partition where an image is written.
  *
- * Non-zero because of the bootloader's swap mode. Exposed so the reason is
- * testable rather than buried.
+ * Non-zero because of the bootloader's swap mode.
  *
  * @return The offset in bytes.
  */
@@ -108,9 +107,7 @@ int kfsw_fwu_begin(uint32_t total_size, uint32_t expected_crc32);
 /**
  * @brief Accept the next span of image bytes.
  *
- * Spans must arrive in order and without gaps. An out-of-order write is
- * rejected rather than seeked to: a hole nobody notices until the bootloader
- * jumps into it is not worth the risk.
+ * Spans must arrive in order and without gaps.
  *
  * @param offset Offset of this span within the image, from zero.
  * @param data Bytes to write.
@@ -205,7 +202,7 @@ const char *kfsw_fwu_state_name(enum kfsw_fwu_state state);
 /** @} */
 
 #if CONFIG_KFSW_PARAM
-/** Parameter table owned by this service, in the service band. */
+/** Parameter table of this service, in the service band. */
 #define KFSW_FWU_PARAM_TABLE_ID 30U
 /** Stable logical name paired with KFSW_FWU_PARAM_TABLE_ID. */
 #define KFSW_FWU_PARAM_TABLE_NAME "fwu"

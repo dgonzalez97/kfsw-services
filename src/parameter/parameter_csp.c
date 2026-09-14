@@ -20,7 +20,6 @@
 #include <param/param_server.h>
 
 #include <kfsw/comms/csp.h>
-/* Attributes this file's messages, so its level can be raised alone. */
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_PARAM
 #include <kfsw/services/log.h>
 #include <kfsw/services/parameter.h>
@@ -38,10 +37,8 @@
 #define KFSW_PARAM_LIST_INDEXED_VERSION 4U
 #define KFSW_PARAM_LIST_REPLY_HEADER 10U
 #define KFSW_PARAM_LIST_REQUEST_SIZE 7U
-/* Ask for one named descriptor instead of walking the whole list. Reading a
- * single remote value otherwise costs one exchange per parameter the node
- * owns, which is the whole list to answer a question about one entry. A node
- * that predates this answers nothing, so the caller falls back to the walk. */
+/* Ask for one named descriptor instead of the whole list. A node that doesn't
+ * support it doesn't answer, and the caller falls back to the list. */
 #define KFSW_PARAM_LIST_LOOKUP_VERSION 5U
 #define KFSW_PARAM_LIST_LOOKUP_HEADER 2U
 #define KFSW_PARAM_LIST_ITEM 0U
@@ -121,10 +118,7 @@ static int register_local_parameters(void)
 		descriptor->type = to_libparam_type(entry->info.type);
 		descriptor->name = (char *)entry->info.name;
 		descriptor->array_size = entry->info.array_size;
-		/* libparam's own width for the type, not the scalar table's: a
-		 * string has no scalar width, and a step of zero makes the
-		 * serializer walk nowhere and send an empty value.
-		 */
+		/* libparam's width for the type; a string has no scalar width. */
 		descriptor->array_step = param_typesize(descriptor->type);
 		descriptor->mask = entry->info.flags;
 		descriptor->unit = (char *)entry->info.unit;
@@ -232,8 +226,7 @@ static int validate_scalar(const param_t *param, const struct kfsw_param_value *
 
 	type = from_libparam_type((param_type_e)param->type);
 	if (type == KFSW_PARAM_DATA) {
-		/* Written whole or not at all: a short write would leave some
-		 * elements at their old values with no way to tell which. */
+		/* Arrays are written whole. */
 		if ((value->type != type) || (value->size != param->array_size)) {
 			return -EMSGSIZE;
 		}
@@ -243,8 +236,7 @@ static int validate_scalar(const param_t *param, const struct kfsw_param_value *
 		if (value->type != type) {
 			return -EMSGSIZE;
 		}
-		/* size carries the terminator, so a value that exactly fills the
-		 * remote capacity is accepted and one byte more is not. */
+		/* size includes the terminator. */
 		if ((value->size == 0U) || (value->size > param->array_size)) {
 			return -EMSGSIZE;
 		}
@@ -292,8 +284,7 @@ static int read_scalar(const param_t *param, struct kfsw_param_value *value)
 		memset(value, 0, sizeof(*value));
 		value->type = type;
 		param_get_data(param, value->text, (int)param->array_size);
-		/* The remote store may not have terminated it, so the copy is
-		 * terminated here rather than trusted. */
+		/* Terminate the copy; the remote value may not be. */
 		value->text[param->array_size - 1U] = '\0';
 		length = 0U;
 		while (value->text[length] != '\0') {
@@ -319,10 +310,8 @@ static void fill_info(const param_t *param, struct kfsw_param_info *info)
 {
 	info->node = *param->node;
 	info->id = param->id;
-	/* The wire identifier carries the table in its high byte and the offset
-	 * in its low byte, so a remote parameter is addressable the same way a
-	 * local one is. The table's name is not on the wire, which is why the
-	 * listing shows the number for a remote node.
+	/* The wire ID has the table in the high byte and the offset in the low byte.
+	 * Table names are not sent, so remote listings show the number.
 	 */
 	info->table = (uint8_t)(param->id >> 8);
 	info->offset = (uint8_t)(param->id & 0xFFU);
@@ -426,9 +415,7 @@ static void serve_values(csp_packet_t *packet)
 
 	kfsw_param_table_lock();
 	if (push_allowed(packet)) {
-		/* libparam serves from the backing storage without going through
-		 * the read path, so anything sampled has to be refreshed first
-		 * or the answer is the value the storage happened to hold. */
+		/* libparam reads storage directly, so refresh sampled values first. */
 		kfsw_param_sample_all();
 		param_serve(packet);
 	} else {
@@ -485,9 +472,7 @@ static const param_t *list_entry(uint16_t wanted, uint16_t *total)
 	return found;
 }
 
-/* Matched the same way list_entry() enumerates: over this node's own table,
- * skipping what the list hides, so a lookup can never answer with something a
- * walk of the list would not have offered.
+/* Match the same entries list_entry() lists, so a lookup and a list agree.
  */
 static const param_t *local_entry_by_name(const char *name)
 {
@@ -738,15 +723,13 @@ static int validate_remote_node(uint16_t node)
 	return 0;
 }
 
-/* One remote node owns the upstream static pool at a time. Its destructor
- * resets the whole pool, so every descriptor is unlinked before reusing it. */
+/* The libparam pool holds one remote node at a time. Its destructor resets the
+ * whole pool, so every descriptor is unlinked before reuse. */
 static uint16_t cached_node;
 static bool cache_complete;
 static const param_t *cached[CONFIG_KFSW_PARAM_REMOTE_POOL_SIZE];
 static size_t cached_count;
-/* Descriptors already linked into the shared list. A full download links all
- * of them at the end, a single lookup links the one it fetched, so the count
- * is tracked rather than inferred from cache_complete. */
+/* Descriptors linked into the shared list so far. */
 static size_t cached_linked;
 
 static void clear_remote_cache(void)
@@ -778,9 +761,7 @@ static int validate_descriptor(const uint8_t *data, size_t size)
 	return 0;
 }
 
-/* Turn one validated descriptor into a cached remote parameter, linked into
- * the shared list so a value pull and a listing both see it. Shared by the
- * single lookup and the full walk, which differ only in how many they fetch.
+/* Add one validated descriptor to the cache and the shared list.
  */
 static int stage_remote_descriptor(uint16_t node, param_transfer3_t *wire, const uint8_t *data,
 				   int64_t deadline)
@@ -1228,12 +1209,11 @@ static int push_remote(const param_t *param, uint16_t node, const struct kfsw_pa
 	return result;
 }
 
-/* All callers hold remote ownership until names, reads and callbacks finish. */
-/* One exchange for the one descriptor asked for.
+/* Callers hold the remote lock until names, reads and callbacks finish. */
+/* Fetch one descriptor.
  *
- * Returns -ENOTSUP when the node did not answer the lookup at all, which is
- * what a node built before this protocol does, so the caller can fall back to
- * walking the list rather than reporting the parameter as missing.
+ * Returns -ENOTSUP when the node doesn't answer the lookup, so the caller can
+ * fall back to the list.
  */
 static int lookup_remote(uint16_t node, const char *name, int64_t deadline)
 {
@@ -1272,16 +1252,12 @@ static int lookup_remote(uint16_t node, const char *name, int64_t deadline)
 	packet->length = (uint16_t)(1U + length);
 	csp_send(connection, packet);
 
-	/* Bounded by one transaction rather than by the whole deadline. A node
-	 * that does not serve lookups answers with silence, and waiting the
-	 * full budget on it would leave nothing for the walk that follows.
-	 */
+	/* Wait one transaction timeout, not the whole budget, so the fallback still has time. */
 	remaining = MIN(remaining_ms(deadline), (uint32_t)CONFIG_KFSW_PARAM_TIMEOUT_MS);
 	packet = (remaining == 0U) ? NULL : csp_read(connection, remaining);
 	csp_close(connection);
 	if (packet == NULL) {
-		/* Silence is what an older node answers with, and it is not
-		 * evidence that the parameter is absent. */
+		/* No answer: an older node without lookup support. */
 		return -ENOTSUP;
 	}
 
@@ -1368,10 +1344,7 @@ static int get_many(uint16_t node, const char *const *names, size_t count,
 		size_t index;
 		int result = 0;
 
-		/* Every name is resolved before anything is asked for, so a
-		 * request that names something this node does not have fails
-		 * without spending a round trip on the ones that are fine.
-		 */
+		/* Resolve every name before requesting anything. */
 		for (index = 0U; index < window_count; index++) {
 			result = names[done + index] == NULL
 					 ? -EINVAL
@@ -1473,12 +1446,8 @@ static int visit_remote(uint16_t node, kfsw_param_visitor_t visitor, void *conte
 		return result;
 	}
 
-	/* Emitted in ascending identifier order, which is table then offset.
-	 * The cache iterates in registration order, so a listing taken straight
-	 * from it comes out backwards and does not read as a table. Selecting
-	 * the next smallest each pass keeps that ordering without a second copy
-	 * of the descriptors: the tables are bounded and this is an operator
-	 * command, so the extra passes cost nothing worth saving.
+	/* Print in ID order. The cache is in registration order, so pick the next
+	 * smallest ID on each pass.
 	 */
 
 	for (;;) {

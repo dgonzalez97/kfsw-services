@@ -8,33 +8,29 @@
 
 /**
  * @file
- * @brief Reliable message transport for the K-FSW file-transfer service.
+ * @brief Message transport for the file transfer service.
  *
- * Ordered, retransmitted, integrity-checked delivery of whole messages. The
- * client, server and transfer engine speak only this, so the backend is the
- * only place that knows what carries them.
- *
- * The current backend is CSP with RDP and CRC32 (`ftp_link_csp.c`).
+ * The client, server and transfer engine only use this interface. The current
+ * backend is CSP with RDP and CRC32 (`ftp_link_csp.c`).
  */
 
-/** One transport connection. The handle field belongs to the backend. */
+/** One transport connection. Only the backend uses the handle. */
 struct kfsw_ftp_link {
 	/** Backend-private connection handle. Only the backend dereferences it. */
 	void *connection;
 };
 
-/** One listening endpoint. The handle field belongs to the backend. */
+/** One listening endpoint. Only the backend uses the handle. */
 struct kfsw_ftp_listener {
 	/** Backend-private socket handle. Only the backend dereferences it. */
 	void *socket;
 };
 
 /**
- * One received message together with the buffer that carries it.
+ * One received message and the buffer it arrived in.
  *
- * `message.path` and `message.data` point into that buffer, so every received
- * frame must be released with kfsw_ftp_link_release() exactly once, and only
- * after the caller has copied everything it still needs.
+ * `message.path` and `message.data` point into that buffer, so release every
+ * frame once with kfsw_ftp_link_release(), after copying what you need.
  */
 struct kfsw_ftp_link_frame {
 	struct kfsw_ftp_message message;
@@ -73,8 +69,8 @@ int kfsw_ftp_link_send(struct kfsw_ftp_link *link, const struct kfsw_ftp_message
 /**
  * Wait for one protocol message.
  *
- * On success the frame owns a buffer that the caller must release. On failure
- * the frame owns nothing.
+ * On success the caller must release the frame. On failure there is nothing to
+ * release.
  */
 int kfsw_ftp_link_receive(struct kfsw_ftp_link *link, struct kfsw_ftp_link_frame *frame);
 
@@ -90,9 +86,7 @@ bool kfsw_ftp_link_is_open(const struct kfsw_ftp_link *link);
 /**
  * @brief Serve one request on an open link, then release its frame.
  *
- * Separate from the accept loop so what a request means can be exercised over
- * a link that is not a radio: the loop around it only accepts, hands over and
- * closes.
+ * Separate from the accept loop so tests can call it over a fake link.
  */
 void kfsw_ftp_serve_connection(struct kfsw_ftp_link *link);
 

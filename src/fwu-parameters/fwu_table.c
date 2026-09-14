@@ -10,10 +10,7 @@
 #include <kfsw/services/fwu_lite.h>
 #endif
 
-/* Read-only throughout. The update state belongs to the update service: if an
- * operator could set it, an unverified image could be marked ready, which is
- * the one thing this service exists to prevent.
- */
+/* Read-only, so an unverified image can't be marked ready from the ground. */
 static uint32_t fwu_total_size;
 static uint32_t fwu_received;
 static uint32_t fwu_expected_crc32;
@@ -220,9 +217,7 @@ static const struct kfsw_param_definition fwu_param_definitions[] = {
 	{
 		.offset = 0x26U,
 		.type = KFSW_PARAM_U16,
-		/* Compile-time: it sizes the message buffers, so it cannot be
-		 * changed without rebuilding. Published because a transfer that
-		 * is failing on long frames is diagnosed by knowing it. */
+		/* Compile-time: it sizes the message buffers. */
 		.flags = KFSW_PARAM_FLAG_READ_ONLY,
 		.name = "fwu_lite_block_size",
 		.unit = "B",

@@ -16,10 +16,8 @@
 static atomic_t kfsw_log_level = ATOMIC_INIT(CONFIG_KFSW_LOG_MIN_LEVEL);
 
 /*
- * One minimum level per module, so a component that has become noisy can be
- * quietened without going blind everywhere else. The global level still
- * applies: a message has to clear both, which keeps `log_level` meaning what
- * it always did rather than becoming a floor nobody expects.
+ * One minimum level per module. A message has to pass both the global level
+ * and its module's level.
  */
 static uint8_t kfsw_log_module_levels[KFSW_LOG_MODULE_COUNT];
 
@@ -56,9 +54,7 @@ int kfsw_log_set_module_level(enum kfsw_log_module module, uint8_t level)
 	return 0;
 }
 
-/* Used by the write path, which is compiled whatever the parameter service is
- * doing, so these cannot live behind the parameter guard.
- */
+/* Used by the write path, so not behind the parameter guard. */
 static uint8_t kfsw_log_color_value = IS_ENABLED(CONFIG_KFSW_LOG_COLOR);
 static atomic_t kfsw_log_emitted;
 static atomic_t kfsw_log_dropped;
@@ -79,11 +75,7 @@ static void apply_log_level(const union kfsw_param_scalar *value)
 	}
 }
 
-/* The level lives in the atomic; this is only the parameter's view of it. A
- * direct kfsw_log_set_level() call moves the atomic without going through the
- * parameter path, so without sampling the table would report a level the system
- * is not using.
- */
+/* Sample the level so the table shows the level in use. */
 static void sample_log_level(void *value)
 {
 	*(uint8_t *)value = kfsw_log_get_level();
@@ -120,9 +112,7 @@ static void sample_module_levels(void *value)
 
 static int validate_module_levels(const uint8_t *data, size_t size)
 {
-	/* Checked as a whole rather than per element, because a partially valid
-	 * array would be refused after some of it had already been judged
-	 * acceptable, and the caller could not tell which half. */
+	/* Validate the whole array at once. */
 	for (size_t index = 0U; index < size; index++) {
 		if (data[index] > 4U) {
 			return -ERANGE;
@@ -155,9 +145,7 @@ static const struct kfsw_param_definition log_param_definitions[] = {
 		.offset = 0x10U,
 		.type = KFSW_PARAM_DATA,
 		.capacity = KFSW_LOG_MODULE_COUNT,
-		/* One level per module, in the order of enum kfsw_log_module.
-		 * Persistent, because a console tuned for a mission should not
-		 * come back noisy after a reset. */
+		/* One level per module, in enum kfsw_log_module order. Persistent. */
 		.flags = KFSW_PARAM_FLAG_CONFIGURATION | KFSW_PARAM_FLAG_PERSISTENT,
 		.name = "log_levels",
 		.description = "Minimum level per module, raising the global one for that module",
@@ -219,9 +207,6 @@ uint8_t kfsw_log_get_level(void)
 	return (uint8_t)atomic_get(&kfsw_log_level);
 }
 
-/* Jade for the prompt is the shell's business; here severity is the only thing
- * worth colouring, because it is what a reader scans for.
- */
 #define KFSW_LOG_COLOR_RESET "\033[0m"
 #define KFSW_LOG_COLOR_ERROR "\033[31m"
 #define KFSW_LOG_COLOR_WARNING "\033[33m"
@@ -252,17 +237,13 @@ static void kfsw_log_vwrite(uint8_t module, uint8_t severity, const char *level,
 	char message[KFSW_LOG_MESSAGE_SIZE];
 	size_t i;
 
-	/* Both levels apply. The global one is the floor everything clears, and
-	 * the module one raises it for that component alone; a module can be
-	 * quietened but not made louder than the console is set to. */
+	/* A message must pass the global level and its module's level. */
 	if ((module < KFSW_LOG_MODULE_COUNT) && (severity < kfsw_log_module_levels[module])) {
 		(void)atomic_inc(&kfsw_log_dropped);
 		return;
 	}
 	if (severity < kfsw_log_get_level()) {
-		/* Counted rather than passed over silently: a console that has
-		 * gone quiet because the level was raised looks exactly like one
-		 * that has gone quiet because the system stopped. */
+		/* Count messages dropped by the level filter. */
 		(void)atomic_inc(&kfsw_log_dropped);
 		return;
 	}
@@ -276,10 +257,7 @@ static void kfsw_log_vwrite(uint8_t module, uint8_t severity, const char *level,
 		}
 	}
 
-	/* The colour brackets the whole line rather than sitting inside it, so
-	 * "[LEVEL] message" is still one contiguous run of text for anything
-	 * matching on it.
-	 */
+	/* The colour wraps the whole line so "[LEVEL] message" stays intact. */
 	printk("%s[%s] %s%s\n", severity_color(severity), level, message,
 	       (IS_ENABLED(CONFIG_KFSW_LOG_COLOR) && (kfsw_log_color_value != 0U))
 		       ? KFSW_LOG_COLOR_RESET
@@ -289,8 +267,7 @@ static void kfsw_log_vwrite(uint8_t module, uint8_t severity, const char *level,
 
 #if CONFIG_KFSW_LOG_MIN_LEVEL < 4
 /*
- * One entry point. The macros in the header supply the module and severity, so
- * a call site does not change and a file only has to say which module it is.
+ * Called by the macros in the header.
  */
 void kfsw_log_write(uint8_t module, uint8_t severity, const char *format, ...)
 {

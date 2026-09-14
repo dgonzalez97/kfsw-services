@@ -207,11 +207,7 @@ static int serve_put(struct kfsw_ftp_link *link, const struct kfsw_ftp_message *
 		result = resolve_message_path(request, false);
 	}
 #if CONFIG_KFSW_FWU
-	/* An ordinary put to the reserved path is a firmware upload. The client
-	 * already sends the size and CRC32 the update service needs, so this
-	 * needs no protocol change and works with the existing client on both
-	 * ends.
-	 */
+	/* A put to the reserved path is a firmware upload. */
 	if ((result == 0) && kfsw_ftp_path_is_firmware(request->path, request->path_size)) {
 		result = kfsw_ftp_transfer_open_firmware_sink(&transfer);
 		if (result != 0) {
@@ -300,10 +296,7 @@ void kfsw_ftp_serve_connection(struct kfsw_ftp_link *link)
 				  0U, 0U);
 		return;
 	}
-	/* The read-only root is enforced in one place, before anything opens a
-	 * file. A node's own record of a pass is not a peer's to change, and
-	 * only these two operations write.
-	 */
+	/* The read-only root is checked before anything opens a file. */
 	if ((frame.message.opcode == KFSW_FTP_OP_MKDIR_REQUEST) ||
 	    (frame.message.opcode == KFSW_FTP_OP_PUT_REQUEST)) {
 		char path[KFSW_FTP_MAX_PATH_SIZE + 1U];

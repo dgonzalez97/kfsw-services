@@ -13,7 +13,6 @@
 #include <kfsw/platform/lastwords.h>
 #endif
 #include <kfsw/services/health.h>
-/* Attributes this file's messages, so its level can be raised alone. */
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_HEALTH
 #include <kfsw/services/log.h>
 #if CONFIG_KFSW_EVENT
@@ -26,14 +25,11 @@ struct health_entry {
 	uint64_t last_report_ms;
 	uint32_t reports;
 	bool used;
-	/* True once this component has been warned about, so the warning is
-	 * issued on crossing rather than on every check. */
+	/* Warned already, so the warning is logged once per crossing. */
 	bool warned;
 };
 
-/* Live rather than compiled in, because the right check interval depends on
- * what the watchdog was armed with, and that is a runtime fact.
- */
+/* Set at runtime because it depends on the watchdog timeout. */
 static uint32_t health_interval_ms = CONFIG_KFSW_HEALTH_INTERVAL_MS;
 
 static K_MUTEX_DEFINE(health_lock);
@@ -110,9 +106,7 @@ int kfsw_health_unregister(uint8_t handle)
 		return -EINVAL;
 	}
 
-	/* If this component was the one holding the system faulted, the fault
-	 * goes with it: what was overdue is no longer expected to report.
-	 */
+	/* If this component caused the fault, clear it. */
 	if (strncmp(health_state.faulted_by, health_entries[handle].name, KFSW_HEALTH_NAME_SIZE) ==
 	    0) {
 		health_state.faulted_by[0] = '\0';
@@ -178,11 +172,7 @@ int kfsw_health_evaluate(void)
 			break;
 		}
 
-		/* A component well into its deadline is not yet a fault, but it
-		 * is the only warning anyone gets before one. Said once per
-		 * crossing rather than on every check, so a component that sits
-		 * near its limit does not fill the log.
-		 */
+		/* Warn once when a component is well into its deadline. */
 		if ((elapsed > ((entry->deadline_ms * 3U) / 4U)) && !entry->warned) {
 			entry->warned = true;
 			kfsw_log_warning("Health: %s is %u ms into a %u ms deadline", entry->name,
@@ -196,11 +186,7 @@ int kfsw_health_evaluate(void)
 		if (!was_ok) {
 			kfsw_log_info("Health: every component is reporting again");
 #if CONFIG_KFSW_LASTWORDS
-			/* Withdrawn, because the reset it predicted did not
-			 * come. Left in place, a later reset for an unrelated
-			 * cause would be blamed on a fault that had already
-			 * cleared. Only a note this service wrote is touched.
-			 */
+			/* Fault cleared: withdraw our note. */
 			(void)kfsw_lastwords_withdraw(KFSW_LASTWORDS_STARVED);
 #endif
 		}
@@ -228,19 +214,12 @@ int kfsw_health_evaluate(void)
 	}
 	k_mutex_unlock(&health_lock);
 
-	/* Said once per fault rather than once per check: a reset takes a whole
-	 * timeout to arrive, and repeating the same line until it does buries
-	 * the reason under the noise.
-	 */
+	/* Logged once per fault. */
 	if (was_ok) {
 		kfsw_log_error("Health: %s is overdue; the watchdog will no longer be fed",
 			       overdue->name);
 #if CONFIG_KFSW_LASTWORDS
-		/* Written now rather than when the watchdog finally bites,
-		 * because by then nothing runs. The detail is how long the
-		 * component had been silent, which is what distinguishes a
-		 * thread that stopped from one that was merely late.
-		 */
+		/* Write the note now; the detail is how long the component was silent. */
 		kfsw_lastwords_write(KFSW_LASTWORDS_STARVED,
 				     (uint32_t)(now - overdue->last_report_ms), (uint32_t)now, 0U);
 #endif
@@ -251,9 +230,8 @@ int kfsw_health_evaluate(void)
 #endif
 	}
 
-	/* The feed is withheld rather than the watchdog being starved outright.
-	 * A component that recovers before the timeout expires is allowed to
-	 * keep the system alive; only a fault that persists causes the reset.
+	/* Stop feeding but don't starve, so a component that recovers before the
+	 * timeout avoids the reset.
 	 */
 	return -ETIMEDOUT;
 }
@@ -293,8 +271,7 @@ int kfsw_health_start(void)
 	now = kfsw_time_monotonic_ms();
 	for (uint8_t index = 0U; index < KFSW_HEALTH_MAX_COMPONENTS; index++) {
 		if (health_entries[index].used) {
-			/* Everything counts as having just reported, so a slow
-			 * start is not mistaken for a fault. */
+			/* Treat every component as just reported. */
 			health_entries[index].last_report_ms = now;
 		}
 	}

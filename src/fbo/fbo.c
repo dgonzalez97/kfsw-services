@@ -16,28 +16,14 @@
 #include <kfsw/services/event.h>
 #include <kfsw/services/ftp.h>
 #include <kfsw/services/fbo.h>
-/* Attributes this file's messages to procedures, so a pass can be made quiet
- * or loud without touching the command service it drives. */
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_FBO
 #include <kfsw/services/log.h>
 
 #include "fbo_internal.h"
 
-/*
- * A procedure is a list of commands, and nothing else.
- *
- * Every line is something the command service already validates, so a file
- * cannot ask a node to do anything the radio could not. Three guards let a
- * sequence react to what happened — stop on a failure, wait for a pass, skip a
- * line unless an event was recorded — and there are no loops and no jumps, so
- * the file terminates by construction. That is the property that makes it safe
- * to run with nobody listening.
- */
 #define KFSW_FBO_DIRECTORY KFSW_FTP_STORAGE_ROOT "/procedures"
 
-/* Events this service records, so a pass can be reconstructed from the ring
- * rather than from a console nobody was watching.
- */
+/* Events recorded by this service. */
 #define KFSW_FBO_EVENT_STARTED 1U
 #define KFSW_FBO_EVENT_LINE_FAILED 2U
 #define KFSW_FBO_EVENT_FINISHED 3U
@@ -52,16 +38,11 @@ static K_MUTEX_DEFINE(lock);
 static bool initialized;
 static atomic_t stop_requested;
 static K_SEM_DEFINE(cancel, 0, 1);
-/* Given once the name is in place, so the thread cannot start on a name that
- * has not been written yet. Waiting on it rather than polling a flag is also
- * what removes the tick: there is nothing to look for between procedures.
- */
+/* Given once the name is set, so the thread never starts on an empty name. */
 static K_SEM_DEFINE(start, 0, 1);
 static char requested[KFSW_FBO_NAME_MAX];
 
-/* One at a time, so the buffers below are the service's rather than a stack's:
- * a line plus its arguments is more than a 2 kB thread should carry.
- */
+/* One run at a time, so these buffers are static instead of on the stack. */
 static struct line current;
 static char argument_text[KFSW_COMMAND_MAX_ARGS][KFSW_COMMAND_MAX_TEXT_SIZE + 1U];
 
@@ -75,11 +56,8 @@ static void note(uint16_t id, enum kfsw_event_severity severity, uint16_t line)
 }
 
 /*
- * Split a line into a name and its arguments, in place.
- *
- * Whitespace-separated, no quoting: an argument with a space in it cannot be
- * written, which is a limit worth having while the alternative is a parser
- * with an escape syntax nobody asked for.
+ * Split a line into a name and arguments, in place. Arguments are separated by
+ * whitespace; there is no quoting.
  */
 static size_t tokenise(char *text, char **tokens, size_t max)
 {
@@ -137,9 +115,7 @@ static int run_command_line(char **tokens, size_t count)
 		return -EINVAL;
 	}
 	for (size_t index = 0U; index < arg_count; index++) {
-		/* Copied, because the text a command keeps must outlive the
-		 * line buffer the next read overwrites.
-		 */
+		/* Copied: the next read overwrites the line buffer. */
 		if (strlen(tokens[index + 1U]) > KFSW_COMMAND_MAX_TEXT_SIZE) {
 			return -ENAMETOOLONG;
 		}
@@ -172,9 +148,7 @@ static int run_line(char *text, bool *skip_next, bool *stop_on_error)
 	if (count == 0U) {
 		return 0;
 	}
-	/* One more slot than any command can use, so a line with too many
-	 * words is refused instead of quietly losing its tail.
-	 */
+	/* One extra slot so a line with too many words is refused. */
 	if (count > (KFSW_COMMAND_MAX_ARGS + 1U)) {
 		return -E2BIG;
 	}
@@ -395,9 +369,8 @@ int kfsw_fbo_run(const char *name)
 	if (name == NULL) {
 		return -EINVAL;
 	}
-	/* Bounded without strnlen, which the minimal libc does not provide.
-	 * No terminator within the limit means the name is too long; one at
-	 * the first byte means it is empty.
+	/* Bounded check without strnlen: no terminator within the limit means the
+	 * name is too long, and one at the first byte means it is empty.
 	 */
 	terminator = memchr(name, '\0', KFSW_FBO_NAME_MAX);
 	if ((terminator == NULL) || (terminator == name)) {

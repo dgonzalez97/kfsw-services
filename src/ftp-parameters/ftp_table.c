@@ -49,10 +49,7 @@ static void sample_chunk_size(void *value)
 	*(uint16_t *)value = kfsw_ftp_get_chunk_size();
 }
 
-/* The service owns both decisions. Refusing happens in the validator, before
- * the value is stored, so a rejected setting is reported as rejected rather
- * than written and quietly undone.
- */
+/* Validators refuse bad values before they are stored. */
 static int validate_timeout(const union kfsw_param_scalar *value)
 {
 	return kfsw_ftp_check_timeout_ms(value->u32);
@@ -141,9 +138,7 @@ static const struct kfsw_param_definition ftp_param_definitions[] = {
 		.offset = 0x20U,
 		.type = KFSW_PARAM_STRING,
 		.capacity = sizeof(ftp_root),
-		/* Read-only: the path resolver takes the root's length from a
-		 * compile-time literal, and changing it under a running
-		 * transfer is not a failure worth having. */
+		/* Read-only: the path resolver uses a compile-time string. */
 		.flags = KFSW_PARAM_FLAG_READ_ONLY,
 		.name = "ftp_root",
 		.description = "Sandbox the service resolves every path against",
