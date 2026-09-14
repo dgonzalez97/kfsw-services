@@ -9,11 +9,8 @@
 #include "ftp_internal.h"
 
 /*
- * Storage below this node's FTP root: name resolution to real paths, whole-file
- * CRC, the temporary-file rule that keeps a commit atomic, and the directory
- * operations. The server runs these for a decoded request; the client runs them
- * directly when a request is addressed to this node, so a node can inspect its
- * own storage without a connection.
+ * Storage under the FTP root: path resolution, file CRC, the temporary file and
+ * rename, and directory operations. Used by the server and by local requests.
  */
 
 int kfsw_ftp_file_crc(const char *path, struct kfsw_ftp_workspace *workspace, uint32_t *file_size,

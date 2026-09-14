@@ -7,7 +7,6 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/atomic.h>
 
-/* Attributes this file's messages, so its level can be raised alone. */
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_PARAM
 #include <kfsw/services/log.h>
 #include <kfsw/services/parameter.h>
@@ -68,9 +67,7 @@ static size_t scalar_size(enum kfsw_param_type type)
 	}
 }
 
-/* A scalar's width comes from its type; a string's comes from the capacity its
- * owner declared, because that is the storage a write has to fit inside.
- */
+/* A scalar's width comes from its type; a string's from its declared capacity. */
 static size_t entry_capacity(const struct kfsw_param_entry *entry)
 {
 	if ((entry->info.type == KFSW_PARAM_STRING) || (entry->info.type == KFSW_PARAM_DATA)) {
@@ -79,10 +76,7 @@ static size_t entry_capacity(const struct kfsw_param_entry *entry)
 	return scalar_size(entry->info.type);
 }
 
-/* Bounded copy that always terminates. The source is owner storage which a
- * previous write kept terminated, but a corrupted snapshot or a bad pointer
- * must not be able to run off the end of it.
- */
+/* Bounded copy that always terminates. */
 static size_t copy_text(char *destination, size_t destination_size, const char *source,
 			size_t source_size)
 {
@@ -125,10 +119,7 @@ const struct kfsw_param_entry *kfsw_param_entry_at(size_t index)
 }
 
 /*
- * Registration keeps the table in ascending identifier order, so this is a
- * bisection rather than a scan. It matters because housekeeping resolves every
- * entry of every report this way on each collection, and a linear walk over a
- * hundred parameters is work done under the table lock.
+ * Tables are sorted by ID, so this is a binary search.
  */
 const struct kfsw_param_entry *kfsw_param_find_id(uint16_t id)
 {
@@ -178,11 +169,7 @@ static int read_entry(const struct kfsw_param_entry *entry, struct kfsw_param_va
 		return -ENOTSUP;
 	}
 
-	/* Sampled parameters hold live state that nothing else writes, so the
-	 * backing store is refreshed here rather than on a timer: a value read
-	 * over a link is worth having only if it is current at the moment it
-	 * was asked for.
-	 */
+	/* Refresh sampled values before reading them. */
 	if (sample && (entry->definition->sample != NULL)) {
 		entry->definition->sample(entry->definition->value);
 	}
@@ -198,8 +185,7 @@ static int read_entry(const struct kfsw_param_entry *entry, struct kfsw_param_va
 	}
 
 	if (entry->info.type == KFSW_PARAM_DATA) {
-		/* Always the whole array: the elements of one are only sensible
-		 * together, so a partial read would be a different value. */
+		/* Always the whole array. */
 		memcpy(value->bytes, entry->definition->value, size);
 		value->size = size;
 		return 0;
@@ -216,13 +202,8 @@ int kfsw_param_read_entry(const struct kfsw_param_entry *entry, struct kfsw_para
 }
 
 /*
- * Reads what is in the backing store without refreshing it first.
- *
- * The distinction matters on exactly one path. A write that arrives over CSP
- * lands in the store and is then handed back here to be applied; sampling at
- * that moment would overwrite the value that just arrived with the one the
- * owner still holds, and the change callback would be handed the old value.
- * The write would report success and change nothing.
+ * Read the stored value without sampling. A remote write stores the new value
+ * first and then applies it from here; sampling would overwrite it.
  */
 int kfsw_param_read_stored_entry(const struct kfsw_param_entry *entry,
 				 struct kfsw_param_value *value)
@@ -247,8 +228,7 @@ int kfsw_param_validate_entry(const struct kfsw_param_entry *entry,
 	}
 
 	if (entry->info.type == KFSW_PARAM_STRING) {
-		/* size carries the terminator, so a value that exactly fills the
-		 * declared capacity is accepted and one byte more is not. */
+		/* size includes the terminator. */
 		if ((value->size == 0U) || (value->size > size)) {
 			return -EMSGSIZE;
 		}
@@ -259,9 +239,7 @@ int kfsw_param_validate_entry(const struct kfsw_param_entry *entry,
 	}
 
 	if (entry->info.type == KFSW_PARAM_DATA) {
-		/* Exact length: an array is written whole or not at all, because
-		 * a short write would leave some elements at their old values
-		 * and the caller could not tell which. */
+		/* Arrays are written whole. */
 		if (value->size != size) {
 			return -EMSGSIZE;
 		}
@@ -309,9 +287,7 @@ void kfsw_param_write_text_entry(const struct kfsw_param_entry *entry, const cha
 	}
 }
 
-/* Writing a default is the one place both kinds meet, so it is worth having
- * once rather than repeated at every caller that resets a table.
- */
+/* Writing a default, shared by every reset path. */
 void kfsw_param_write_default(const struct kfsw_param_entry *entry)
 {
 	if (entry->info.type == KFSW_PARAM_DATA) {
@@ -345,8 +321,7 @@ void kfsw_param_value_changed(uint16_t id)
 		return;
 	}
 	if (kfsw_param_validate_entry(entry, &value) != 0) {
-		/* The write already reached owner storage, so the only way back
-		 * to a value the owner would accept is the compiled default. */
+		/* The write already reached storage, so fall back to the default. */
 		kfsw_param_write_default(entry);
 		return;
 	}
@@ -377,10 +352,7 @@ static struct kfsw_param_table_info *find_table(uint8_t id)
 	return NULL;
 }
 
-/* A table identifier must fall inside an allocated band. Zero is reserved so
- * that an uninitialised field cannot address a real table, and anything above
- * the module band is left for mission payloads that this build does not own.
- */
+/* Table IDs must be in an allocated band; zero is reserved. */
 static bool table_is_allocated(uint8_t table)
 {
 	return (table >= KFSW_PARAM_TABLE_CORE_FIRST) && (table <= KFSW_PARAM_TABLE_MODULE_LAST);
@@ -407,9 +379,7 @@ static int add_table(const struct kfsw_param_definition_set *set)
 		return -ENOSPC;
 	}
 
-	/* Kept in ascending identifier order so a listing reads as one table
-	 * regardless of the order the composition happens to register in.
-	 */
+	/* Keep tables sorted by ID. */
 	insert_at = table_count;
 	for (size_t index = 0U; index < table_count; index++) {
 		if (parameter_tables[index].id > set->table) {
@@ -445,11 +415,7 @@ static int add_definition(const struct kfsw_param_definition_set *set,
 		return -EINVAL;
 	}
 
-	/* A string or an array declares the storage it owns; a scalar's width
-	 * comes from its type. One without a capacity, or larger than a value
-	 * can carry, is refused here rather than overrunning owner storage
-	 * later.
-	 */
+	/* Strings and arrays declare their size; a missing or too large size is refused. */
 	if (definition->type == KFSW_PARAM_DATA) {
 		if ((definition->capacity == 0U) ||
 		    (definition->capacity > KFSW_PARAM_STRING_MAX)) {
@@ -488,9 +454,7 @@ static int add_definition(const struct kfsw_param_definition_set *set,
 	}
 	wire_id = KFSW_PARAM_WIRE_ID(set->table, definition->offset);
 
-	/* A definition that refuses its own default would leave the table in a
-	 * state its owner never sanctioned, so it is caught at registration.
-	 */
+	/* A definition must accept its own default. */
 	if (definition->type == KFSW_PARAM_DATA) {
 		if (definition->validate_data != NULL) {
 			static const uint8_t zero[KFSW_PARAM_STRING_MAX];
@@ -530,10 +494,7 @@ static int add_definition(const struct kfsw_param_definition_set *set,
 		}
 	}
 
-	/* Offsets are unique inside a table and names across the whole node:
-	 * the wire identifier is what a remote list is keyed by, and the name
-	 * is what an operator types.
-	 */
+	/* Offsets are unique in a table and names on the node. */
 	for (size_t index = 0U; index < parameter_count; index++) {
 		const struct kfsw_param_entry *entry = &parameter_table[index];
 
@@ -551,9 +512,7 @@ static int add_definition(const struct kfsw_param_definition_set *set,
 		}
 	}
 
-	/* The service sets LIVE, never the definition: a parameter cannot claim
-	 * a write takes effect immediately without the callback that applies it.
-	 */
+	/* Only the service sets LIVE, for definitions with a change callback. */
 	flags = definition->flags;
 	if ((definition->changed != NULL) || (definition->changed_text != NULL) ||
 	    (definition->changed_data != NULL)) {
@@ -727,17 +686,11 @@ int kfsw_param_set(const char *name, const struct kfsw_param_value *value)
 	}
 	kfsw_param_table_unlock();
 
-	/* A parameter change is an operator action on a spacecraft, so both the
-	 * acceptance and the refusal have to be reconstructible afterwards from
-	 * the log alone.
-	 */
+	/* Log accepted and refused changes. */
 	if (result == 0) {
 		kfsw_log_info("PARAM: %s set (%s)", name, kfsw_param_mode_name(entry->info.flags));
 #if CONFIG_KFSW_PARAM_PERSISTENCE
-		/* Written after the lock is released, because saving reads every
-		 * entry and would otherwise re-enter the table lock. Only
-		 * persistent values are in a snapshot, so saving after a
-		 * volatile write costs a flash cycle for nothing. */
+		/* Save after releasing the lock, and only for persistent values. */
 		if (kfsw_param_autosave_enabled() &&
 		    ((entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) != 0U)) {
 			(void)kfsw_param_persist_save();
@@ -829,12 +782,8 @@ int kfsw_param_get_stats(struct kfsw_param_stats *stats)
 
 void kfsw_param_sample_all(void)
 {
-	/* The CSP server hands libparam the backing storage directly, so it
-	 * never goes through the read path that refreshes a sampled value. A
-	 * remote read would otherwise report whatever was last written locally,
-	 * which for a value nothing writes is its compiled default forever: an
-	 * uptime that is always zero, an identity that is always empty. Caller
-	 * holds the table lock.
+	/* The CSP server gives libparam the storage directly, so sampled values
+	 * are refreshed first. Caller holds the table lock.
 	 */
 	for (size_t index = 0U; index < parameter_count; index++) {
 		const struct kfsw_param_entry *entry = &parameter_table[index];
@@ -908,29 +857,20 @@ const char *kfsw_param_band_name(uint8_t table)
 }
 
 /*
- * One letter per property, the way libparam prints its own mask, rather than a
- * name for each combination.
- *
- * The combinations were the problem: "b" used to mean stored *and* not live,
- * so an operator could not tell whether a value was kept across a reset, or
- * only applied at the next one, or both. They are different questions with
- * different consequences, and a set answers all of them at once.
+ * One letter per property, like libparam's mask:
  *
  *   r  read-only
  *   w  writable
  *   p  persistent, so it survives a reset
- *   b  boot: the write is accepted now and read when the node next starts
+ *   b  boot: the write is read when the node next starts
  *
- * A parameter with no "b" applies its value as soon as it is set.
+ * Without "b" a value applies as soon as it is set.
  */
 const char *kfsw_param_mode_name(uint32_t flags)
 {
 	const bool persistent = (flags & KFSW_PARAM_FLAG_PERSISTENT) != 0U;
 
-	/* Literals rather than a buffer that is filled in: the shell and the
-	 * CSP server both list parameters, and a single static buffer would
-	 * hand one thread the other's answer. There are only six of them.
-	 */
+	/* String literals, so the shell and the CSP server can both call this. */
 	if ((flags & KFSW_PARAM_FLAG_READ_ONLY) != 0U) {
 		/* A read-only value is never applied, so "b" would say nothing. */
 		return persistent ? "rp" : "r";

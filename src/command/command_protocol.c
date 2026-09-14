@@ -7,11 +7,7 @@
 
 #include "command_internal.h"
 
-/*
- * Wire codec only. Every field is read and written explicitly, and every
- * length is checked against the buffer before it is used, so a malformed
- * request is rejected before any argument reaches a handler.
- */
+/* Wire codec. Every length is checked against the buffer before use. */
 
 int kfsw_command_protocol_encode(uint8_t *buffer, size_t capacity,
 				 const struct kfsw_command_message *message, size_t *encoded_size)
@@ -71,7 +67,7 @@ int kfsw_command_protocol_decode(const uint8_t *buffer, size_t size,
 	if (message->payload_size > KFSW_COMMAND_MAX_PAYLOAD_SIZE) {
 		return -EMSGSIZE;
 	}
-	/* The declared payload must be exactly what arrived; no slack, no truncation. */
+	/* The declared payload size must match what arrived. */
 	if ((size_t)(KFSW_COMMAND_HEADER_SIZE + message->payload_size) != size) {
 		return -EMSGSIZE;
 	}

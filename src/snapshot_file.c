@@ -54,10 +54,7 @@ int kfsw_snapshot_write(const char *path, const char *temporary_path, const uint
 
 	result = write_all(&file, data, size);
 	if (result == 0) {
-		/* Before the rename, not after: a rename that publishes a file
-		 * whose bytes are still in a cache is not the guarantee this
-		 * function offers.
-		 */
+		/* Sync before the rename. */
 		result = fs_sync(&file);
 	}
 	close_result = fs_close(&file);
@@ -69,7 +66,7 @@ int kfsw_snapshot_write(const char *path, const char *temporary_path, const uint
 		return result;
 	}
 
-	/* The atomic step. The target is deliberately not unlinked first. */
+	/* Rename is the atomic step; the target is not unlinked first. */
 	result = fs_rename(temporary_path, path);
 	if (result != 0) {
 		(void)fs_unlink(temporary_path);

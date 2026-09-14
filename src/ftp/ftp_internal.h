@@ -77,16 +77,16 @@ struct kfsw_ftp_workspace {
 /* Counted where an outcome is already known, in ftp_client.c. */
 void kfsw_ftp_count_transfer(uint32_t bytes, bool failed);
 
-/* Owned by the server, read by the stats getter in ftp_state.c. */
+/* Written by the server, read by the stats getter in ftp_state.c. */
 bool kfsw_ftp_server_is_busy(void);
 
 /* Defined by the transport backend; see ftp_link.h. */
 struct kfsw_ftp_link;
 
 /*
- * One file transfer in progress. The engine owns the file handle between an
- * open and the matching send or receive call, and updates offset and
- * actual_crc32 as it goes so the caller can report what really moved.
+ * One file transfer in progress. The engine keeps the file handle open between
+ * an open and the matching send or receive call, and updates offset and
+ * actual_crc32 as it goes.
  */
 struct kfsw_ftp_transfer {
 	struct kfsw_ftp_link *link;
@@ -98,10 +98,7 @@ struct kfsw_ftp_transfer {
 	uint32_t offset;
 	uint32_t actual_crc32;
 	uint8_t data_opcode;
-	/* True when this upload is a firmware image bound for the update slot
-	 * rather than a file. The receive loop and the commit differ; nothing
-	 * else does, which is why this is a flag and not a second transfer
-	 * type. */
+	/* True when this upload goes to the firmware update slot instead of a file. */
 	bool firmware;
 };
 
@@ -145,11 +142,8 @@ int kfsw_ftp_transfer_open_sink(struct kfsw_ftp_transfer *transfer, const char *
 
 #if CONFIG_KFSW_FWU
 /**
- * Direct this upload into the firmware update slot instead of a file.
- *
- * The size and CRC32 the client declared in its PUT request are exactly what
- * the update service needs to begin, so no protocol change is required: an
- * ordinary put to the reserved path is a firmware upload.
+ * Send this upload to the firmware update slot instead of a file. The PUT
+ * request already has the size and CRC32 the update service needs.
  */
 int kfsw_ftp_transfer_open_firmware_sink(struct kfsw_ftp_transfer *transfer);
 

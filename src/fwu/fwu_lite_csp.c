@@ -14,7 +14,6 @@
 #include <kfsw/comms/csp.h>
 #include <kfsw/services/fwu.h>
 #include <kfsw/services/fwu_lite.h>
-/* Attributes this file's messages, so its level can be raised alone. */
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_FWU
 #include <kfsw/services/log.h>
 
@@ -22,9 +21,7 @@
 #include <nsi_host_trampolines.h>
 #endif
 
-/* The only unit here that speaks CSP. Everything above it works on decoded
- * messages, which is why the protocol can be tested without a link at all.
- */
+/* The only file here that uses CSP. */
 
 #define CONNECTION_OPTIONS (CSP_O_CRC32 | (IS_ENABLED(CONFIG_KFSW_FWU_LITE_RDP) ? CSP_O_RDP : 0))
 #define SOCKET_OPTIONS                                                                             \
@@ -71,14 +68,11 @@ static void serve_packet(csp_conn_t *connection, csp_packet_t *packet)
 
 	response->length = (uint16_t)encoded;
 	csp_buffer_free(packet);
-	/* csp_send() takes ownership, including on transmit failure. */
+	/* csp_send() frees the packet, even when sending fails. */
 	csp_send(connection, response);
 }
 
-/* Read at each use rather than captured, so a change takes effect on the next
- * block. These are the two values you most want to change on a bad link, and a
- * bad link is exactly when rebuilding the image is not an option.
- */
+/* Read on every use, so a change applies to the next block. */
 static uint32_t fwu_lite_timeout_ms = CONFIG_KFSW_FWU_LITE_TIMEOUT_MS;
 static uint8_t fwu_lite_retries = CONFIG_KFSW_FWU_LITE_BLOCK_RETRIES;
 
@@ -114,8 +108,7 @@ uint8_t kfsw_fwu_lite_get_retries(void)
 
 int kfsw_fwu_lite_set_retries(uint8_t retries)
 {
-	/* Zero would abandon a transfer on the first lost block, which on a
-	 * radio is every transfer. */
+	/* Zero retries would give up on the first lost block. */
 	if (retries == 0U) {
 		return -EINVAL;
 	}
@@ -140,10 +133,9 @@ static void server_entry(void *first, void *second, void *third)
 		}
 
 		while (true) {
-			/* The same timeout the sender waits for a reply with. A
-			 * shorter one would drop a connection between blocks on a
-			 * slow link, where one block and its turnaround can take
-			 * longer than a second. */
+			/* Same timeout the sender uses; a block and its reply can take more than
+			 * a second on a slow link.
+			 */
 			csp_packet_t *packet = csp_read(connection, kfsw_fwu_lite_get_timeout_ms());
 
 			if (packet == NULL) {
@@ -232,14 +224,8 @@ static int exchange(csp_conn_t *connection, const struct kfsw_fwu_lite_message *
 }
 
 /*
- * An image can come from the node's own filesystem or, where the node is a
- * process on a host, straight from the host. A ground station has the image on
- * the machine it runs on; requiring it to be copied into a simulated flash
- * partition first adds a step and a size limit for no benefit.
- *
- * The rule is positional and not a guess: a path under the node's mount point
- * is a node file, anything else is a host path. Nothing on a real board can
- * take the host branch, because it is not compiled there.
+ * The image can be a node file or, on a host process, a host file. Paths under
+ * the node's mount point are node files; boards don't build the host branch.
  */
 struct image_source {
 	bool host;
@@ -298,7 +284,7 @@ static void source_close(struct image_source *source)
 	(void)fs_close(&source->file);
 }
 
-/* Whole-file checksum, computed by reading the file rather than holding it. */
+/* Whole-file checksum, computed while reading the file. */
 static int file_size_and_crc(const char *path, uint32_t *size, uint32_t *crc)
 {
 	uint8_t chunk[KFSW_FWU_LITE_MAX_BLOCK_SIZE];
@@ -380,8 +366,7 @@ int kfsw_fwu_lite_send_file(uint16_t node, const char *path, uint32_t *blocks_re
 		result = -EIO;
 	}
 
-	/* Opened a second time rather than rewound: the host interface offers no
-	 * seek, and reopening is the same cost at this size. */
+	/* Reopen instead of rewinding: the host interface has no seek. */
 	if (result == 0) {
 		result = source_open(&source, path);
 		source_opened = (result == 0);
@@ -406,14 +391,7 @@ int kfsw_fwu_lite_send_file(uint16_t node, const char *path, uint32_t *blocks_re
 
 			result = exchange(connection, &request, &reply, reply_wire);
 
-			/* Silence is the ordinary way a block is lost. The
-			 * transport carries its own checksum, so a damaged
-			 * packet is discarded before it is ever delivered: what
-			 * the sender sees is not a bad block but no answer at
-			 * all. Treating that as fatal would end a transfer on
-			 * the first disturbance, which is the situation this
-			 * path exists to survive.
-			 */
+			/* No reply usually means the block was lost; resend it. */
 			if (result == -ETIMEDOUT) {
 				attempt++;
 				resent++;
@@ -436,12 +414,8 @@ int kfsw_fwu_lite_send_file(uint16_t node, const char *path, uint32_t *blocks_re
 				break;
 			}
 
-			/* A block can be written and its reply still be lost. The
-			 * resend then arrives for a block the node has moved past,
-			 * and the node says which one it wants instead. If that is
-			 * the block after this one, the write did happen and only
-			 * the acknowledgement went missing, so the sender moves on
-			 * rather than resending forever.
+			/* The block was written but its reply was lost: the node asks for the
+			 * next block, so move on.
 			 */
 			if ((reply.status == KFSW_FWU_LITE_STATUS_OUT_OF_ORDER) &&
 			    (reply.block_index == (uint16_t)(index + 1U))) {
@@ -476,10 +450,7 @@ int kfsw_fwu_lite_send_file(uint16_t node, const char *path, uint32_t *blocks_re
 			index++;
 		}
 	}
-	/* Closing what was never opened reads a structure that was never filled
-	 * in, and this is the path taken whenever the node refuses the transfer
-	 * before a single block is sent.
-	 */
+	/* Don't close a connection that was never opened. */
 	if (source_opened) {
 		source_close(&source);
 	}

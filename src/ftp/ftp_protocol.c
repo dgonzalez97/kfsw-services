@@ -138,9 +138,7 @@ bool kfsw_ftp_path_is_read_only(const char *virtual_path)
 
 int kfsw_ftp_resolve_write_path(const char *virtual_path, char *resolved, size_t resolved_size)
 {
-	/* Both the local shell and a remote request come through here, which is
-	 * why the refusal lives at the resolve rather than at either caller.
-	 */
+	/* Checked here so shell and remote requests are both refused. */
 	if (kfsw_ftp_path_is_read_only(virtual_path)) {
 		return -EROFS;
 	}

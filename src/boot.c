@@ -8,28 +8,19 @@
 #include <kfsw/platform/reset.h>
 #include <kfsw/platform/time.h>
 #include <kfsw/services/boot.h>
-/* Attributes this file's messages, so its level can be raised alone. */
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_BOOT
 #include <kfsw/services/log.h>
 #if CONFIG_KFSW_EVENT
 #include <kfsw/services/event.h>
 #endif
 
-/*
- * Latched once, because reading the cause clears it. The platform call wipes
- * the hardware flags so the next boot reports a new event, and this service is
- * the first reader; anything that called it again would be told the register is
- * empty and report that as the cause of the reset.
- */
+/* Read once at boot: reading the reset cause clears it. */
 static uint32_t boot_reset_cause;
 #if CONFIG_KFSW_LASTWORDS
 static struct kfsw_lastwords boot_lastwords;
 #endif
 static int boot_reset_rc = -EAGAIN;
-/* Read once and kept for the same reason the reset cause is: several readers
- * want it — the boot marker, the shell and the board table — and a fact
- * reported from two sources eventually disagrees.
- */
+/* Read once and shared by the boot marker, the shell and the board table. */
 static char boot_hardware_id[KFSW_HARDWARE_ID_TEXT_SIZE];
 
 const char *kfsw_boot_get_hardware_id(void)
@@ -58,9 +49,7 @@ void kfsw_boot_service_start(void)
 	int reset_rc;
 
 #if CONFIG_KFSW_LASTWORDS
-	/* Taken before anything else can be tempted to write a new one, and
-	 * kept, so later readers all see the same account.
-	 */
+	/* Take the note before anything can write a new one. */
 	(void)kfsw_lastwords_take(&boot_lastwords);
 #endif
 
@@ -76,9 +65,8 @@ void kfsw_boot_service_start(void)
 		kfsw_log_warning("Reset cause unavailable: %d", reset_rc);
 	}
 
-	/* These markers are consumed by CI and HIL tests. The decoded name is
-	 * appended rather than replacing the raw mask: the mask can latch
-	 * several causes at once and the name reports only the first.
+	/* CI and HIL tests parse these markers. The raw mask is kept because several
+	 * causes can be latched at once.
 	 */
 	printk("@BOOT sw=%s board=%s unit=%s reset=0x%08x reset_rc=%d reset_cause=%s\n",
 	       KFSW_IMAGE_VERSION, CONFIG_BOARD_TARGET,
@@ -94,16 +82,13 @@ void kfsw_boot_service_start(void)
 		      (unsigned long long)kfsw_time_monotonic_us());
 
 #if CONFIG_KFSW_EVENT
-	/* The reset cause is the first thing an operator wants after an
-	 * unattended restart, so it is recorded rather than only printed. */
+	/* Record the reset cause as an event too. */
 	{
 		uint8_t payload[5];
 
 		sys_put_be32(reset_cause, &payload[0]);
 		payload[4] = (reset_rc == 0) ? 0U : 1U;
-		/* A watchdog reset is not routine. It is raised above INFO so
-		 * that it survives a severity filter on the way to ground.
-		 */
+		/* A watchdog reset is logged as a warning. */
 		kfsw_event_emit(
 			KFSW_EVENT_SOURCE_BOOT, KFSW_EVENT_BOOT_READY,
 			((reset_rc != 0) || kfsw_platform_reset_cause_is_watchdog(reset_cause))
@@ -126,9 +111,7 @@ void kfsw_boot_service_start(void)
 			sys_put_be32(boot_lastwords.detail, &payload[1]);
 			sys_put_be32(boot_lastwords.uptime_ms, &payload[5]);
 			sys_put_be32(boot_lastwords.boot_count, &payload[9]);
-			/* A note that a run was ending is never routine: either
-			 * something commanded it or something went wrong.
-			 */
+			/* A note from the previous run is logged as a warning. */
 			kfsw_event_emit(KFSW_EVENT_SOURCE_BOOT, KFSW_EVENT_BOOT_LASTWORDS,
 					KFSW_EVENT_WARNING, payload, sizeof(payload));
 		}

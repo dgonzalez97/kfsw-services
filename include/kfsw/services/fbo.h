@@ -21,16 +21,8 @@ struct kfsw_param_definition_set;
 
 /** @defgroup kfsw_services_fbo File based operations
  *  @ingroup kfsw_services
- *  Carry out a sequence of commands written in a file.
- *
- *  A node is handed a file and does what is in it — a pass plan, a recovery
- *  sequence, a reconfiguration — without an operator on the link for every
- *  step. Every line is a command the command service already validates, so
- *  nothing can be written into a file that could not be sent over the radio.
- *
- *  Deliberately not a language. There are no loops and no jumps, so a
- *  procedure terminates by construction, which is what makes it safe to run
- *  with nobody watching.
+ *  Run a list of commands from a file. Every line is a normal command, and
+ *  there are no loops or jumps.
  *
  *  @{
  */
@@ -65,9 +57,8 @@ int kfsw_fbo_init(void);
 /**
  * @brief Start a procedure.
  *
- * Returns as soon as the run is accepted; the procedure itself runs on the
- * service's own thread, because a `wait` line blocks and must not hold the
- * caller. Watch it through kfsw_fbo_get_status() or the event record.
+ * Returns once the run is accepted; the procedure runs on the service thread.
+ * Follow it with kfsw_fbo_get_status() or the event record.
  *
  * @param name File under the procedure directory, without a path.
  * @retval 0 The run was accepted.
@@ -100,7 +91,7 @@ int kfsw_fbo_stop(void);
  */
 int kfsw_fbo_get_status(struct kfsw_fbo_status *status);
 
-/** Read-only live PARAM definitions owned by file based operations. */
+/** Parameter table of file based operations. */
 extern const struct kfsw_param_definition_set kfsw_fbo_param_definitions;
 
 /** @} */

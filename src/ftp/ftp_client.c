@@ -73,9 +73,8 @@ static int validate_virtual_path(const char *path, bool allow_root, char *scratc
 }
 
 /*
- * Receive one response and require that it is the expected reply to the
- * request that is in flight. The frame stays owned by the caller so a response
- * body can still be read; an error releases it here.
+ * Receive one response and check that it answers the request in flight. On
+ * success the caller releases the frame; on error it is released here.
  */
 static int receive_response(struct kfsw_ftp_link *link, uint8_t expected_opcode,
 			    uint32_t request_id, struct kfsw_ftp_link_frame *frame)
@@ -362,15 +361,11 @@ static void report_transfer(struct kfsw_ftp_transfer_result *transfer_result, ui
 	transfer_result->duration_ms = k_uptime_get_32() - started_ms;
 }
 
-/*
- * A completed or failed transfer is exactly the kind of fact an operator needs
- * to establish later, so it is recorded as well as returned.
- */
+/* Record the transfer result as an event. */
 static void record_transfer_event(uint16_t event_id, uint16_t node, uint32_t bytes,
 				  uint32_t crc32_or_errno, bool failed)
 {
-	/* Outside the event guard: a composition without the event record still
-	 * needs to know how many transfers have run. */
+	/* Counted even without the event record. */
 	kfsw_ftp_count_transfer(bytes, failed);
 
 #if CONFIG_KFSW_EVENT

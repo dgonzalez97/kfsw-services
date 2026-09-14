@@ -15,16 +15,10 @@ extern "C" {
 
 /**
  * @file
- * @brief One normalized path for invoking a K-FSW operation.
+ * @brief Commands called by name from the shell and by ID over CSP.
  *
- * A command is defined once and reachable two ways: by name from the shell,
- * and by numeric identifier over CSP. Both front ends resolve to the same
- * definition, the same argument validation and the same handler, so a local
- * operator and a ground station cannot diverge.
- *
- * Definitions are contributed as compile-time sets by their semantic owner,
- * the same way parameter definitions are, and the registry is frozen before
- * the application reports readiness.
+ * Both use the same definition, validation and handler. Definitions are
+ * registered at build time, and the registry is fixed before startup ends.
  */
 
 #define KFSW_COMMAND_MAX_ARGS 4U
@@ -69,10 +63,8 @@ enum kfsw_command_status {
 };
 
 /**
- * Event identifiers owned by the command service.
- *
- * Numbers are stable and never reused. Payloads carry the command identifier
- * and the source node as big-endian u16, then the status as one byte.
+ * Event IDs of the command service. IDs are never reused. Payload: command ID
+ * and source node as big-endian u16, then the status byte.
  */
 enum kfsw_event_command_id {
 	/** A command ran, whatever its outcome. */
@@ -97,11 +89,8 @@ struct kfsw_command_arg {
 };
 
 /**
- * Where a request came from.
- *
- * Authentication and authorization are not implemented. The fields are
- * reserved now so that adding them later does not change this structure's
- * meaning: a handler must never assume a particular source is trusted.
+ * Where a request came from. There is no authentication yet, so handlers must
+ * not trust any particular source.
  */
 struct kfsw_command_source {
 	/** CSP node that issued the request, or 0 for a local invocation. */
@@ -128,7 +117,7 @@ typedef int (*kfsw_command_handler_t)(const struct kfsw_command_arg *args, size_
 				      const struct kfsw_command_source *source,
 				      struct kfsw_command_result *result);
 
-/** One command, owned by the component that implements it. */
+/** One command. */
 struct kfsw_command_definition {
 	/** Stable numeric identifier used on the wire. Never reused. */
 	uint16_t id;
@@ -143,7 +132,7 @@ struct kfsw_command_definition {
 	kfsw_command_handler_t handler;
 };
 
-/** A compile-time group of command definitions from one semantic owner. */
+/** A compile-time group of command definitions. */
 struct kfsw_command_definition_set {
 	const struct kfsw_command_definition *commands;
 	size_t count;
@@ -178,10 +167,6 @@ void kfsw_command_visit(kfsw_command_visitor_t visitor, void *context);
 
 /**
  * @brief Convert one text argument to the type a command declares.
- *
- * The conversion belongs to the command service rather than to a front end,
- * because a shell, a procedure file and anything else that carries arguments
- * as text must agree on what "42" means for a declared type.
  *
  * A text argument is not copied: @p text must outlive the invocation.
  *
@@ -231,16 +216,11 @@ int kfsw_command_check_timeout_ms(uint32_t timeout_ms);
 int kfsw_command_set_timeout_ms(uint32_t timeout_ms);
 #endif
 
-/** Applies console echo. Provided by the composition, which owns the console. */
+/** Applies console echo; provided by the application. */
 typedef void (*kfsw_command_echo_handler_t)(bool enabled);
 
 /**
- * @brief Register what applies console echo.
- *
- * The console belongs to the composition rather than to this service, so the
- * service holds the setting and the composition applies it. Registering also
- * applies the current value, so the default reaches the shell without waiting
- * for anyone to write the parameter.
+ * @brief Register the function that applies console echo, and apply the current value.
  */
 void kfsw_command_set_echo_handler(kfsw_command_echo_handler_t handler);
 
@@ -271,7 +251,7 @@ int kfsw_command_invoke_remote(uint16_t node, const char *name, const struct kfs
 #endif /* CONFIG_KFSW_COMMAND_CSP */
 
 #if CONFIG_KFSW_PARAM
-/** Parameter table owned by this service, in the service band. */
+/** Parameter table of this service, in the service band. */
 #define KFSW_COMMAND_PARAM_TABLE_ID 28U
 /** Stable logical name paired with KFSW_COMMAND_PARAM_TABLE_ID. */
 #define KFSW_COMMAND_PARAM_TABLE_NAME "command"

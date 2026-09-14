@@ -14,14 +14,7 @@
 
 #include "command_internal.h"
 
-/*
- * The remote front end. This is the only translation unit in the command
- * service that includes libcsp; the registry and the shell adapter know
- * nothing about a transport.
- *
- * One request per connection, one connection at a time. Handlers run on this
- * thread, never on a CSP receive context.
- */
+/* Remote commands: one request per connection, handlers run on this thread. */
 
 #define KFSW_COMMAND_POLL_MS 100U
 
@@ -59,7 +52,7 @@ static void send_result(csp_conn_t *connection, uint16_t command_id, uint16_t re
 	}
 	memcpy(packet->data, buffer, encoded_size);
 	packet->length = encoded_size;
-	/* csp_send() takes ownership, including on transmit failure. */
+	/* csp_send() frees the packet, even when sending fails. */
 	csp_send(connection, packet);
 }
 
@@ -106,10 +99,7 @@ static void serve_request(csp_conn_t *connection, uint16_t source_node)
 
 	(void)kfsw_command_invoke_id(request.command_id, args, (size_t)decoded, &source, &result);
 
-	/*
-	 * The arguments borrow the packet only through text_storage, which is a
-	 * copy, so the buffer is released before the reply is built.
-	 */
+	/* Arguments were copied to text_storage, so the packet can be freed now. */
 	csp_buffer_free(packet);
 	send_result(connection, request.command_id, request.request_id, &result);
 }
@@ -229,13 +219,7 @@ int kfsw_command_invoke_remote(uint16_t node, const char *name, const struct kfs
 	}
 	kfsw_csp_get_info(&csp_info);
 
-	/* A command addressed to this node is run here rather than sent into
-	 * the network and back. It is the same command against the same
-	 * registry, so the answer is identical, and not involving the link
-	 * means it still works when every link is down.
-	 *
-	 * The file transfer service already does this for its own local node.
-	 */
+	/* A command for this node runs locally without using the link. */
 	if (node == csp_info.address) {
 		return kfsw_command_invoke(name, args, arg_count, result);
 	}

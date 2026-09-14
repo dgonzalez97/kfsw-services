@@ -5,11 +5,7 @@
 #include <kfsw/services/hk.h>
 #include <kfsw/services/parameter.h>
 
-/* What the service counts, published so an operator can see whether collection
- * is happening at all before wondering why a report reads oddly. `overwritten`
- * is the one worth watching: it says the ring wrapped, so the interesting
- * minutes may already be gone.
- */
+/* Housekeeping counters and settings. */
 static uint8_t hk_reports;
 static uint8_t hk_enabled = 1U;
 static uint32_t hk_collections;
@@ -127,10 +123,7 @@ static const struct kfsw_param_definition hk_param_definitions[] = {
 		.type = KFSW_PARAM_U8,
 		.flags = KFSW_PARAM_FLAG_CONFIGURATION,
 		.name = "hk_enabled",
-		/* Definitions and the ring survive being turned off, so an
-		 * operator who quietens housekeeping during a firmware upload
-		 * gets the history back by turning it on again.
-		 */
+		/* Turning collection off keeps definitions and samples. */
 		.description = "Collect periodic reports",
 		.value = &hk_enabled,
 		.default_value.u8 = 1U,
@@ -188,10 +181,7 @@ static const struct kfsw_param_definition hk_param_definitions[] = {
 		.type = KFSW_PARAM_U8,
 		.flags = KFSW_PARAM_FLAG_READ_ONLY | KFSW_PARAM_FLAG_LIVE,
 		.name = "hk_clock_valid",
-		/* The one to check when a report is defined and enabled and the
-		 * ring is still empty: nothing is collected on a schedule until
-		 * the node has been told the time.
-		 */
+		/* Periodic collection waits until the clock is set. */
 		.description = "Whether the node has a clock, and so collects on its period",
 		.value = &hk_clock_valid,
 		.sample = sample_clock_valid,
@@ -210,9 +200,7 @@ static const struct kfsw_param_definition hk_param_definitions[] = {
 		.offset = 0x24,
 		.type = KFSW_PARAM_U32,
 		.flags = KFSW_PARAM_FLAG_READ_ONLY,
-		/* The one to read when a ground station stops hearing a node
-		 * that is still collecting: the link was busy, not broken.
-		 */
+		/* Beacons skipped because CSP buffers were short. */
 		.name = "hk_beacons_skipped",
 		.description = "Beacons not sent because CSP buffers were short",
 		.value = &hk_beacons_skipped,

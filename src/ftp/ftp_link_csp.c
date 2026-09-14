@@ -15,18 +15,14 @@
 #include "ftp_link.h"
 
 /*
- * CSP backing for the file-transfer transport. This is the only translation
- * unit in the service that includes libcsp, so every packet-ownership rule
- * libcsp imposes is enforced here rather than spread across the client and
- * the server.
+ * CSP backend of the file transfer link, and the only file in the service that
+ * includes libcsp.
  */
 
 #define KFSW_FTP_LINK_OVERHEAD (CSP_RDP_HEADER_SIZE + sizeof(csp_crc32_t))
 
 /*
- * libcsp appends the RDP header and the CRC32 after the application has filled
- * the packet, so the usable space is the buffer minus both, not the buffer
- * alone.
+ * The usable payload is the buffer minus the RDP header and the CRC32.
  */
 BUILD_ASSERT(KFSW_FTP_PROTOCOL_HEADER_SIZE + KFSW_FTP_CHUNK_SIZE + KFSW_FTP_LINK_OVERHEAD <=
 		     CSP_BUFFER_SIZE,
@@ -88,7 +84,7 @@ int kfsw_ftp_link_send(struct kfsw_ftp_link *link, const struct kfsw_ftp_message
 		return result;
 	}
 	packet->length = encoded_size;
-	/* csp_send() takes ownership of the packet, including on transmit failure. */
+	/* csp_send() frees the packet, even when sending fails. */
 	csp_send(link->connection, packet);
 	return 0;
 }

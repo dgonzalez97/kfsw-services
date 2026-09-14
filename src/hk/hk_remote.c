@@ -7,7 +7,6 @@
 #include <zephyr/sys/util.h>
 
 #include <kfsw/services/hk.h>
-/* Attributes this file's messages, so its level can be raised alone. */
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_HK
 #include <kfsw/services/log.h>
 #include <kfsw/services/parameter.h>
@@ -16,9 +15,7 @@
 
 #if CONFIG_KFSW_PARAM_CSP
 
-/* One window's worth is asked for at a time, and the window is what
- * kfsw_param_remote_get_many() will pack into a request anyway.
- */
+/* Values are requested one window at a time. */
 #define KFSW_HK_REMOTE_WINDOW 8U
 
 struct name_search {
@@ -32,10 +29,7 @@ struct name_search {
 };
 
 /*
- * The remote read is by name, and a definition holds identifiers, so the
- * node's cached descriptors are what bridges the two. The cache is local, so
- * this costs no round trip -- it is walked once per node per collection rather
- * than once per value.
+ * Map IDs to names with the cached descriptors; no round trip is needed.
  */
 static bool match_names(const struct kfsw_param_info *info, void *context)
 {
@@ -83,10 +77,7 @@ int kfsw_hk_collect_remote(const struct kfsw_hk_definition *report, uint16_t nod
 
 	result = kfsw_param_remote_visit_until(node, match_names, &search, deadline);
 	if (result != 0) {
-		/* The node did not answer, so every value it owed is absent.
-		 * Their bytes are already zero and the caller marks the sample
-		 * incomplete.
-		 */
+		/* No answer: the values stay zero and the sample is marked incomplete. */
 		kfsw_log_warning("HK: node %u did not list its parameters (%d)", node, result);
 		for (size_t index = 0U; index < expected; index++) {
 			(*failures)++;
@@ -108,9 +99,7 @@ int kfsw_hk_collect_remote(const struct kfsw_hk_definition *report, uint16_t nod
 			if (first_read_error == 0) {
 				first_read_error = result;
 			}
-			/* A window that failed leaves its values zero rather
-			 * than half-written, so the frame still reads.
-			 */
+			/* A failed window leaves its values zero. */
 			for (size_t offset = 0U; offset < span; offset++) {
 				(*failures)++;
 			}

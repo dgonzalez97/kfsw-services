@@ -15,7 +15,7 @@ extern "C" {
 #define KFSW_HK_PARAM_TABLE_ID 33U
 #define KFSW_HK_PARAM_TABLE_NAME "hk"
 
-/** Wire format version, rejected rather than guessed at when it does not match. */
+/** Wire format version; other versions are rejected. */
 #define KFSW_HK_PROTOCOL_VERSION 1U
 
 /** Bytes before the first value in a serialised sample. */
@@ -25,25 +25,15 @@ extern "C" {
 #define KFSW_HK_FLAG_INCOMPLETE 0x01U
 
 /**
- * Set when the node's clock was not set, so the timestamp is zero.
- *
- * The values are still what they say they are; only the time is missing. The
- * periodic collector waits for a clock rather than filling the ring with
- * samples that cannot be placed in order, so in practice this appears only on
- * a sample collected by hand before the clock arrives.
+ * Set when the node's clock was not set, so the timestamp is zero. Periodic
+ * collection waits for the clock, so this only appears on manual collections.
  */
 #define KFSW_HK_FLAG_CLOCK_UNSET 0x02U
 
-/** Node number meaning "this one", so a definition need not know its own address. */
+/** Node number meaning the local node. */
 #define KFSW_HK_NODE_LOCAL 0U
 
-/**
- * One value a report collects.
- *
- * Parameters are named by the identifier the wire already uses rather than by
- * name: a report holding sixteen names would cost 512 bytes of definition, and
- * ground has the names anyway.
- */
+/** One value a report collects, by wire ID. */
 struct kfsw_hk_entry {
 	/** Node to read from, or KFSW_HK_NODE_LOCAL. */
 	uint16_t node;
@@ -113,12 +103,10 @@ int kfsw_hk_server_start(void);
 #endif
 
 /**
- * @brief Name the values a report collects, replacing whatever it held.
+ * @brief Set the values a report collects, replacing the old definition.
  *
- * Validated here rather than at collection time: every parameter must exist
- * and the values must fit one sample. A report that cannot be collected is
- * refused now, not discovered mid-pass, and the previous definition is left
- * intact when it is.
+ * Every parameter must exist and the values must fit one sample. If not, the
+ * definition is refused and the previous one stays.
  */
 int kfsw_hk_define(uint8_t report, const struct kfsw_hk_entry *entries, size_t count);
 
@@ -131,10 +119,10 @@ int kfsw_hk_get_definition(uint8_t report, struct kfsw_hk_entry *entries, size_t
 /**
  * @brief Collect a report now.
  *
- * Blocks: a remote entry waits for its node. Never call this from a parameter
- * sample callback, which runs under the table lock this needs.
- * Existing samples remain readable during collection and storage writes.
- * Returns -EAGAIN and discards the sample if the definition changed meanwhile.
+ * Blocks while remote values are read. Don't call it from a parameter sample
+ * callback, which holds the table lock this needs. Existing samples stay
+ * readable meanwhile. Returns -EAGAIN and drops the sample if the definition
+ * changed during the collection.
  */
 int kfsw_hk_collect(uint8_t report);
 
@@ -158,54 +146,37 @@ int kfsw_hk_get_period(uint8_t report, uint32_t *period_ms);
 void kfsw_hk_get_stats(struct kfsw_hk_stats *stats);
 
 /**
- * @brief Start or stop collecting on a period.
+ * @brief Start or stop periodic collection.
  *
- * Definitions and everything already collected are kept, so an operator who
- * quietens housekeeping during a firmware upload gets the history back by
- * turning it on again. Collecting by hand still works: disabling is a decision
- * about the schedule, not a lock on the service.
+ * Definitions and samples are kept, and manual collection still works.
  *
  * @param enabled True to collect on each report's period.
  */
 void kfsw_hk_set_enabled(bool enabled);
 
 /**
- * @brief Keep a report's samples in a file, and how often to write.
+ * @brief Store a report's samples in a file, written every @p interval_ms.
  *
- * Collection and storage are separate rates on purpose: collecting often and
- * writing rarely is what keeps a small flash alive. The interval is the
- * longest a sample may wait, and it is capped by the ring depth so nothing is
- * overwritten before it reaches the file.
- *
- * Refused below CONFIG_KFSW_HK_STORE_FLOOR_MS, and refused when the file would
- * not fit the free space, so a report that cannot be stored says so while
- * somebody is listening rather than during a pass.
+ * The interval is capped by the ring depth so no sample is overwritten before
+ * it is written.
  *
  * @param report Report index.
  * @param interval_ms Milliseconds between writes, or 0 to keep samples in RAM.
  * @retval 0 Storage configured.
  * @retval -EINVAL Unknown report.
  * @retval -ENOENT The report is not defined.
- * @retval -ERANGE The interval is below the floor.
+ * @retval -ERANGE The interval is below CONFIG_KFSW_HK_STORE_FLOOR_MS.
  * @retval -ENOSPC The file would not fit.
  * @retval -ENODEV There is no storage.
  */
 int kfsw_hk_set_store(uint8_t report, uint32_t interval_ms);
 
 /**
- * @brief Send a report's newest sample to a node without being asked.
+ * @brief Send a report's newest sample to a node periodically.
  *
- * Housekeeping answers requests, which is useless in the first seconds of a
- * pass: the ground must find the node, ask, and wait a round trip. A beacon
- * puts the newest sample on the link as soon as the link exists.
- *
- * The frame is the one a request gets, on the same port, so nothing on the
- * ground needs to change. Sent connection-less and at low priority, and
- * skipped rather than sent when CSP buffers are short — a reply somebody is
- * waiting for outranks a broadcast nobody asked for.
- *
- * Beacons follow collection: a report that is not collecting does not beacon,
- * and neither does a node whose clock was never set.
+ * The frame is the one a request gets, sent without a connection at low
+ * priority, and skipped when CSP buffers are short. Nothing is sent while the
+ * report is not collecting or the clock is not set.
  *
  * @param report Report index.
  * @param node Destination address.
@@ -228,12 +199,9 @@ int kfsw_hk_set_beacon(uint8_t report, uint16_t node, uint32_t interval_ms);
 int kfsw_hk_get_beacon(uint8_t report, uint16_t *node, uint32_t *interval_ms);
 
 /**
- * @brief Stop storing a report and remove what it already wrote.
+ * @brief Stop storing a report and delete its file.
  *
- * Separate from setting the interval to zero, which stops the writing and
- * leaves the file where it is. An operator who turns storing off to save flash
- * is not necessarily asking to lose the pass already captured, and the two
- * requests should not be the same keystroke.
+ * Setting the interval to zero stops writing but keeps the file.
  *
  * @param report Report index.
  * @retval 0 Stopped, and the file is gone.

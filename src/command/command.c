@@ -18,11 +18,7 @@
 
 #include "command_internal.h"
 
-/*
- * The registry. Definitions are contributed by their owning component as
- * compile-time sets, validated once, and frozen. There is no runtime
- * registration: a command that exists after startup existed at build time.
- */
+/* The registry: definition sets checked once at startup and then fixed. */
 
 static const struct kfsw_command_definition *registry[CONFIG_KFSW_COMMAND_MAX_COMMANDS];
 static size_t registry_count;
@@ -31,31 +27,18 @@ static bool registry_ready;
 /* Serializes invocation so a handler never runs concurrently with itself. */
 K_MUTEX_DEFINE(command_lock);
 
-/* Lifetime totals. Outcomes were recorded as events and counted nowhere, which
- * answers "what happened" but not "how often"; a pass is too short to read a
- * ring when a number would do.
- */
+/* Lifetime totals. */
 static atomic_t command_invoked;
 static atomic_t command_failed;
 static atomic_t command_unknown;
 static atomic_t command_rejected;
 
 #if CONFIG_KFSW_COMMAND_CSP
-/* Applied to the next remote invocation. A slow link is exactly when a caller
- * needs to raise it, and exactly when it cannot rebuild the image. Only exists
- * with the remote path: without it there is no invocation to time out. */
+/* Timeout for the next remote invocation. */
 static uint32_t command_timeout_ms = CONFIG_KFSW_COMMAND_TIMEOUT_MS;
 #endif
 
-/*
- * Console echo, off by default: the shell repeats every input byte, so a
- * scripted session shows each command twice, which is unreadable in a
- * recording.
- *
- * The console belongs to the composition, so applying the change goes through a
- * hook it fills in -- otherwise a setting you toggle while watching the console
- * would need a reboot.
- */
+/* Console echo, off by default. The application applies it through a hook. */
 static uint8_t command_echo_enabled;
 static kfsw_command_echo_handler_t command_echo_handler;
 
@@ -212,16 +195,11 @@ int kfsw_command_parse_arg(const char *text, enum kfsw_command_type type,
 		break;
 	}
 	case KFSW_COMMAND_TYPE_TEXT:
-		/* Bounded the way registration above is, and for the same
-		 * reason: the minimal libc has no strnlen, and a plain strlen
-		 * on text that is not terminated would read past it.
-		 */
+		/* Bounded length check; the minimal libc has no strnlen. */
 		if (memchr(text, '\0', KFSW_COMMAND_MAX_TEXT_SIZE + 1U) == NULL) {
 			return -ENAMETOOLONG;
 		}
-		/* Not copied: the caller owns the text for as long as the
-		 * invocation lasts, which is what every caller already does.
-		 */
+		/* Not copied: the caller keeps the text valid during the invocation. */
 		arg->value.text = text;
 		break;
 	default:
@@ -271,18 +249,12 @@ static enum kfsw_command_status check_arguments(const struct kfsw_command_defini
 	return KFSW_COMMAND_OK;
 }
 
-/*
- * Every dispatch outcome is recorded, so what a remote caller did remains
- * answerable after the console has scrolled away.
- */
+/* Record every dispatch as an event. */
 static void record_outcome(uint16_t event_id, uint16_t command_id,
 			   const struct kfsw_command_source *source,
 			   enum kfsw_command_status status)
 {
-	/* Outside the event guard: a composition without the event record still
-	 * needs to know how many commands have run and how many were refused.
-	 * Every outcome passes through here, which is why it is the one place
-	 * worth counting. */
+	/* Counted even without the event record. */
 	(void)atomic_inc(&command_invoked);
 	if (status == KFSW_COMMAND_UNKNOWN) {
 		(void)atomic_inc(&command_unknown);
@@ -407,9 +379,9 @@ uint32_t kfsw_command_get_timeout_ms(void)
 
 int kfsw_command_check_timeout_ms(uint32_t timeout_ms)
 {
-	/* Matches the Kconfig range, so a value accepted here is one the
-	 * composition could have been built with. Separate from applying it
-	 * because a change callback cannot refuse. */
+	/* Same range as Kconfig. Checked separately because a change callback
+	 * can't refuse a value.
+	 */
 	if ((timeout_ms < KFSW_COMMAND_TIMEOUT_MIN_MS) ||
 	    (timeout_ms > KFSW_COMMAND_TIMEOUT_MAX_MS)) {
 		return -ERANGE;
@@ -438,8 +410,7 @@ void kfsw_command_set_echo_handler(kfsw_command_echo_handler_t handler)
 {
 	command_echo_handler = handler;
 
-	/* Applied as soon as a console exists, so the default reaches the shell
-	 * without waiting for somebody to write the parameter. */
+	/* Apply the default as soon as a console exists. */
 	if (handler != NULL) {
 		handler(command_echo_enabled != 0U);
 	}

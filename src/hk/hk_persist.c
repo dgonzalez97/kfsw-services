@@ -11,7 +11,6 @@
 
 #include <kfsw/platform/storage.h>
 #include <kfsw/services/hk.h>
-/* Attributes this file's messages, so its level can be raised alone. */
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_HK
 #include <kfsw/services/log.h>
 
@@ -21,12 +20,8 @@
 #if CONFIG_KFSW_HK_PERSISTENCE
 
 /*
- * Definitions outlive a reset, the samples do not.
- *
- * The same shape as the parameter snapshot next door: a magic, a version, a
- * CRC, and a write through a temporary file that is renamed only once it is
- * whole. A reset landing mid-write leaves the previous set intact rather than
- * half of two.
+ * Report definitions survive a reset; samples don't. The file has a magic,
+ * version and CRC, and is written through a temporary file.
  */
 #define KFSW_HK_PERSIST_DIRECTORY KFSW_STORAGE_MOUNT_POINT "/hk"
 #define KFSW_HK_PERSIST_PATH KFSW_HK_PERSIST_DIRECTORY "/reports.dat"
@@ -41,13 +36,8 @@
  * id 1, entry count 1, period 4, store interval 4, beacon node 2,
  * beacon interval 4, then entries of node 2 and id 2.
  *
- * Version 2 added the last three. A node that resets mid-pass used to come
- * back collecting but silent, with its store off — the definition survived and
- * the policy built around it did not, which is the half that matters when
- * nobody is there to set it again.
- *
- * Version 1 is still read, so a board that has one keeps its reports across
- * the update and gains the rest on its next save.
+ * Version 2 added the store interval and the beacon fields. Version 1 files
+ * are still read.
  */
 #define KFSW_HK_PERSIST_REPORT_HEADER_V1 6U
 #define KFSW_HK_PERSIST_REPORT_HEADER 16U
@@ -71,10 +61,7 @@ struct restored_report {
 
 static struct restored_report restored[CONFIG_KFSW_HK_REPORTS];
 
-/* A build without the store or the beacon still writes their fields, as zero.
- * One layout on disk means a node that gains either on its next image reads
- * what it already has instead of refusing it.
- */
+/* The store and beacon fields are always written, as zero when not built in. */
 static uint32_t store_interval_of(uint8_t report)
 {
 #if CONFIG_KFSW_HK_STORE
@@ -219,10 +206,7 @@ static int load_snapshot(void)
 	if (memcmp(blob, KFSW_HK_PERSIST_MAGIC, KFSW_HK_PERSIST_MAGIC_SIZE) != 0) {
 		return -EBADMSG;
 	}
-	/* Older layouts this reader still knows are read; newer ones are
-	 * refused rather than guessed at, because a layout it does not know
-	 * would be decoded into the wrong parameters.
-	 */
+	/* Older versions are read; newer ones are refused. */
 	version = blob[4];
 	if ((version != KFSW_HK_PERSIST_VERSION) && (version != 1U)) {
 		kfsw_log_warning("HK: saved definitions are version %u, not %u", version,
@@ -350,7 +334,7 @@ int kfsw_hk_persist_load(void)
 {
 	int result;
 
-	/* Mutations release config ownership before waiting for file ownership. */
+	/* Changes release the config lock before waiting for the file lock. */
 	kfsw_hk_restore_begin();
 	k_mutex_lock(&file_lock, K_FOREVER);
 	result = load_snapshot();

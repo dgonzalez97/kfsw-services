@@ -19,20 +19,9 @@
 #if CONFIG_KFSW_HK_STORE
 
 /*
- * A ring on disk, mirroring the ring in RAM.
- *
- * Records are fixed size because a report's frame length is settled when it is
- * defined, which is the same fact that already fixes the widths. Fixed records
- * mean the oldest is overwritten in place, so rotation is arithmetic rather
- * than a rewrite and the file stops growing once every slot has been used —
- * capacity times the record size, and never more. A full filesystem cannot
- * creep up on a pass.
- *
- * The header is written once, at creation. Which record is newest is worked
- * out by reading sequence numbers when the file is opened, because deriving it
- * costs one pass over a small file and storing it would mean rewriting the
- * same block on every single write — the one block that would then wear out
- * first.
+ * Samples stored in a ring file with fixed-size records. The file stops growing
+ * once every slot is used. The newest record is found from the sequence numbers
+ * when the file is opened, so no header is rewritten on each write.
  */
 #define KFSW_HK_STORE_DIRECTORY KFSW_STORAGE_MOUNT_POINT "/hk"
 #define KFSW_HK_STORE_MAGIC "KHKS"
@@ -58,11 +47,7 @@ static void store_path(uint8_t report, char *out, size_t size)
 }
 
 /*
- * How many erases the backing partition is rated for in total.
- *
- * Only ever used to put a number beside a store interval in the warning. The
- * service cannot know the part, so the cycle count comes from the composition
- * and the geometry from the flash the storage partition sits on.
+ * Rated erase cycles of the storage flash, used in the interval warning.
  */
 #define KFSW_HK_STORE_PARTITION DT_CHOSEN(kfsw_storage_partition)
 #define KFSW_HK_STORE_ERASE_BLOCK                                                                  \
@@ -155,9 +140,7 @@ int kfsw_hk_store_configure(uint8_t report, uint32_t interval_ms, uint32_t perio
 		return -ERANGE;
 	}
 
-	/* Refused here rather than when the filesystem fills. A report that
-	 * cannot be stored should say so while somebody is still listening.
-	 */
+	/* Refuse a store that won't fit now, not when the filesystem fills. */
 	needed = (uint32_t)kfsw_hk_store_bytes_needed(record_size);
 	result = kfsw_storage_get_info(&storage);
 	if (result != 0) {
@@ -174,12 +157,7 @@ int kfsw_hk_store_configure(uint8_t report, uint32_t interval_ms, uint32_t perio
 		return result;
 	}
 
-	/* Collect often, write rarely: the batch is how many collections fit in
-	 * the interval. Capped at the ring depth, because a batch larger than
-	 * the ring would mean samples were overwritten before they were
-	 * written out, and losing them quietly is worse than writing more often
-	 * than asked.
-	 */
+	/* Batch as many collections as fit in the interval, capped at the ring depth. */
 	every = (period_ms == 0U) ? 1U : (((uint64_t)interval_ms + period_ms - 1U) / period_ms);
 	if (every == 0U) {
 		every = 1U;
@@ -255,11 +233,7 @@ int kfsw_hk_store_flush(uint8_t report, uint16_t next_sequence)
 		return result;
 	}
 
-	/* The batch is the newest `pending` samples, oldest first, each into
-	 * the slot its own sequence number names. Writing by sequence rather
-	 * than in order means a replayed or repeated flush lands in the same
-	 * place instead of shifting the ring.
-	 */
+	/* Write each sample to the slot its sequence number selects, oldest first. */
 	first = (uint16_t)(next_sequence - stores[report].pending);
 	for (uint16_t index = 0U; index < stores[report].pending; index++) {
 		uint16_t sequence = (uint16_t)(first + index);

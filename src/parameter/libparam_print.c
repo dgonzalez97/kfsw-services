@@ -9,12 +9,8 @@
 #include <kfsw/services/log.h>
 
 /*
- * libparam prints its diagnostics with printf, one line per parameter, so
- * asking a sixty-six parameter node for one value buried the answer.
- *
- * The library is vendored at a pinned revision and not edited here; its printf
- * is redirected at the build instead, on the kfsw_libparam target. The messages
- * become debug log lines in the parameter module, off at the default level.
+ * libparam prints diagnostics with printf. The build redirects them here, and
+ * they become debug log lines in the parameter module.
  */
 
 int kfsw_libparam_printf(const char *format, ...)

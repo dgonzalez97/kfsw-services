@@ -15,10 +15,7 @@
 
 static char boot_image[KFSW_BOOT_IMAGE_SIZE];
 #if CONFIG_KFSW_LASTWORDS
-/* What the previous run said, published so a pass can read it without holding a
- * console open. Zero for every one of them means the node lost power outright,
- * which is itself an answer.
- */
+/* What the previous run left. All zero means the node lost power. */
 static uint8_t boot_last_reason;
 static uint32_t boot_last_detail;
 static uint32_t boot_last_uptime_ms;
@@ -57,11 +54,7 @@ static void sample_image(void *value)
 
 static void sample_reset_cause(void *value)
 {
-	/* Taken from the latch the boot service holds, not from the platform
-	 * again: reading the cause clears it, and boot is the first reader.
-	 * Calling the platform here would report an empty register as the
-	 * cause of the reset.
-	 */
+	/* From the boot service; reading the platform register again would clear it. */
 	*(uint32_t *)value = kfsw_boot_get_reset_cause();
 }
 
@@ -75,13 +68,8 @@ static void sample_confirmed(void *value)
 }
 
 /*
- * A request to confirm, not a mirror of the flag. Writing 1 marks the running
- * image good; writing 0 changes nothing, because un-confirming an image that
- * has proven itself would arm a revert nobody asked for.
- *
- * Zero is accepted rather than refused because it is the compiled default, and
- * a parameter that refuses its own default cannot register. The sample callback
- * keeps it honest: a write of 0 reads back as a no-op immediately.
+ * Writing 1 confirms the running image; writing 0 does nothing. 0 is accepted
+ * because it is the default, and the sample callback reads it back as 0.
  */
 static int validate_confirmed(const union kfsw_param_scalar *value)
 {
@@ -91,10 +79,7 @@ static int validate_confirmed(const union kfsw_param_scalar *value)
 #if CONFIG_KFSW_FWU_MCUBOOT
 	return 0;
 #else
-	/* Without a bootloader there is nothing to confirm. Accepting the
-	 * default lets the table register; asking to confirm is refused,
-	 * because reporting success would suggest an image had been marked
-	 * good when nothing records that. */
+	/* Without a bootloader there is nothing to confirm, so a write of 1 is refused. */
 	return (value->u8 == 0U) ? 0 : -ENOTSUP;
 #endif
 }
@@ -124,9 +109,7 @@ static const struct kfsw_param_definition boot_param_definitions[] = {
 	{
 		.offset = 0x20U,
 		.type = KFSW_PARAM_U32,
-		/* Persistent and read-only together: the service writes it, a
-		 * snapshot carries it, and an operator cannot rewrite the
-		 * history of how many times the node has restarted. */
+		/* Read-only and persistent: saved in the snapshot but not writable. */
 		.flags = KFSW_PARAM_FLAG_READ_ONLY | KFSW_PARAM_FLAG_PERSISTENT,
 		.name = "boot_count",
 		.description = "Restarts recorded across the life of the node",

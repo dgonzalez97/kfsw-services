@@ -9,7 +9,6 @@
 #include <zephyr/sys/crc.h>
 
 #include <kfsw/platform/storage.h>
-/* Attributes this file's messages, so its level can be raised alone. */
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_PARAM
 #include <kfsw/services/log.h>
 #include <kfsw/services/parameter.h>
@@ -35,19 +34,13 @@ enum persist_type {
 	PERSIST_TYPE_U32 = 2,
 	PERSIST_TYPE_I32 = 3,
 	PERSIST_TYPE_FLOAT = 4,
-	/* Added after the first snapshots were written. A reader that does not
-	 * know a type code refuses the entry rather than guessing at its width,
-	 * so an older reader meeting one fails safe instead of misdecoding the
-	 * rest of the snapshot.
-	 */
+	/* Added later. Unknown type codes are refused. */
 	PERSIST_TYPE_U16 = 5,
 	PERSIST_TYPE_I16 = 6,
 	/* Stored with its terminator, so value_size carries the whole thing and
 	 * a shorter string does not have to be padded. */
 	PERSIST_TYPE_STRING = 7,
-	/* Fixed length, so value_size is the element count and a snapshot
-	 * written by a build with a different array size is refused rather
-	 * than half applied. */
+	/* Fixed length: value_size is the element count. A different size is refused. */
 	PERSIST_TYPE_DATA = 8,
 };
 
@@ -69,9 +62,7 @@ BUILD_ASSERT(KFSW_PARAM_PERSIST_MAX_BYTES > KFSW_PARAM_PERSIST_HEADER_SIZE,
 
 static uint8_t snapshot[KFSW_PARAM_PERSIST_MAX_BYTES];
 
-/* What the last built snapshot occupied, so the headroom is a number an
- * operator can read rather than one they have to work out.
- */
+/* Size of the last snapshot built. */
 static uint32_t snapshot_bytes;
 
 static size_t bounded_string_length(const char *text, size_t maximum)
@@ -128,9 +119,7 @@ static int persistent_type(const struct kfsw_param_entry *entry, uint8_t *type,
 	}
 }
 
-/* Reports how many bytes it wrote, because a string's length is its own and is
- * only known once the value has been read.
- */
+/* Returns the bytes written; a string's length is only known once read. */
 static int encode_value(const struct kfsw_param_entry *entry, uint8_t *output, size_t output_size,
 			uint16_t *written)
 {
@@ -204,12 +193,7 @@ static int build_snapshot(size_t *snapshot_size)
 		uint16_t value_size;
 		uint8_t type;
 
-		/* Read-only means an operator cannot write it, not that it
-		 * cannot be kept. A boot counter is exactly that: the service
-		 * owns the value and nobody should be able to rewrite the
-		 * history of how many times the node has restarted, but losing
-		 * the count on every restart would defeat the point of it.
-		 */
+		/* Read-only values can still be saved, like the boot counter. */
 		if ((entry->info.node != 0U) ||
 		    ((entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) == 0U)) {
 			continue;
@@ -225,9 +209,7 @@ static int build_snapshot(size_t *snapshot_size)
 		if (result != 0) {
 			break;
 		}
-		/* Checked against the capacity rather than the current length,
-		 * because a later save of a longer string must not be the one
-		 * that discovers there was never room for it. */
+		/* Check against the capacity, not the current length. */
 		if ((entry->info.type == KFSW_PARAM_STRING) ||
 		    (entry->info.type == KFSW_PARAM_DATA)) {
 			value_size = entry->info.array_size;
@@ -285,9 +267,7 @@ uint32_t kfsw_param_persist_max_bytes(void)
 }
 
 /*
- * Refuse a snapshot the partition cannot take, while somebody is still
- * listening. The budget is a ceiling the project sets; the free space is what
- * the board actually has, and the smaller of the two is the one that matters.
+ * Refuse a snapshot larger than the budget or the free space.
  */
 static int check_budget(size_t snapshot_size)
 {
@@ -295,10 +275,7 @@ static int check_budget(size_t snapshot_size)
 	int result;
 
 	if (snapshot_size > KFSW_PARAM_PERSIST_MAX_BYTES) {
-		/* Unreachable while the snapshot is built in a buffer of this
-		 * size, and kept because that is a property of the code rather
-		 * than of the format: a streaming writer would reach it.
-		 */
+		/* Unreachable while the snapshot fits its buffer; kept for a streaming writer. */
 		kfsw_log_error("PARAM: a snapshot of %u bytes is over the %u byte budget",
 			       (unsigned int)snapshot_size,
 			       (unsigned int)KFSW_PARAM_PERSIST_MAX_BYTES);
@@ -307,9 +284,7 @@ static int check_budget(size_t snapshot_size)
 
 	result = kfsw_storage_get_info(&storage);
 	if (result != 0) {
-		/* Not fatal: a partition that cannot report itself is not a
-		 * reason to stop keeping parameters.
-		 */
+		/* Not fatal: carry on if the partition can't report its free space. */
 		return 0;
 	}
 	if ((uint64_t)snapshot_size > storage.free_bytes) {
@@ -450,9 +425,7 @@ static int decode_and_set(const struct kfsw_param_entry *param_entry,
 		memcpy(&value.scalar.f32, &raw_value, sizeof(value.scalar.f32));
 		break;
 	case PERSIST_TYPE_DATA:
-		/* Length must match exactly: an array from a build with a
-		 * different element count is a different parameter, and applying
-		 * part of it would leave the rest at values nobody chose. */
+		/* An array must have the same length. */
 		if ((persist_entry->value_size == 0U) ||
 		    (persist_entry->value_size != param_entry->info.array_size) ||
 		    (persist_entry->value_size > sizeof(value.bytes))) {
@@ -462,8 +435,7 @@ static int decode_and_set(const struct kfsw_param_entry *param_entry,
 		value.size = persist_entry->value_size;
 		break;
 	case PERSIST_TYPE_STRING:
-		/* A stored string that lost its terminator is a corrupt entry,
-		 * not one to repair by guessing where it ended. */
+		/* A string without its terminator is corrupt. */
 		if ((persist_entry->value_size == 0U) ||
 		    (persist_entry->value_size > sizeof(value.text)) ||
 		    (persist_entry->value[persist_entry->value_size - 1U] != '\0')) {
@@ -595,12 +567,7 @@ static int persist_load(void)
 		result = apply_snapshot(entry.size, entry_count);
 	}
 	if (result == 0) {
-		/* Recorded on the way in as well as on the way out. A node that
-		 * has just booted has not built a snapshot, and reporting zero
-		 * there answers "how much room are the parameters using" with
-		 * the one number that is certainly wrong, at the moment it is
-		 * most likely to be asked.
-		 */
+		/* Also recorded on load, so the size is known right after boot. */
 		snapshot_bytes = (uint32_t)entry.size;
 	}
 
@@ -630,11 +597,8 @@ int kfsw_param_persist_clear(void)
 }
 
 /*
- * Every snapshot costs an erase cycle on a part that has a finite number of
- * them. Nothing here can know how long a mission is, so the warning is not a
- * prediction: it is a count crossing a line, said once, with the number an
- * operator would need to decide whether to turn autosave off and persist
- * deliberately instead.
+ * Each snapshot costs an erase cycle. Warn once when the save count crosses the
+ * configured limit.
  */
 static void warn_about_wear(void)
 {
@@ -656,9 +620,7 @@ static void warn_about_wear(void)
 }
 
 /*
- * Counted at one exit each rather than at every return inside. A snapshot that
- * fails to load is the difference between running on stored settings and
- * running on compiled defaults, and nothing else records which happened.
+ * Count load failures at one exit each.
  */
 int kfsw_param_persist_save(void)
 {
@@ -681,9 +643,7 @@ int kfsw_param_persist_table_count(uint8_t table, uint16_t *count)
 		return -EINVAL;
 	}
 
-	/* Existence is derived from the entries rather than asked of the table
-	 * list, so this takes the one lock instead of nesting two.
-	 */
+	/* Derive table existence from the entries, taking only one lock. */
 	kfsw_param_table_lock();
 	for (size_t index = 0U; index < kfsw_param_entry_count(); index++) {
 		const struct kfsw_param_entry *entry = kfsw_param_entry_at(index);

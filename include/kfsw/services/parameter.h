@@ -45,12 +45,7 @@ union kfsw_param_scalar {
 	double f64;
 };
 
-/**
- * Longest string parameter, including the terminator.
- *
- * Bounded rather than allocated: a value travels on the caller's stack, and a
- * parameter service that allocated would have to fail at the worst moment.
- */
+/** Longest string parameter, including the terminator. */
 #define KFSW_PARAM_STRING_MAX CONFIG_KFSW_PARAM_STRING_MAX
 
 /** One typed value, with shared storage for text and bytes. */
@@ -72,31 +67,21 @@ struct kfsw_param_value {
 	};
 };
 
-/**
- * Longest parameter name kept, excluding the terminator.
- *
- * The table already says which component owns the parameter, so a name does
- * not need to repeat it. Thirty-two characters is what the listing column is
- * sized for; a longer name is refused at registration rather than truncated,
- * because a truncated name is a name nobody can address.
- */
+/** Longest parameter name, excluding the terminator. Longer names are refused. */
 #define KFSW_PARAM_NAME_MAX 32U
 
 /**
- * Table identifier bands.
- *
- * A parameter is addressed by table and offset. The band a table sits in says
- * who owns it, so two components cannot claim the same table by accident.
- * Zero is reserved, so an uninitialised field addresses nothing real.
+ * Table ID bands. A parameter is addressed by table and offset, and the band
+ * shows whether a table is core, service or module. Zero is reserved.
  */
 #define KFSW_PARAM_TABLE_INVALID 0U
-/** First and last table owned by the composition, platform or comms layers. */
+/** First and last table of the application, platform and comms layers. */
 #define KFSW_PARAM_TABLE_CORE_FIRST 1U
 #define KFSW_PARAM_TABLE_CORE_LAST 24U
-/** First and last table owned by a service. */
+/** First and last service table. */
 #define KFSW_PARAM_TABLE_SERVICE_FIRST 25U
 #define KFSW_PARAM_TABLE_SERVICE_LAST 49U
-/** First and last table owned by a module. */
+/** First and last module table. */
 #define KFSW_PARAM_TABLE_MODULE_FIRST 50U
 #define KFSW_PARAM_TABLE_MODULE_LAST 99U
 
@@ -105,13 +90,9 @@ struct kfsw_param_value {
 
 struct kfsw_param_info {
 	uint16_t node;
-	/**
-	 * Wire identifier: the table in the high byte and the offset in the
-	 * low byte. Unique across the node, which is what the libcsp parameter
-	 * list requires, while remaining decodable back to table and offset.
-	 */
+	/** Wire ID: table in the high byte, offset in the low byte. */
 	uint16_t id;
-	/** Owning table identifier. */
+	/** Table identifier. */
 	uint8_t table;
 	/** Byte offset of this parameter within its table. */
 	uint8_t offset;
@@ -144,17 +125,11 @@ struct kfsw_param_table_info {
 #define KFSW_PARAM_FLAG_SYSTEM_INFO 0x00000040UL
 /** Parameter exists for diagnostic or test behavior. */
 #define KFSW_PARAM_FLAG_DEBUG 0x00000200UL
-/** K-FSW-owned user flag selecting local values for persistence. */
+/** User flag: the value is saved in the snapshot. */
 #define KFSW_PARAM_FLAG_PERSISTENT 0x00010000UL
 /**
- * K-FSW-owned user flag: a write takes effect immediately.
- *
- * Set by the service for any definition with a change callback, so a parameter
- * that applies its value cannot claim to need a reboot. An owner that applies
- * it by reading it each cycle may set the flag itself.
- *
- * It travels in the wire mask, so a remote listing reports the same write
- * behaviour as a local one.
+ * User flag: a write takes effect immediately. Set for every definition with a
+ * change callback; a definition that reads its value every cycle can set it too.
  */
 #define KFSW_PARAM_FLAG_LIVE 0x00020000UL
 
@@ -173,30 +148,28 @@ typedef int (*kfsw_param_text_validator_t)(const char *text);
  * array, because its values are usually only sensible together.
  */
 typedef int (*kfsw_param_data_validator_t)(const uint8_t *data, size_t size);
-/** Apply owner behavior after the backing scalar changes. */
+/** Called after the stored scalar changes. */
 typedef void (*kfsw_param_changed_t)(const union kfsw_param_scalar *value);
-/** Apply owner behavior after the backing string changes. */
+/** Called after the stored string changes. */
 typedef void (*kfsw_param_text_changed_t)(const char *text);
-/** Apply owner behavior after the backing byte array changes. */
+/** Called after the stored byte array changes. */
 typedef void (*kfsw_param_data_changed_t)(const uint8_t *data, size_t size);
 /**
- * Refresh backing storage from live state just before it is read, so a value
- * is current rather than up to one timer period stale.
- *
- * Runs under the table lock, so it must not call back into the parameter API.
+ * Refresh the stored value just before it is read. Runs under the table lock, so
+ * it must not call the parameter API.
  */
 typedef void (*kfsw_param_sample_t)(void *value);
 
 /**
- * One scalar parameter declaration owned by a component.
+ * One parameter definition.
  *
- * The definition, its strings, and its writable value storage must remain
- * valid for the service lifetime. Defaults are copied into value storage at
- * successful initialization. Validator and change callbacks run while PARAM
- * serializes access, so they must not call back into the parameter API.
+ * The definition, its strings and its storage must stay valid while the service
+ * runs. Defaults are copied into storage at init. Validators and change
+ * callbacks run under the parameter lock, so they must not call the parameter
+ * API.
  */
 struct kfsw_param_definition {
-	/** Byte offset within the owning table; unique inside that table. */
+	/** Byte offset within the table; unique inside it. */
 	uint8_t offset;
 	enum kfsw_param_type type;
 	/**
@@ -224,15 +197,9 @@ struct kfsw_param_definition {
 	kfsw_param_sample_t sample;
 };
 
-/**
- * One parameter table: a compile-time group of definitions with one owner.
- *
- * The set and the table are the same thing on purpose. A table is owned by
- * exactly one component -- the one that can validate and apply its values --
- * so there is nothing for a second grouping to express.
- */
+/** One parameter table: a compile-time group of definitions. */
 struct kfsw_param_definition_set {
-	/** Table identifier; must fall in the band belonging to the owner. */
+	/** Table ID, in the band of the component that defines it. */
 	uint8_t table;
 	/** Stable lowercase table name, at most KFSW_PARAM_NAME_MAX. */
 	const char *name;
@@ -256,19 +223,12 @@ int kfsw_param_get(const char *name, struct kfsw_param_value *value);
 int kfsw_param_set(const char *name, const struct kfsw_param_value *value);
 
 /**
- * @brief Read a parameter by its wire identifier rather than its name.
- *
- * A caller holding a list of identifiers -- a housekeeping report, say -- does
- * not have to keep the names too: a name is up to 32 bytes, an identifier is
- * two. Samples exactly as kfsw_param_get() does.
+ * @brief Read a parameter by its wire ID. Samples the value like kfsw_param_get().
  */
 int kfsw_param_get_by_id(uint16_t id, struct kfsw_param_value *value);
 
 /**
- * @brief Build the wire identifier for a table and offset.
- *
- * Ground and flight agree on this pair, and it is what kfsw_param_get_by_id()
- * and the remote descriptor list are keyed by.
+ * @brief Build the wire ID for a table and offset.
  */
 #define KFSW_PARAM_ID(table, offset) ((uint16_t)(((uint16_t)(table) << 8) | (uint8_t)(offset)))
 
@@ -313,7 +273,7 @@ struct kfsw_param_stats {
 /** Read what the service knows about itself. -EINVAL for a NULL destination. */
 int kfsw_param_get_stats(struct kfsw_param_stats *stats);
 
-/** Parameter table owned by the service itself, in the service band. */
+/** Parameter table of the parameter service, in the service band. */
 #define KFSW_PARAM_PARAM_TABLE_ID 26U
 /** Stable logical name paired with KFSW_PARAM_PARAM_TABLE_ID. */
 #define KFSW_PARAM_PARAM_TABLE_NAME "param"
@@ -325,7 +285,7 @@ extern const struct kfsw_param_definition_set kfsw_param_param_definitions;
 bool kfsw_param_autosave_enabled(void);
 
 /**
- * @brief Name of the ownership band a table identifier falls in.
+ * @brief Name of the band a table ID falls in.
  *
  * @return "core", "service", "module", or "invalid" for an unallocated value.
  */
@@ -338,21 +298,14 @@ const char *kfsw_param_band_name(uint8_t table);
  *         "wb" both.
  */
 /**
- * @brief How a parameter may be written, as a set of letters.
- *
- * One letter per property rather than a name per combination, so each question
- * is answered separately:
+ * @brief How a parameter can be written, as letters.
  *
  *   r    read-only
  *   w    writable
  *   p    persistent: the value survives a reset
- *   b    boot: the write is accepted now and read when the node next starts
+ *   b    boot: the write is read when the node next starts
  *
- * So `wp` is written and kept and applies immediately, `wpb` is written and
- * kept and applies at the next start, and `w` is written, applied, and gone
- * when the node restarts.
- *
- * The returned pointer is a literal and is safe to hold.
+ * The returned pointer is a string literal.
  */
 const char *kfsw_param_mode_name(uint32_t flags);
 
@@ -367,12 +320,7 @@ int kfsw_param_persist_load(void);
 int kfsw_param_persist_clear(void);
 
 /**
- * @brief How many of one table's parameters a snapshot carries.
- *
- * The snapshot is a single file covering every persistent value, so saving is
- * always whole-file. This answers the question an operator actually has after
- * changing a table — did what I just set reach flash, and how much of this
- * table is kept at all.
+ * @brief How many of a table's parameters the snapshot holds.
  *
  * @param table Table identifier.
  * @param[out] count Persistent parameters in that table.
@@ -403,15 +351,12 @@ int kfsw_param_remote_refresh(uint16_t node);
 int kfsw_param_remote_get(uint16_t node, const char *name, struct kfsw_param_value *value);
 
 /**
- * @brief Read several parameters from one node in as few exchanges as fit.
+ * @brief Read several parameters from one node in as few exchanges as possible.
  *
- * The operation shares one list-plus-value budget. Each receive is also capped
- * by CONFIG_KFSW_PARAM_TIMEOUT_MS; duplicate packets cannot restart the budget.
- *
- * @p values must hold @p count entries. Names are all resolved before anything
- * is requested, so an unknown name costs no round trip. Returns 0 with every
- * value filled, or an errno with none guaranteed: a partial read is a failure,
- * not a set that is only partly true.
+ * The whole operation shares one time budget, and each receive is also limited
+ * by CONFIG_KFSW_PARAM_TIMEOUT_MS. @p values must hold @p count entries. All
+ * names are resolved before anything is requested. Returns 0 with every value
+ * filled, or an errno if any value is missing.
  */
 int kfsw_param_remote_get_many(uint16_t node, const char *const *names, size_t count,
 			       struct kfsw_param_value *values);

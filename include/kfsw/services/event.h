@@ -15,20 +15,13 @@ extern "C" {
 
 /**
  * @file
- * @brief Bounded record of what a node did, separate from the console log.
+ * @brief RAM record of numeric events, separate from the console log.
  *
- * A log line only exists while someone is watching. An event is a numeric
- * record -- identifier, timestamp, sequence number, small payload -- that
- * survives an unattended console, reads back over a link, and shows its gaps.
- *
- * Events do not replace logging: a message for a developer at a terminal stays
- * a log call, a fact an operator may need afterwards becomes an event.
- *
- * The ring is RAM, so it does not survive a reset. Persisting it is separate
- * work.
+ * Each event has an ID, timestamp, sequence number and small payload. The ring
+ * does not survive a reset.
  */
 
-/** Owning component of an event identifier. Identifiers are unique per source. */
+/** Component that produced an event. IDs are unique per source. */
 enum kfsw_event_source {
 	KFSW_EVENT_SOURCE_BOOT = 1,
 	KFSW_EVENT_SOURCE_COMMAND = 2,
@@ -46,9 +39,7 @@ enum kfsw_event_severity {
 };
 
 /**
- * Payload bytes are opaque to this service and are stored exactly as given.
- * A producer whose payload will cross a link is responsible for writing it in
- * network byte order.
+ * Payload bytes are stored as given. Payloads sent over a link are big-endian.
  */
 #define KFSW_EVENT_MAX_PAYLOAD_SIZE 16U
 
@@ -64,7 +55,7 @@ struct kfsw_event_record {
 	uint8_t payload[KFSW_EVENT_MAX_PAYLOAD_SIZE];
 };
 
-/** Service counters, for checking that nothing was silently dropped. */
+/** Service counters. */
 struct kfsw_event_stats {
 	/** Events accepted since start. */
 	uint32_t recorded;
@@ -83,9 +74,8 @@ typedef bool (*kfsw_event_visitor_t)(const struct kfsw_event_record *record, voi
 /**
  * Record one event.
  *
- * Safe to call from any thread. Never blocks on a link or a filesystem. When
- * the ring is full the oldest record is overwritten and the overwritten
- * counter increases, so losing history is visible rather than silent.
+ * Safe from any thread and never blocks. When the ring is full the oldest
+ * record is overwritten and the overwritten counter increases.
  */
 void kfsw_event_emit(enum kfsw_event_source source, uint16_t id, enum kfsw_event_severity severity,
 		     const void *payload, size_t payload_size);
@@ -113,7 +103,7 @@ const char *kfsw_event_severity_name(enum kfsw_event_severity severity);
 const char *kfsw_event_source_name(enum kfsw_event_source source);
 
 #if CONFIG_KFSW_PARAM
-/** Parameter table owned by this service, in the service band. */
+/** Parameter table of this service, in the service band. */
 #define KFSW_EVENT_PARAM_TABLE_ID 27U
 /** Stable logical name paired with KFSW_EVENT_PARAM_TABLE_ID. */
 #define KFSW_EVENT_PARAM_TABLE_NAME "event"
