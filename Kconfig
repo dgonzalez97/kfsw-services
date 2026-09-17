@@ -503,6 +503,39 @@ config KFSW_FBO_PRIORITY
 	help
 	  Below the router and the servers.
 
+config KFSW_RESMON
+	bool "K-FSW resource monitor"
+	select INIT_STACKS
+	select THREAD_STACK_INFO
+	select THREAD_MONITOR
+	select THREAD_NAME
+	help
+	  Walk the kernel's thread list on a period and record how much stack
+	  each thread has left. The selected options fill stacks with a known
+	  value at creation and keep the thread list, which is what makes the
+	  measurement possible.
+
+if KFSW_RESMON
+
+config KFSW_RESMON_PERIOD_MS
+	int "How often the threads are swept, in milliseconds"
+	default 10000
+	range 100 3600000
+	help
+	  A sweep walks every thread, so a short period costs time on a node
+	  with many of them.
+
+config KFSW_RESMON_ALERT_PERCENT
+	int "Stack use that raises an event, as a percentage"
+	default 90
+	range 1 100
+	help
+	  Usage is measured against each thread's own stack. Bytes alone say
+	  nothing across threads sized differently: the idle thread sits near
+	  its limit by design.
+
+endif # KFSW_RESMON
+
 config KFSW_GNDWDT
 	bool "K-FSW ground watchdog"
 	help
