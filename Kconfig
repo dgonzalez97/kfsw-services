@@ -503,6 +503,55 @@ config KFSW_FBO_PRIORITY
 	help
 	  Below the router and the servers.
 
+config KFSW_GNDWDT
+	bool "K-FSW ground watchdog"
+	help
+	  Reset the node when it hears nothing from another node for the
+	  configured time. It recovers a node that is still running but cannot
+	  be commanded, which the health watchdog cannot see.
+
+if KFSW_GNDWDT
+
+config KFSW_GNDWDT_TIMEOUT_S
+	int "Silence allowed before a reset, in seconds"
+	default 86400
+	help
+	  Starting timeout, one day. Table 35 changes it at run time.
+
+config KFSW_GNDWDT_TIMEOUT_MIN_S
+	int "Shortest timeout that can be set"
+	default 60
+	range 1 86400
+	help
+	  A floor on what an operator can write, so a short value cannot put a
+	  node into a reset loop it takes a pass to notice.
+
+config KFSW_GNDWDT_TIMEOUT_MAX_S
+	int "Longest timeout that can be set"
+	default 604800
+	range 60 2592000
+
+config KFSW_GNDWDT_CHECK_MS
+	int "How often the timer is checked, in milliseconds"
+	default 1000
+	range 100 60000
+
+config KFSW_GNDWDT_RESET_DELAY_MS
+	int "Wait between the decision and the reset, in milliseconds"
+	default 1000
+	range 0 60000
+	help
+	  Long enough for the log line and the event record to leave first.
+
+config KFSW_GNDWDT_ENABLED_AT_START
+	bool "Arm the timer when the service starts"
+	default y
+	help
+	  Turn this off to compose the service but leave it disarmed until an
+	  operator writes gndwdt_enabled.
+
+endif # KFSW_GNDWDT
+
 config KFSW_HK
 	bool "K-FSW housekeeping service"
 	depends on KFSW_PARAM
