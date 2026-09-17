@@ -245,10 +245,65 @@ target_include_directories(kfsw_services
         ${CMAKE_CURRENT_LIST_DIR}/include
 )
 
+# Short revision of every workspace repository compiled into this image. The
+# image version alone comes from k-fsw, so a moved dependency pin produces a
+# different image with the same version.
+find_package(Git QUIET)
+set(kfsw_build_revisions "")
+foreach(kfsw_repo "app=${CMAKE_CURRENT_LIST_DIR}/../k-fsw"
+                  "plat=${CMAKE_CURRENT_LIST_DIR}/../kfsw-platform"
+                  "svc=${CMAKE_CURRENT_LIST_DIR}"
+                  "comms=${CMAKE_CURRENT_LIST_DIR}/../kfsw-comms"
+                  "mod=${CMAKE_CURRENT_LIST_DIR}/../kfsw-modules")
+    string(REPLACE "=" ";" kfsw_repo_parts "${kfsw_repo}")
+    list(GET kfsw_repo_parts 0 kfsw_repo_label)
+    list(GET kfsw_repo_parts 1 kfsw_repo_path)
+    set(kfsw_repo_revision "unknown")
+
+    if(GIT_FOUND AND EXISTS "${kfsw_repo_path}/.git")
+        execute_process(
+            COMMAND ${GIT_EXECUTABLE} rev-parse --short=10 HEAD
+            WORKING_DIRECTORY "${kfsw_repo_path}"
+            OUTPUT_VARIABLE kfsw_repo_head
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+            RESULT_VARIABLE kfsw_repo_result
+        )
+        if(kfsw_repo_result EQUAL 0 AND kfsw_repo_head)
+            set(kfsw_repo_revision "${kfsw_repo_head}")
+
+            # A dirty tree is a different image, so say so.
+            execute_process(
+                COMMAND ${GIT_EXECUTABLE} status --porcelain --untracked-files=no
+                WORKING_DIRECTORY "${kfsw_repo_path}"
+                OUTPUT_VARIABLE kfsw_repo_dirty
+                ERROR_QUIET
+            )
+            if(NOT kfsw_repo_dirty STREQUAL "")
+                string(APPEND kfsw_repo_revision "+")
+            endif()
+        endif()
+
+        # Reconfigure when this repository moves.
+        if(EXISTS "${kfsw_repo_path}/.git/HEAD")
+            set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                "${kfsw_repo_path}/.git/HEAD")
+        endif()
+    endif()
+
+    if(kfsw_build_revisions STREQUAL "")
+        set(kfsw_build_revisions "${kfsw_repo_label}:${kfsw_repo_revision}")
+    else()
+        string(APPEND kfsw_build_revisions " ${kfsw_repo_label}:${kfsw_repo_revision}")
+    endif()
+endforeach()
+message(STATUS "K-FSW build revisions: ${kfsw_build_revisions}")
+
 target_compile_definitions(kfsw_services
     PRIVATE
         KFSW_IMAGE_VERSION="${KFSW_IMAGE_VERSION}"
         KFSW_SOURCE_REVISION="${KFSW_RELEASE_SOURCE}"
+        KFSW_BUILD_REVISIONS="${kfsw_build_revisions}"
 )
 
 target_link_libraries(kfsw_services

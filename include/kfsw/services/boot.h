@@ -43,6 +43,16 @@ int kfsw_boot_get_reset_result(void);
 const char *kfsw_boot_get_image_version(void);
 
 /**
+ * @brief Short revision of every repository compiled into this image.
+ *
+ * Formatted as `app:<sha> plat:<sha> svc:<sha> comms:<sha> mod:<sha>`, with a
+ * trailing `+` on a repository that had uncommitted changes when it was built.
+ * The image version alone comes from k-fsw, so it cannot tell two images apart
+ * when only a dependency moved.
+ */
+const char *kfsw_boot_get_revisions(void);
+
+/**
  * @brief The chip's unique ID, read at boot. Never NULL; empty when the SoC has none.
  */
 const char *kfsw_boot_get_hardware_id(void);

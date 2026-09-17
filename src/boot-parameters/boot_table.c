@@ -12,8 +12,11 @@
 #endif
 
 #define KFSW_BOOT_IMAGE_SIZE 40U
+/* Five repositories at a ten character revision, plus labels and separators. */
+#define KFSW_BOOT_REVISIONS_SIZE 96U
 
 static char boot_image[KFSW_BOOT_IMAGE_SIZE];
+static char boot_revisions[KFSW_BOOT_REVISIONS_SIZE];
 #if CONFIG_KFSW_LASTWORDS
 /* What the previous run left. All zero means the node lost power. */
 static uint8_t boot_last_reason;
@@ -39,17 +42,26 @@ static uint32_t boot_count;
 static uint32_t boot_reset_cause;
 static uint8_t boot_confirmed;
 
-static void sample_image(void *value)
+static void copy_text(void *value, const char *source, size_t capacity)
 {
-	const char *version = kfsw_boot_get_image_version();
 	size_t length = 0U;
 	char *text = value;
 
-	while ((length + 1U < KFSW_BOOT_IMAGE_SIZE) && (version[length] != '\0')) {
-		text[length] = version[length];
+	while ((length + 1U < capacity) && (source[length] != '\0')) {
+		text[length] = source[length];
 		length++;
 	}
 	text[length] = '\0';
+}
+
+static void sample_image(void *value)
+{
+	copy_text(value, kfsw_boot_get_image_version(), KFSW_BOOT_IMAGE_SIZE);
+}
+
+static void sample_revisions(void *value)
+{
+	copy_text(value, kfsw_boot_get_revisions(), KFSW_BOOT_REVISIONS_SIZE);
 }
 
 static void sample_reset_cause(void *value)
@@ -105,6 +117,16 @@ static const struct kfsw_param_definition boot_param_definitions[] = {
 		.description = "Version of the running image, from the build",
 		.value = boot_image,
 		.sample = sample_image,
+	},
+	{
+		.offset = 0x40U,
+		.type = KFSW_PARAM_STRING,
+		.capacity = KFSW_BOOT_REVISIONS_SIZE,
+		.flags = KFSW_PARAM_FLAG_READ_ONLY | KFSW_PARAM_FLAG_SYSTEM_INFO,
+		.name = "boot_revisions",
+		.description = "Short revision of each repository compiled into this image",
+		.value = boot_revisions,
+		.sample = sample_revisions,
 	},
 	{
 		.offset = 0x20U,
