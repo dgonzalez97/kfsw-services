@@ -43,6 +43,11 @@ const char *kfsw_boot_get_image_version(void)
 	return KFSW_IMAGE_VERSION;
 }
 
+const char *kfsw_boot_get_revisions(void)
+{
+	return KFSW_BUILD_REVISIONS;
+}
+
 void kfsw_boot_service_start(void)
 {
 	uint32_t reset_cause = 0U;
