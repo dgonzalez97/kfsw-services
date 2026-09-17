@@ -202,6 +202,10 @@ if(CONFIG_KFSW_FBO)
     endif()
 endif()
 
+if(CONFIG_KFSW_GNDWDT)
+    list(APPEND kfsw_services_sources src/gndwdt/gndwdt.c)
+endif()
+
 if(CONFIG_KFSW_HK)
     list(APPEND kfsw_services_sources
         src/hk/hk.c

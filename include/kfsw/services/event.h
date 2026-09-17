@@ -28,6 +28,7 @@ enum kfsw_event_source {
 	KFSW_EVENT_SOURCE_FTP = 3,
 	KFSW_EVENT_SOURCE_APP = 4,
 	KFSW_EVENT_SOURCE_FBO = 5,
+	KFSW_EVENT_SOURCE_GNDWDT = 6,
 };
 
 /** How much attention the event deserves. */
