@@ -204,6 +204,9 @@ endif()
 
 if(CONFIG_KFSW_GNDWDT)
     list(APPEND kfsw_services_sources src/gndwdt/gndwdt.c)
+    if(CONFIG_KFSW_PARAM)
+        list(APPEND kfsw_services_sources src/gndwdt-parameters/gndwdt_table.c)
+    endif()
 endif()
 
 if(CONFIG_KFSW_HK)
