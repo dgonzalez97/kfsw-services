@@ -202,6 +202,13 @@ if(CONFIG_KFSW_FBO)
     endif()
 endif()
 
+if(CONFIG_KFSW_RESMON)
+    list(APPEND kfsw_services_sources src/resmon/resmon.c)
+    if(CONFIG_KFSW_PARAM)
+        list(APPEND kfsw_services_sources src/resmon-parameters/resmon_table.c)
+    endif()
+endif()
+
 if(CONFIG_KFSW_GNDWDT)
     list(APPEND kfsw_services_sources src/gndwdt/gndwdt.c)
     if(CONFIG_KFSW_PARAM)
