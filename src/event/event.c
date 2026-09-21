@@ -8,6 +8,9 @@
 #include <zephyr/sys/util.h>
 
 #include <kfsw/services/event.h>
+#if CONFIG_KFSW_JOURNAL
+#include <kfsw/services/journal.h>
+#endif
 
 /* Fixed ring of records. A spinlock allows recording from any context. */
 
@@ -29,6 +32,9 @@ static bool source_is_known(enum kfsw_event_source source)
 	case KFSW_EVENT_SOURCE_COMMAND:
 	case KFSW_EVENT_SOURCE_FTP:
 	case KFSW_EVENT_SOURCE_APP:
+	case KFSW_EVENT_SOURCE_FBO:
+	case KFSW_EVENT_SOURCE_GNDWDT:
+	case KFSW_EVENT_SOURCE_RESMON:
 		return true;
 	default:
 		return false;
@@ -39,10 +45,14 @@ void kfsw_event_emit(enum kfsw_event_source source, uint16_t id, enum kfsw_event
 		     const void *payload, size_t payload_size)
 {
 	struct kfsw_event_record *slot;
+#if CONFIG_KFSW_JOURNAL
+	struct kfsw_event_record copy;
+#endif
 	k_spinlock_key_t key;
 	uint16_t write_index;
 
-	if (!source_is_known(source) || (payload_size > KFSW_EVENT_MAX_PAYLOAD_SIZE) ||
+	if (!source_is_known(source) || (severity < KFSW_EVENT_INFO) ||
+	    (severity > KFSW_EVENT_CRITICAL) || (payload_size > KFSW_EVENT_MAX_PAYLOAD_SIZE) ||
 	    ((payload_size != 0U) && (payload == NULL))) {
 		key = k_spin_lock(&ring_lock);
 		rejected_count++;
@@ -75,8 +85,13 @@ void kfsw_event_emit(enum kfsw_event_source source, uint16_t id, enum kfsw_event
 
 	next_sequence++;
 	recorded_count++;
-
+#if CONFIG_KFSW_JOURNAL
+	copy = *slot;
+#endif
 	k_spin_unlock(&ring_lock, key);
+#if CONFIG_KFSW_JOURNAL
+	kfsw_journal_submit(&copy);
+#endif
 }
 
 void kfsw_event_visit(kfsw_event_visitor_t visitor, void *context)
@@ -176,6 +191,12 @@ const char *kfsw_event_source_name(enum kfsw_event_source source)
 		return "ftp";
 	case KFSW_EVENT_SOURCE_APP:
 		return "app";
+	case KFSW_EVENT_SOURCE_FBO:
+		return "fbo";
+	case KFSW_EVENT_SOURCE_GNDWDT:
+		return "gndwdt";
+	case KFSW_EVENT_SOURCE_RESMON:
+		return "resmon";
 	default:
 		return "unknown";
 	}

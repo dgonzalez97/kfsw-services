@@ -166,6 +166,10 @@ if(CONFIG_KFSW_EVENT)
     endif()
 endif()
 
+if(CONFIG_KFSW_JOURNAL)
+    list(APPEND kfsw_services_sources src/journal/journal.c src/journal/journal_store.c)
+endif()
+
 if(CONFIG_KFSW_HEALTH)
     list(APPEND kfsw_services_sources src/health/health.c)
     if(CONFIG_KFSW_PARAM)
@@ -332,7 +336,7 @@ target_link_libraries(kfsw_services
 )
 
 if(CONFIG_KFSW_LOG_HISTORY_CSP OR CONFIG_KFSW_PARAM_CSP OR CONFIG_KFSW_FTP OR CONFIG_KFSW_COMMAND_CSP
-   OR CONFIG_KFSW_FWU_LITE_CSP OR CONFIG_KFSW_HK_CSP OR (CONFIG_KFSW_FBO AND CONFIG_KFSW_CSP))
+   OR CONFIG_KFSW_FWU_LITE_CSP OR CONFIG_KFSW_HK_CSP OR ((CONFIG_KFSW_FBO OR CONFIG_KFSW_JOURNAL) AND CONFIG_KFSW_CSP))
     target_link_libraries(kfsw_services
         PRIVATE
             kfsw::comms

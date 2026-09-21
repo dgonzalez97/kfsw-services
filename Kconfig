@@ -243,6 +243,44 @@ config KFSW_EVENT_RING_DEPTH
 	  When the ring is full the oldest record is overwritten and the
 	  overwritten counter increases.
 
+config KFSW_JOURNAL
+	bool "Persistent boot and important-event journal"
+	depends on KFSW_STORAGE
+	select CRC
+	help
+	  Queue boot reports and selected events to a checksummed fixed-size file.
+	  Writes run on a worker; unflushed records are lost on power failure.
+
+config KFSW_JOURNAL_CAPACITY
+	int "Journal records retained on disk"
+	depends on KFSW_JOURNAL
+	range 8 256
+	default 128
+
+config KFSW_JOURNAL_QUEUE_DEPTH
+	int "Journal event queue depth"
+	depends on KFSW_JOURNAL
+	range 4 64
+	default 16
+
+config KFSW_JOURNAL_MIN_SEVERITY
+	int "Minimum event severity persisted (boot reports always included)"
+	depends on KFSW_JOURNAL
+	range 1 3
+	default 1
+
+config KFSW_JOURNAL_FLUSH_MS
+	int "Journal writer interval in milliseconds"
+	depends on KFSW_JOURNAL
+	range 100 60000
+	default 1000
+
+config KFSW_JOURNAL_STACK_SIZE
+	int "Journal writer stack size"
+	depends on KFSW_JOURNAL
+	range 2048 8192
+	default 3072
+
 endif # KFSW_EVENT
 
 config KFSW_COMMAND
