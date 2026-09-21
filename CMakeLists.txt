@@ -195,10 +195,13 @@ if(CONFIG_KFSW_COMMAND)
         list(APPEND kfsw_services_sources src/command-parameters/command_table.c)
     endif()
     if(CONFIG_KFSW_COMMAND_CSP)
-        list(APPEND kfsw_services_sources
-            src/command/command_csp.c
-            src/command/command_protocol.c
-        )
+        list(APPEND kfsw_services_sources src/command/command_csp.c)
+    endif()
+    if(CONFIG_KFSW_COMMAND_CSP OR CONFIG_KFSW_COMMAND_RETRY)
+        list(APPEND kfsw_services_sources src/command/command_protocol.c)
+    endif()
+    if(CONFIG_KFSW_COMMAND_RETRY)
+        list(APPEND kfsw_services_sources src/command/command_retry.c)
     endif()
 endif()
 

@@ -248,6 +248,15 @@ bool kfsw_command_server_is_started(void);
 int kfsw_command_invoke_remote(uint16_t node, const char *name, const struct kfsw_command_arg *args,
 			       size_t arg_count, struct kfsw_command_result *result);
 
+/**
+ * Invoke using a reserved server ticket, with at most three attempts per phase.
+ * Requires retry support and entropy on both peers; never falls back to legacy.
+ * A timeout may leave the outcome unknown. Calling this again is a new operation.
+ */
+int kfsw_command_invoke_remote_retry(uint16_t node, const char *name,
+				     const struct kfsw_command_arg *args, size_t arg_count,
+				     struct kfsw_command_result *result);
+
 #endif /* CONFIG_KFSW_COMMAND_CSP */
 
 #if CONFIG_KFSW_PARAM

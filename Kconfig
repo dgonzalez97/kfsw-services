@@ -261,6 +261,26 @@ config KFSW_COMMAND_MAX_COMMANDS
 	  Bounds the static registry. Startup fails if the composed definition
 	  sets exceed this count.
 
+config KFSW_COMMAND_RETRY
+	bool "Ticketed command retries"
+	select CSPRNG_NEEDED
+	help
+	  Reserve bounded server tickets before executing a retryable command.
+	  Legacy requests remain available. Requires usable entropy at runtime;
+	  ticket allocation fails closed when random generation is unavailable.
+
+config KFSW_COMMAND_RETRY_SLOTS
+	int "Retained command tickets"
+	depends on KFSW_COMMAND_RETRY
+	range 2 32
+	default 8
+
+config KFSW_COMMAND_RETRY_WINDOW_MS
+	int "Command ticket lifetime in milliseconds"
+	depends on KFSW_COMMAND_RETRY
+	range 1000 600000
+	default 60000
+
 config KFSW_COMMAND_CSP
 	bool "Expose commands over CSP"
 	depends on KFSW_CSP

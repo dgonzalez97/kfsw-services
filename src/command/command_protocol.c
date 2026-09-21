@@ -13,6 +13,8 @@ int kfsw_command_protocol_encode(uint8_t *buffer, size_t capacity,
 				 const struct kfsw_command_message *message, size_t *encoded_size)
 {
 	size_t size;
+	size_t header;
+	uint8_t version;
 
 	if ((buffer == NULL) || (message == NULL) || (encoded_size == NULL) ||
 	    (message->payload_size > KFSW_COMMAND_MAX_PAYLOAD_SIZE) ||
@@ -20,13 +22,21 @@ int kfsw_command_protocol_encode(uint8_t *buffer, size_t capacity,
 	    (message->arg_count > KFSW_COMMAND_MAX_ARGS)) {
 		return -EINVAL;
 	}
-	size = KFSW_COMMAND_HEADER_SIZE + message->payload_size;
+	version = message->version ? message->version : KFSW_COMMAND_PROTOCOL_VERSION;
+	if ((version != 1U) && (version != 2U)) {
+		return -EPROTONOSUPPORT;
+	}
+	header = (version == 2U) ? KFSW_COMMAND_RETRY_HEADER_SIZE : KFSW_COMMAND_HEADER_SIZE;
+	size = header + message->payload_size;
 	if (size > capacity) {
 		return -EMSGSIZE;
 	}
 
-	memset(buffer, 0, KFSW_COMMAND_HEADER_SIZE);
-	buffer[0] = KFSW_COMMAND_PROTOCOL_VERSION;
+	memset(buffer, 0, header);
+	buffer[0] = version;
+	if (version == 2U) {
+		sys_put_be64(message->token, &buffer[12]);
+	}
 	buffer[1] = message->opcode;
 	buffer[2] = message->status;
 	buffer[3] = message->arg_count;
@@ -34,7 +44,7 @@ int kfsw_command_protocol_encode(uint8_t *buffer, size_t capacity,
 	sys_put_be16(message->request_id, &buffer[6]);
 	sys_put_be16(message->payload_size, &buffer[8]);
 	if (message->payload_size != 0U) {
-		memcpy(&buffer[KFSW_COMMAND_HEADER_SIZE], message->payload, message->payload_size);
+		memcpy(&buffer[header], message->payload, message->payload_size);
 	}
 	*encoded_size = size;
 	return 0;
@@ -43,17 +53,29 @@ int kfsw_command_protocol_encode(uint8_t *buffer, size_t capacity,
 int kfsw_command_protocol_decode(const uint8_t *buffer, size_t size,
 				 struct kfsw_command_message *message)
 {
+	size_t header;
+
 	if ((buffer == NULL) || (message == NULL) || (size < KFSW_COMMAND_HEADER_SIZE)) {
 		return -EMSGSIZE;
 	}
-	if (buffer[0] != KFSW_COMMAND_PROTOCOL_VERSION) {
+	if ((buffer[0] != 1U) && (buffer[0] != 2U)) {
 		return -EPROTONOSUPPORT;
 	}
-	if ((buffer[1] != KFSW_COMMAND_OP_REQUEST) && (buffer[1] != KFSW_COMMAND_OP_RESULT)) {
+	header = (buffer[0] == 2U) ? KFSW_COMMAND_RETRY_HEADER_SIZE : KFSW_COMMAND_HEADER_SIZE;
+	if (size < header) {
+		return -EMSGSIZE;
+	}
+	if ((buffer[10] != 0U) || (buffer[11] != 0U)) {
+		return -EBADMSG;
+	}
+	if ((buffer[1] < KFSW_COMMAND_OP_REQUEST) ||
+	    (buffer[1] > ((buffer[0] == 2U) ? KFSW_COMMAND_OP_EXECUTE : KFSW_COMMAND_OP_RESULT))) {
 		return -ENOTSUP;
 	}
 
 	memset(message, 0, sizeof(*message));
+	message->version = buffer[0];
+	message->token = (buffer[0] == 2U) ? sys_get_be64(&buffer[12]) : 0U;
 	message->opcode = buffer[1];
 	message->status = buffer[2];
 	message->arg_count = buffer[3];
@@ -68,10 +90,10 @@ int kfsw_command_protocol_decode(const uint8_t *buffer, size_t size,
 		return -EMSGSIZE;
 	}
 	/* The declared payload size must match what arrived. */
-	if ((size_t)(KFSW_COMMAND_HEADER_SIZE + message->payload_size) != size) {
+	if ((size_t)(header + message->payload_size) != size) {
 		return -EMSGSIZE;
 	}
-	message->payload = &buffer[KFSW_COMMAND_HEADER_SIZE];
+	message->payload = &buffer[header];
 	return 0;
 }
 
@@ -98,8 +120,11 @@ int kfsw_command_encode_args(const struct kfsw_command_arg *args, size_t arg_cou
 			if (args[index].value.text == NULL) {
 				return -EINVAL;
 			}
-			value_size =
-				strnlen(args[index].value.text, KFSW_COMMAND_MAX_TEXT_SIZE + 1U);
+			value_size = 0U;
+			while ((value_size <= KFSW_COMMAND_MAX_TEXT_SIZE) &&
+			       (args[index].value.text[value_size] != '\0')) {
+				value_size++;
+			}
 			if (value_size > KFSW_COMMAND_MAX_TEXT_SIZE) {
 				return -ENAMETOOLONG;
 			}

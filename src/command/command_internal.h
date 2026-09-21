@@ -26,14 +26,20 @@
 
 #define KFSW_COMMAND_PROTOCOL_VERSION 1U
 #define KFSW_COMMAND_HEADER_SIZE 12U
+#define KFSW_COMMAND_RETRY_HEADER_SIZE 20U
 #define KFSW_COMMAND_MAX_PAYLOAD_SIZE 192U
 
 enum kfsw_command_opcode {
 	KFSW_COMMAND_OP_REQUEST = 1,
 	KFSW_COMMAND_OP_RESULT = 2,
+	KFSW_COMMAND_OP_PREPARE = 3,
+	KFSW_COMMAND_OP_TICKET = 4,
+	KFSW_COMMAND_OP_EXECUTE = 5,
 };
 
 struct kfsw_command_message {
+	uint8_t version; /* Zero selects legacy version 1 when encoding. */
+	uint64_t token;  /* Version 2: prepare nonce or server ticket. */
 	uint8_t opcode;
 	uint8_t status;
 	uint8_t arg_count;
