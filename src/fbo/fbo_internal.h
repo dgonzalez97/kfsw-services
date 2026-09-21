@@ -3,6 +3,9 @@
 
 #include <stdint.h>
 
+/** Read the same UTC clock used by local clock set/get. */
+int kfsw_fbo_clock_seconds(int64_t *seconds);
+
 /** Record one line's outcome against the running procedure. */
 void kfsw_fbo_count_line(uint16_t line, int outcome);
 

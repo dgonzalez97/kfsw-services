@@ -206,7 +206,7 @@ if(CONFIG_KFSW_COMMAND)
 endif()
 
 if(CONFIG_KFSW_FBO)
-    list(APPEND kfsw_services_sources src/fbo/fbo.c)
+    list(APPEND kfsw_services_sources src/fbo/fbo.c src/fbo/fbo_clock.c)
     if(CONFIG_KFSW_PARAM)
         list(APPEND kfsw_services_sources src/fbo-parameters/fbo_table.c)
     endif()
@@ -332,7 +332,7 @@ target_link_libraries(kfsw_services
 )
 
 if(CONFIG_KFSW_LOG_HISTORY_CSP OR CONFIG_KFSW_PARAM_CSP OR CONFIG_KFSW_FTP OR CONFIG_KFSW_COMMAND_CSP
-   OR CONFIG_KFSW_FWU_LITE_CSP OR CONFIG_KFSW_HK_CSP)
+   OR CONFIG_KFSW_FWU_LITE_CSP OR CONFIG_KFSW_HK_CSP OR (CONFIG_KFSW_FBO AND CONFIG_KFSW_CSP))
     target_link_libraries(kfsw_services
         PRIVATE
             kfsw::comms

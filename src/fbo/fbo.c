@@ -12,6 +12,7 @@
 #include <zephyr/sys/util.h>
 
 #include <kfsw/platform/storage.h>
+#include <kfsw/platform/time.h>
 #include <kfsw/services/command.h>
 #include <kfsw/services/event.h>
 #include <kfsw/services/ftp.h>
@@ -134,6 +135,36 @@ static int run_command_line(char **tokens, size_t count)
 	return (result.status == KFSW_COMMAND_OK) ? 0 : -EIO;
 }
 
+static int wait_until(uint32_t target, uint32_t tolerance)
+{
+	uint64_t deadline = kfsw_time_monotonic_ms() + (uint64_t)CONFIG_KFSW_FBO_WAIT_MAX_S * 1000U;
+	bool first = true;
+
+	for (;;) {
+		int64_t seconds;
+		int result;
+
+		if (atomic_get(&stop_requested)) {
+			return -ECANCELED;
+		}
+		result = kfsw_fbo_clock_seconds(&seconds);
+		if (result != 0) {
+			return result;
+		}
+		if (kfsw_time_monotonic_ms() >= deadline) {
+			return -ETIMEDOUT;
+		}
+		if (seconds >= target) {
+			return ((uint64_t)(seconds - target) <= tolerance) ? 0 : -ETIME;
+		}
+		if (first && ((int64_t)target - seconds > CONFIG_KFSW_FBO_WAIT_MAX_S)) {
+			return -ERANGE;
+		}
+		first = false;
+		(void)k_sem_take(&cancel, K_MSEC(100));
+	}
+}
+
 /*
  * One line.
  *
@@ -160,6 +191,20 @@ static int run_line(char *text, bool *skip_next, bool *stop_on_error)
 		}
 		*stop_on_error = (strcmp(tokens[1], "stop") == 0);
 		return 0;
+	}
+
+	if (strcmp(tokens[0], "wait-until") == 0) {
+		struct kfsw_command_arg target;
+		struct kfsw_command_arg tolerance;
+
+		if ((count != 3U) ||
+		    (kfsw_command_parse_arg(tokens[1], KFSW_COMMAND_TYPE_U32, &target) != 0) ||
+		    (kfsw_command_parse_arg(tokens[2], KFSW_COMMAND_TYPE_U32, &tolerance) != 0) ||
+		    (target.value.u32 == 0U) || (target.value.u32 > INT32_MAX) ||
+		    (tolerance.value.u32 > CONFIG_KFSW_FBO_WAIT_MAX_S)) {
+			return -EINVAL;
+		}
+		return wait_until(target.value.u32, tolerance.value.u32);
 	}
 
 	if (strcmp(tokens[0], "wait") == 0) {
