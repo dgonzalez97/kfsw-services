@@ -7,6 +7,9 @@
 #include <zephyr/sys/util.h>
 
 #include <kfsw/services/log.h>
+#if CONFIG_KFSW_LOG_HISTORY
+#include "log_history_internal.h"
+#endif
 #if CONFIG_KFSW_PARAM
 #include <kfsw/services/parameter.h>
 #endif
@@ -235,6 +238,7 @@ static void kfsw_log_vwrite(uint8_t module, uint8_t severity, const char *level,
 			    va_list args)
 {
 	char message[KFSW_LOG_MESSAGE_SIZE];
+	int length;
 	size_t i;
 
 	/* A message must pass the global level and its module's level. */
@@ -249,13 +253,20 @@ static void kfsw_log_vwrite(uint8_t module, uint8_t severity, const char *level,
 	}
 	(void)atomic_inc(&kfsw_log_emitted);
 
-	(void)vsnprintk(message, sizeof(message), format, args);
+	length = vsnprintk(message, sizeof(message), format, args);
 
 	for (i = 0U; message[i] != '\0'; i++) {
 		if ((message[i] == '\n') || (message[i] == '\r')) {
 			message[i] = ' ';
 		}
 	}
+
+#if CONFIG_KFSW_LOG_HISTORY
+	kfsw_log_history_append(module, severity, message,
+				(length < 0) || ((size_t)length >= sizeof(message)));
+#else
+	ARG_UNUSED(length);
+#endif
 
 	/* The colour wraps the whole line so "[LEVEL] message" stays intact. */
 	printk("%s[%s] %s%s\n", severity_color(severity), level, message,

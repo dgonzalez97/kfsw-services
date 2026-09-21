@@ -3,6 +3,13 @@ set(kfsw_services_sources
     src/log.c
 )
 
+if(CONFIG_KFSW_LOG_HISTORY)
+    list(APPEND kfsw_services_sources src/log_history.c)
+endif()
+if(CONFIG_KFSW_LOG_HISTORY_CSP)
+    list(APPEND kfsw_services_sources src/log_history_csp.c)
+endif()
+
 # Atomic snapshot writes, shared by parameters and housekeeping.
 if(CONFIG_KFSW_PARAM_PERSISTENCE OR CONFIG_KFSW_HK_PERSISTENCE)
     list(APPEND kfsw_services_sources src/snapshot_file.c)
@@ -321,7 +328,7 @@ target_link_libraries(kfsw_services
         kernel
 )
 
-if(CONFIG_KFSW_PARAM_CSP OR CONFIG_KFSW_FTP OR CONFIG_KFSW_COMMAND_CSP
+if(CONFIG_KFSW_LOG_HISTORY_CSP OR CONFIG_KFSW_PARAM_CSP OR CONFIG_KFSW_FTP OR CONFIG_KFSW_COMMAND_CSP
    OR CONFIG_KFSW_FWU_LITE_CSP OR CONFIG_KFSW_HK_CSP)
     target_link_libraries(kfsw_services
         PRIVATE

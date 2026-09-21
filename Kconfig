@@ -15,6 +15,37 @@ config KFSW_LOG_COLOR
 	  Colour log lines by level: errors red, warnings yellow, info white and
 	  debug dim. Turn it off for consoles that don't support VT100 escapes.
 
+config KFSW_LOG_HISTORY
+	bool "Keep recent K-FSW text logs in RAM"
+	depends on KFSW_LOG_MIN_LEVEL < 4
+	help
+	  Retain messages that pass the runtime level filters. Console output
+	  from Zephyr and drivers is not included. Records do not survive reset.
+
+config KFSW_LOG_HISTORY_DEPTH
+	int "Retained log messages"
+	depends on KFSW_LOG_HISTORY
+	range 1 128
+	default 32
+
+config KFSW_LOG_HISTORY_CSP
+	bool "Read log history over CSP"
+	depends on KFSW_LOG_HISTORY && KFSW_CSP
+	help
+	  Serve bounded, non-destructive reads with CRC32 on a dedicated port.
+
+config KFSW_LOG_HISTORY_PORT
+	int "CSP log history port"
+	depends on KFSW_LOG_HISTORY_CSP
+	range 1 CSP_PORT_MAX_BIND
+	default 16
+
+config KFSW_LOG_HISTORY_STACK_SIZE
+	int "Log history server stack"
+	depends on KFSW_LOG_HISTORY_CSP
+	range 1024 8192
+	default 1536
+
 config KFSW_PARAM
 	bool "K-FSW parameter service"
 	select CBPRINTF_FP_SUPPORT
