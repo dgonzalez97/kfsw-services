@@ -15,8 +15,7 @@
 #include <kfsw/services/event.h>
 #endif
 
-/* Low thresholds are allowed: on a target whose threads run on host stacks the
- * figures are small, and a test has to be able to cross one.
+/* Allow low alert thresholds for native tests, which use host stacks.
  */
 #define KFSW_RESMON_PERCENT_MIN 1U
 
@@ -33,8 +32,7 @@ static K_MUTEX_DEFINE(resmon_lock);
 static struct kfsw_resmon_status resmon_state = {
 	.alert_percent = CONFIG_KFSW_RESMON_ALERT_PERCENT,
 };
-/* True while the last sweep was at the alert percentage, so one crossing is
- * one event however long a node stays there.
+/* Latch each threshold crossing until a sweep falls below it.
  */
 static bool alerting;
 

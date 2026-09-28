@@ -75,7 +75,7 @@ enum kfsw_event_command_id {
 	KFSW_EVENT_COMMAND_REJECTED = 3,
 };
 
-/** Behavioural flags a definition declares about itself. */
+/** Command flags. */
 #define KFSW_COMMAND_FLAG_MUTATING BIT(0)
 
 /** One validated argument handed to a handler. */
@@ -101,7 +101,7 @@ struct kfsw_command_source {
 	bool via_csp;
 };
 
-/** What a handler reports back. */
+/** Command result. */
 struct kfsw_command_result {
 	enum kfsw_command_status status;
 	/** Optional short human-readable detail. May be left empty. */
@@ -111,9 +111,9 @@ struct kfsw_command_result {
 /**
  * Command implementation.
  *
- * Runs on the command worker thread, never on a CSP receive context. Arguments
- * are already checked for count and type. Text arguments are NUL-terminated
- * and remain valid only for the duration of the call.
+ * Runs in the caller's thread under the command mutex. Remote requests use the
+ * command server thread, not the CSP router. Arguments have been checked for
+ * count and type. Text is NUL-terminated and valid only during the call.
  */
 typedef int (*kfsw_command_handler_t)(const struct kfsw_command_arg *args, size_t arg_count,
 				      const struct kfsw_command_source *source,
@@ -125,7 +125,7 @@ struct kfsw_command_definition {
 	uint16_t id;
 	/** Stable short name used by the shell. */
 	const char *name;
-	/** One-line description shown by `command list`. */
+	/** Description shown by `cmd list`. */
 	const char *help;
 	uint32_t flags;
 	uint8_t arg_count;
@@ -226,7 +226,7 @@ typedef void (*kfsw_command_echo_handler_t)(bool enabled);
  */
 void kfsw_command_set_echo_handler(kfsw_command_echo_handler_t handler);
 
-/** Whether the console repeats what is typed at it. Off by default. */
+/** Whether console echo is enabled. Off by default. */
 bool kfsw_command_echo_enabled(void);
 
 /** Change console echo and apply it through the registered handler. */
@@ -264,10 +264,10 @@ int kfsw_command_invoke_remote_retry(uint16_t node, const char *name,
 #if CONFIG_KFSW_PARAM
 /** Parameter table of this service, in the service band. */
 #define KFSW_COMMAND_PARAM_TABLE_ID 28U
-/** Stable logical name paired with KFSW_COMMAND_PARAM_TABLE_ID. */
+/** Parameter table name. */
 #define KFSW_COMMAND_PARAM_TABLE_NAME "command"
 
-/** Command counters and the timeout the service applies. */
+/** Command counters and reply timeout. */
 extern const struct kfsw_param_definition_set kfsw_command_param_definitions;
 #endif
 

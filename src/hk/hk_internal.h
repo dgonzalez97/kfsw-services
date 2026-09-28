@@ -16,7 +16,7 @@ struct kfsw_hk_definition {
 	uint8_t entry_count;
 };
 
-/** A report: what it collects, how often, and what it has collected. */
+/** Report definition, schedule and sample ring. */
 struct kfsw_hk_report {
 	struct kfsw_hk_entry entries[CONFIG_KFSW_HK_ENTRIES];
 	/* Resolved when the report is defined. */

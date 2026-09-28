@@ -204,7 +204,7 @@ const char *kfsw_fwu_state_name(enum kfsw_fwu_state state);
 #if CONFIG_KFSW_PARAM
 /** Parameter table of this service, in the service band. */
 #define KFSW_FWU_PARAM_TABLE_ID 30U
-/** Stable logical name paired with KFSW_FWU_PARAM_TABLE_ID. */
+/** Parameter table name. */
 #define KFSW_FWU_PARAM_TABLE_NAME "fwu"
 
 /** Firmware update state and lifetime counters. */

@@ -29,30 +29,30 @@ extern "C" {
 
 /** Table 35: ground watchdog configuration and counters. */
 #define KFSW_GNDWDT_PARAM_TABLE_ID 35U
-/** Stable logical name paired with KFSW_GNDWDT_PARAM_TABLE_ID. */
+/** Parameter table name. */
 #define KFSW_GNDWDT_PARAM_TABLE_NAME "gndwdt"
 
 /** Event IDs of this service. */
 enum kfsw_gndwdt_event {
-	/** The timeout passed with no contact; a reset follows. */
+	/** No valid feed arrived before the timeout; a reset follows. */
 	KFSW_EVENT_GNDWDT_EXPIRED = 1,
 };
 
-/** What the ground watchdog is doing. */
+/** Ground watchdog state and counters. */
 struct kfsw_gndwdt_status {
-	/** Silence allowed before a reset, in seconds. */
+	/** Maximum time between valid feeds, in seconds. */
 	uint32_t timeout_s;
-	/** Seconds since the last contact, or since the service started. */
+	/** Seconds since the last valid feed or service start. */
 	uint32_t since_contact_s;
 	/** Seconds left; zero if stopped, expired or waiting to reset. */
 	uint32_t remaining_s;
-	/** Contacts counted since start; saturates. */
+	/** Valid feeds since start; saturates. */
 	uint32_t contacts;
 	/** Times the timeout passed since start; saturates. */
 	uint32_t expiries;
-	/** Node of the most recent contact, or zero. */
+	/** Source of the most recent valid feed, or zero. */
 	uint16_t last_node;
-	/** The timer runs only while this is set. */
+	/** Whether expiry checks are enabled. */
 	bool enabled;
 	/** The service has been started. */
 	bool running;
@@ -73,7 +73,7 @@ extern const struct kfsw_command_definition_set kfsw_gndwdt_command_definitions;
 /**
  * @brief Check the timer once.
  *
- * @retval 0 Contact is recent enough, or the watchdog is stopped or disabled.
+ * @retval 0 The feed is recent enough, or the watchdog is stopped or disabled.
  * @retval -ETIMEDOUT The timeout has passed. The caller resets the node.
  */
 int kfsw_gndwdt_evaluate(void);
@@ -82,9 +82,9 @@ int kfsw_gndwdt_evaluate(void);
 void kfsw_gndwdt_get_status(struct kfsw_gndwdt_status *status);
 
 /**
- * @brief Set how long silence is allowed.
+ * @brief Set the feed timeout.
  *
- * Changing the timeout does not count as contact or restart the countdown.
+ * Changing the timeout does not feed or restart the countdown.
  *
  * @retval 0 Applied.
  * @retval -ERANGE Outside the configured bounds.

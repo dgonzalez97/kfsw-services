@@ -227,8 +227,7 @@ int kfsw_command_find(const char *name, struct kfsw_command_info *info)
 }
 
 /*
- * Common validation runs before any handler sees a request, so a malformed
- * request cannot partially apply.
+ * Validate argument count and types before calling the handler.
  */
 static enum kfsw_command_status check_arguments(const struct kfsw_command_definition *definition,
 						const struct kfsw_command_arg *args,
@@ -307,7 +306,7 @@ static int dispatch(const struct kfsw_command_definition *definition,
 	handler_result = definition->handler(args, arg_count, source, result);
 	k_mutex_unlock(&command_lock);
 
-	/* A handler that fails without saying how still reports a usable status. */
+	/* Use FAILED when a handler returns an error without setting a status. */
 	if ((handler_result != 0) && (result->status == KFSW_COMMAND_OK)) {
 		result->status = KFSW_COMMAND_FAILED;
 	}

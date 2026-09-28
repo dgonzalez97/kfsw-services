@@ -32,7 +32,7 @@ enum kfsw_event_source {
 	KFSW_EVENT_SOURCE_RESMON = 7,
 };
 
-/** How much attention the event deserves. */
+/** Event severity. */
 enum kfsw_event_severity {
 	KFSW_EVENT_INFO = 0,
 	KFSW_EVENT_WARNING = 1,
@@ -63,7 +63,7 @@ struct kfsw_event_stats {
 	uint32_t recorded;
 	/** Events rejected for an invalid payload size or source. */
 	uint32_t rejected;
-	/** Events overwritten because the ring wrapped before they were read. */
+	/** Events overwritten when the ring was full. */
 	uint32_t overwritten;
 	/** Records currently held. */
 	uint16_t held;
@@ -107,7 +107,7 @@ const char *kfsw_event_source_name(enum kfsw_event_source source);
 #if CONFIG_KFSW_PARAM
 /** Parameter table of this service, in the service band. */
 #define KFSW_EVENT_PARAM_TABLE_ID 27U
-/** Stable logical name paired with KFSW_EVENT_PARAM_TABLE_ID. */
+/** Parameter table name. */
 #define KFSW_EVENT_PARAM_TABLE_NAME "event"
 
 /** Event record counters. */

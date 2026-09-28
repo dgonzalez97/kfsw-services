@@ -46,8 +46,7 @@ static void serve_packet(csp_conn_t *connection, csp_packet_t *packet)
 	size_t encoded = 0U;
 
 	if (kfsw_fwu_lite_decode(packet->data, packet->length, &request) != 0) {
-		/* A packet that cannot be decoded has no request id to answer,
-		 * so there is nothing to reply to. */
+		/* Drop undecodable packets; no valid request ID is available. */
 		csp_buffer_free(packet);
 		return;
 	}
@@ -422,8 +421,7 @@ int kfsw_fwu_lite_send_file(uint16_t node, const char *path, uint32_t *blocks_re
 				break;
 			}
 
-			/* Anything else is a disagreement that resending will
-			 * not resolve.
+			/* Other statuses are not retryable.
 			 */
 			if ((reply.status != KFSW_FWU_LITE_STATUS_BAD_BLOCK) &&
 			    (reply.status != KFSW_FWU_LITE_STATUS_OUT_OF_ORDER)) {

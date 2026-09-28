@@ -59,7 +59,7 @@ struct kfsw_health_component {
 	bool overdue;
 };
 
-/** Consistent snapshot of what the service knows. */
+/** Health state and counters. */
 struct kfsw_health_status {
 	/** One of @ref kfsw_health_state. */
 	uint8_t state;
@@ -67,7 +67,7 @@ struct kfsw_health_status {
 	uint8_t count;
 	/** True once the watchdog is being fed by this service. */
 	bool feeding;
-	/** Times the service has decided the system is unwell since boot. */
+	/** Deadline faults since boot. */
 	uint32_t faults;
 	/** Watchdog feeds this service has issued; saturates. */
 	uint32_t feeds;
@@ -102,7 +102,7 @@ int kfsw_health_register(const char *name, uint32_t deadline_ms, uint8_t *handle
 int kfsw_health_unregister(uint8_t handle);
 
 /**
- * @brief Report that a component is still running. Cheap enough for any loop.
+ * @brief Report that a component is still running.
  *
  * @param handle Identifier from @ref kfsw_health_register.
  *
@@ -124,7 +124,7 @@ int kfsw_health_report(uint8_t handle);
 int kfsw_health_start(void);
 
 /**
- * @brief Check every component once and feed the watchdog or not.
+ * @brief Check component deadlines and feed the watchdog if all are met.
  *
  * Called on a timer while supervision runs; public so tests can call it.
  *
@@ -198,7 +198,7 @@ int kfsw_health_set_interval_ms(uint32_t interval_ms);
 #if CONFIG_KFSW_PARAM
 /** Parameter table of this service, in the service band. */
 #define KFSW_HEALTH_PARAM_TABLE_ID 31U
-/** Stable logical name paired with KFSW_HEALTH_PARAM_TABLE_ID. */
+/** Parameter table name. */
 #define KFSW_HEALTH_PARAM_TABLE_NAME "health"
 
 /** Health supervision state and the live check interval. */

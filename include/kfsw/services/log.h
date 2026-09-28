@@ -77,7 +77,7 @@ uint8_t kfsw_log_get_level(void);
 #if CONFIG_KFSW_PARAM
 /** Parameter table of the log service, in the service band. */
 #define KFSW_LOG_PARAM_TABLE_ID 25U
-/** Stable logical name paired with KFSW_LOG_PARAM_TABLE_ID. */
+/** Parameter table name. */
 #define KFSW_LOG_PARAM_TABLE_NAME "log"
 
 /** Parameter definitions of the log service. */

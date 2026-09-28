@@ -13,7 +13,7 @@ struct kfsw_param_definition_set;
 
 /** Parameter table reserved for file based operations. */
 #define KFSW_FBO_PARAM_TABLE_ID 34U
-/** Stable logical name paired with KFSW_FBO_PARAM_TABLE_ID. */
+/** Parameter table name. */
 #define KFSW_FBO_PARAM_TABLE_NAME "fbo"
 
 /** Longest procedure name, including the terminator. */
@@ -27,7 +27,7 @@ struct kfsw_param_definition_set;
  *  @{
  */
 
-/** What a procedure run has done so far. */
+/** Procedure state and execution counters. */
 struct kfsw_fbo_status {
 	/** Procedure currently running, or the last one that ran. */
 	char name[KFSW_FBO_NAME_MAX];
@@ -83,7 +83,7 @@ int kfsw_fbo_run(const char *name);
 int kfsw_fbo_stop(void);
 
 /**
- * @brief Read what the service has done.
+ * @brief Read procedure state and counters.
  *
  * @param[out] status Destination.
  * @retval 0 Written.

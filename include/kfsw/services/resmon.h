@@ -30,7 +30,7 @@ extern "C" {
 
 /** Table 36: stack headroom and its counters. */
 #define KFSW_RESMON_PARAM_TABLE_ID 36U
-/** Stable logical name paired with KFSW_RESMON_PARAM_TABLE_ID. */
+/** Parameter table name. */
 #define KFSW_RESMON_PARAM_TABLE_NAME "resmon"
 
 /** Longest thread name kept, including the terminator. */

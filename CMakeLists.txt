@@ -266,9 +266,7 @@ target_include_directories(kfsw_services
         ${CMAKE_CURRENT_LIST_DIR}/include
 )
 
-# Short revision of every workspace repository compiled into this image. The
-# image version alone comes from k-fsw, so a moved dependency pin produces a
-# different image with the same version.
+# Record dependency revisions as well as the k-fsw image version.
 find_package(Git QUIET)
 set(kfsw_build_revisions "")
 foreach(kfsw_repo "app=${CMAKE_CURRENT_LIST_DIR}/../k-fsw"
@@ -293,7 +291,7 @@ foreach(kfsw_repo "app=${CMAKE_CURRENT_LIST_DIR}/../k-fsw"
         if(kfsw_repo_result EQUAL 0 AND kfsw_repo_head)
             set(kfsw_repo_revision "${kfsw_repo_head}")
 
-            # A dirty tree is a different image, so say so.
+            # Mark repositories with uncommitted changes.
             execute_process(
                 COMMAND ${GIT_EXECUTABLE} status --porcelain --untracked-files=no
                 WORKING_DIRECTORY "${kfsw_repo_path}"

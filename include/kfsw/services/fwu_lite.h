@@ -13,10 +13,9 @@ extern "C" {
  * @defgroup kfsw_services_fwu_lite K-FSW lightweight firmware upload
  * @ingroup kfsw_services
  *
- * A direct CSP path for uploading a firmware image, next to the file transfer
- * route. Both use the same update service, and a second transfer gets busy.
- * Each block has its own checksum and a failed block is sent again. RDP is
- * available but off by default.
+ * Uploads firmware in checksummed blocks over CSP, with retries. It shares
+ * the update service with FTP; concurrent uploads return busy. RDP is
+ * optional and off by default.
  *
  * @{
  */
@@ -110,8 +109,7 @@ int kfsw_fwu_lite_decode(const uint8_t *buffer, size_t size, struct kfsw_fwu_lit
 /**
  * @brief Apply a decoded request and produce the reply.
  *
- * Has no transport state, so tests call it directly. A rejected request still
- * gets a reply with the reason.
+ * A rejected request returns a reply with the error status.
  *
  * @param request Decoded request.
  * @param[out] reply Reply to send back.
