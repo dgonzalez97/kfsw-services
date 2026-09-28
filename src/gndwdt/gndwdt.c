@@ -159,9 +159,7 @@ int kfsw_gndwdt_evaluate(void)
 	if (expiries < UINT32_MAX) {
 		expiries++;
 	}
-	/* The countdown restarts so a node that cannot reset keeps reporting
-	 * whole timeouts rather than one growing number.
-	 */
+	/* Without reboot support, report expiry once per timeout. */
 	restart_countdown();
 	k_mutex_unlock(&gndwdt_lock);
 

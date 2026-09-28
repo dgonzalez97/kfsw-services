@@ -18,13 +18,11 @@ extern "C" {
  * @defgroup kfsw_services_gndwdt K-FSW ground watchdog
  * @ingroup kfsw_services
  *
- * A node that hears nothing from the ground for long enough resets itself. It
- * recovers a node left unreachable by a bad route, a wedged service or a
- * configuration that cannot be commanded back.
+ * Resets the node if no valid ground_wtd CSP feed arrives before the timeout.
+ * The feed must contain KFSWWSFK; any subsystem may send it. The get command
+ * reads the countdown without feeding.
  *
- * Only the ground_wtd CSP command with KFSWWSFK counts as contact. Any
- * subsystem may send it. The timer is separate from
- * @ref kfsw_services_health, which watches components inside this node.
+ * This timer is independent of @ref kfsw_services_health component deadlines.
  *
  * @{
  */

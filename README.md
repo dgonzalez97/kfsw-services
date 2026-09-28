@@ -92,10 +92,8 @@ before the include.
 A RAM ring of numeric records: ID, timestamp, sequence number, severity and a
 small payload.
 
-Events are separate from the log: small numeric records that are cheap to
-downlink, with a sequence number that shows when records were missed.
-
-The ring does not survive a reset, and it counts the records it overwrites.
+Sequence gaps show missed records. The ring counts overwritten records and
+is cleared at reset.
 
 The optional journal saves boot reports and events at or above a configured
 severity. Its worker drains a bounded queue to a checksummed file. Queued
