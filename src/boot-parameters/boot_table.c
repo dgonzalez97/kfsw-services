@@ -18,7 +18,7 @@
 static char boot_image[KFSW_BOOT_IMAGE_SIZE];
 static char boot_revisions[KFSW_BOOT_REVISIONS_SIZE];
 #if CONFIG_KFSW_LASTWORDS
-/* What the previous run left. All zero means the node lost power. */
+/* Retained reset note. All zero means no valid note was found. */
 static uint8_t boot_last_reason;
 static uint32_t boot_last_detail;
 static uint32_t boot_last_uptime_ms;

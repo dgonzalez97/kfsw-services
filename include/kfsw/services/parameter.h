@@ -25,8 +25,7 @@ enum kfsw_param_type {
 	KFSW_PARAM_FLOAT,
 	KFSW_PARAM_DOUBLE,
 	KFSW_PARAM_STRING,
-	/** A fixed-length array: one setting that is really a value per
-	 * something, like a log level per module.
+	/** Fixed-length byte array, such as per-module log levels.
 	 */
 	KFSW_PARAM_DATA,
 	KFSW_PARAM_INVALID,
@@ -144,8 +143,7 @@ typedef int (*kfsw_param_validator_t)(const union kfsw_param_scalar *value);
  */
 typedef int (*kfsw_param_text_validator_t)(const char *text);
 /**
- * Validate a proposed byte array; return zero to accept it. Given the whole
- * array, because its values are usually only sensible together.
+ * Validate the whole proposed byte array; return zero to accept it.
  */
 typedef int (*kfsw_param_data_validator_t)(const uint8_t *data, size_t size);
 /** Called after the stored scalar changes. */
@@ -254,13 +252,13 @@ int kfsw_param_visit_tables(kfsw_param_table_visitor_t visitor, void *context);
 /** Registered local tables. */
 size_t kfsw_param_table_count(void);
 
-/** What the parameter service knows about itself. */
+/** Parameter counts and service counters. */
 struct kfsw_param_stats {
 	/** Parameters registered across every table. */
 	uint16_t count;
 	/** Tables registered. */
 	uint16_t tables;
-	/** Of those parameters, the ones a snapshot carries. */
+	/** Persistent parameters. */
 	uint16_t persistent;
 	/** Snapshots written since boot. */
 	uint32_t saves;
@@ -270,15 +268,15 @@ struct kfsw_param_stats {
 	uint32_t requests_dropped;
 };
 
-/** Read what the service knows about itself. -EINVAL for a NULL destination. */
+/** Read service counters. Returns -EINVAL for a NULL destination. */
 int kfsw_param_get_stats(struct kfsw_param_stats *stats);
 
 /** Parameter table of the parameter service, in the service band. */
 #define KFSW_PARAM_PARAM_TABLE_ID 26U
-/** Stable logical name paired with KFSW_PARAM_PARAM_TABLE_ID. */
+/** Parameter table name. */
 #define KFSW_PARAM_PARAM_TABLE_NAME "param"
 
-/** The parameter service describing itself. */
+/** Parameter service counters and settings. */
 extern const struct kfsw_param_definition_set kfsw_param_param_definitions;
 
 /** Whether an accepted change to a persistent value writes a snapshot. */
@@ -320,7 +318,7 @@ int kfsw_param_persist_load(void);
 int kfsw_param_persist_clear(void);
 
 /**
- * @brief How many of a table's parameters the snapshot holds.
+ * @brief Count persistent parameters in a table.
  *
  * @param table Table identifier.
  * @param[out] count Persistent parameters in that table.

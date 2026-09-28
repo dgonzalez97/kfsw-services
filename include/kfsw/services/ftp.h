@@ -100,9 +100,7 @@ uint16_t kfsw_ftp_get_chunk_size(void);
 /**
  * @brief Change how much file data each message carries.
  *
- * Shortening it is useful on a link that loses long frames. It can only be
- * shortened: the workspace buffer is sized at build time and the protocol codec
- * refuses anything larger.
+ * Must fit the build-time buffer. Smaller chunks may help on lossy links.
  *
  * @retval 0 Applied to the next transfer.
  * @retval -ERANGE Zero, or larger than KFSW_FTP_CHUNK_SIZE.
@@ -170,10 +168,10 @@ int kfsw_ftp_get(uint16_t node, const char *remote_path, const char *local_path,
 #if CONFIG_KFSW_PARAM
 /** Parameter table of this service, in the service band. */
 #define KFSW_FTP_PARAM_TABLE_ID 29U
-/** Stable logical name paired with KFSW_FTP_PARAM_TABLE_ID. */
+/** Parameter table name. */
 #define KFSW_FTP_PARAM_TABLE_NAME "ftp"
 
-/** File-transfer counters and the settings the service applies. */
+/** File-transfer counters and settings. */
 extern const struct kfsw_param_definition_set kfsw_ftp_param_definitions;
 #endif
 

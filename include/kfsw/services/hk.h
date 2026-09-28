@@ -11,7 +11,7 @@
 extern "C" {
 #endif
 
-/** Parameter table this service publishes itself in. */
+/** Housekeeping parameter table. */
 #define KFSW_HK_PARAM_TABLE_ID 33U
 #define KFSW_HK_PARAM_TABLE_NAME "hk"
 
@@ -41,7 +41,7 @@ struct kfsw_hk_entry {
 	uint16_t param_id;
 };
 
-/** What a report collected, and when it started collecting it. */
+/** Collected values and collection start time. */
 struct kfsw_hk_sample {
 	uint32_t seconds;
 	uint16_t sequence;
@@ -58,7 +58,7 @@ struct kfsw_hk_sample {
  */
 #define KFSW_HK_APPLIED_UNSAVED 1
 
-/** Counters this service publishes, and what it is doing now. */
+/** Housekeeping state and counters. */
 struct kfsw_hk_stats {
 	uint32_t collections;
 	uint32_t scheduled_attempts;
@@ -73,7 +73,7 @@ struct kfsw_hk_stats {
 	uint32_t overwritten;
 	uint32_t last_seconds;
 	uint8_t reports;
-	/** Whether the node has a wall clock, and so whether samples are timed. */
+	/** Whether the wall clock is set. */
 	bool clock_valid;
 	/** Whether periodic collection is enabled. */
 	bool enabled;
@@ -110,7 +110,7 @@ int kfsw_hk_server_start(void);
  */
 int kfsw_hk_define(uint8_t report, const struct kfsw_hk_entry *entries, size_t count);
 
-/** Forget a report's definition and everything it collected. */
+/** Delete a report definition and its samples. */
 int kfsw_hk_clear(uint8_t report);
 
 /** Copy a report's definition. @p count is in and out. */

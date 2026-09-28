@@ -47,8 +47,7 @@ const char *kfsw_boot_get_image_version(void);
  *
  * Formatted as `app:<sha> plat:<sha> svc:<sha> comms:<sha> mod:<sha>`, with a
  * trailing `+` on a repository that had uncommitted changes when it was built.
- * The image version alone comes from k-fsw, so it cannot tell two images apart
- * when only a dependency moved.
+ * The image version identifies only k-fsw; this string also identifies its dependencies.
  */
 const char *kfsw_boot_get_revisions(void);
 
@@ -71,10 +70,10 @@ const struct kfsw_lastwords *kfsw_boot_get_lastwords(void);
 #if CONFIG_KFSW_PARAM
 /** Parameter table of this service, in the service band. */
 #define KFSW_BOOT_PARAM_TABLE_ID 32U
-/** Stable logical name paired with KFSW_BOOT_PARAM_TABLE_ID. */
+/** Parameter table name. */
 #define KFSW_BOOT_PARAM_TABLE_NAME "boot"
 
-/** Image identity and what the last restart was. */
+/** Image identity and last reset reason. */
 extern const struct kfsw_param_definition_set kfsw_boot_param_definitions;
 
 /**

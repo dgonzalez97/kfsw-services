@@ -2,9 +2,7 @@
 #define KFSW_PARAMETER_BUDGET_H
 
 /*
- * Size limit of the parameter snapshot, which is also the size of the static
- * buffer it is built in. The reference composition saves 10 values in about
- * 210 bytes. Free space is still checked when saving.
+ * Snapshot size limit and static buffer size. Saves also check free space.
  */
 #define KFSW_PARAM_PERSIST_MAX_BYTES 2048U
 

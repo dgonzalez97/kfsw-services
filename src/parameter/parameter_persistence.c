@@ -109,9 +109,7 @@ static int persistent_type(const struct kfsw_param_entry *entry, uint8_t *type,
 		return 0;
 	case KFSW_PARAM_STRING:
 		*type = PERSIST_TYPE_STRING;
-		/* The stored length is the current value's, not the capacity: a
-		 * snapshot should not grow with storage a parameter is not
-		 * using. Filled in by the encoder, which has read the value. */
+		/* The encoder uses the current string length, including its terminator. */
 		*value_size = 0U;
 		return 0;
 	default:
@@ -597,8 +595,7 @@ int kfsw_param_persist_clear(void)
 }
 
 /*
- * Each snapshot costs an erase cycle. Warn once when the save count crosses the
- * configured limit.
+ * Snapshot writes wear flash. Warn once when the save count crosses the limit.
  */
 static void warn_about_wear(void)
 {

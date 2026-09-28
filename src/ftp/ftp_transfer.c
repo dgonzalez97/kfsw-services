@@ -39,8 +39,7 @@ static int write_all(struct fs_file_t *file, const uint8_t *data, size_t size)
 }
 
 /*
- * Every field of an inbound data message is checked against what the transfer
- * already agreed, so a stray or replayed packet cannot advance the write.
+ * Check transfer ID, offset, size and CRC before advancing the write.
  */
 static bool data_message_is_valid(const struct kfsw_ftp_transfer *transfer,
 				  const struct kfsw_ftp_message *message)

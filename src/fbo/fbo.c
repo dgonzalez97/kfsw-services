@@ -166,10 +166,7 @@ static int wait_until(uint32_t target, uint32_t tolerance)
 }
 
 /*
- * One line.
- *
- * Returns 0 to carry on, a negative errno when the line failed, and leaves
- * *skip_next set when a guard says the following line is not for this run.
+ * Execute one line. Returns 0 or a negative errno; a guard may set *skip_next.
  */
 static int run_line(char *text, bool *skip_next, bool *stop_on_error)
 {
@@ -421,8 +418,7 @@ int kfsw_fbo_run(const char *name)
 	if ((terminator == NULL) || (terminator == name)) {
 		return -EINVAL;
 	}
-	/* A name, not a path: a procedure lives in one directory and cannot
-	 * reach out of it.
+	/* Reject path separators; procedures must stay in the configured directory.
 	 */
 	if ((strchr(name, '/') != NULL) || (strstr(name, "..") != NULL)) {
 		return -EINVAL;

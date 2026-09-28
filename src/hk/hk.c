@@ -625,8 +625,7 @@ int kfsw_hk_get(uint8_t report, uint16_t age, struct kfsw_hk_sample *sample)
 	if (age >= target->held) {
 		result = -ENOENT;
 	} else {
-		/* next_slot is where the following sample goes, so the newest
-		 * is one behind it, and age counts further back from there.
+		/* The newest sample is one slot before next_slot; age counts backwards.
 		 */
 		uint16_t slot =
 			(uint16_t)((target->next_slot + ARRAY_SIZE(target->ring) - 1U - age) %
