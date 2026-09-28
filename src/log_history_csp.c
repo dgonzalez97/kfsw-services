@@ -10,8 +10,11 @@
 
 #define LOG_REQUEST_SIZE 12U
 #define LOG_HEADER_SIZE 10U
+#define LOG_RECORD_HEADER_SIZE (LOG_HEADER_SIZE + 20U)
+/* Keep records within the 220-byte application payload of encrypted KISS. */
+#define LOG_WIRE_TEXT_MAX 190U
 
-BUILD_ASSERT(LOG_HEADER_SIZE + 20U + KFSW_LOG_TEXT_SIZE - 1U <= CSP_BUFFER_SIZE,
+BUILD_ASSERT(LOG_RECORD_HEADER_SIZE + LOG_WIRE_TEXT_MAX + 2U * sizeof(uint32_t) <= CSP_BUFFER_SIZE,
 	     "a log record must fit one CSP packet");
 
 static csp_socket_t log_socket;
@@ -74,7 +77,11 @@ static void serve(csp_conn_t *connection, csp_packet_t *request)
 			continue;
 		}
 		length = strlen(record.text);
-		reply = new_reply(1U, nonce, LOG_HEADER_SIZE + 20U + length);
+		if (length > LOG_WIRE_TEXT_MAX) {
+			length = LOG_WIRE_TEXT_MAX;
+			record.truncated = true;
+		}
+		reply = new_reply(1U, nonce, LOG_RECORD_HEADER_SIZE + length);
 		if (reply == NULL) {
 			status = 2U;
 			break;
