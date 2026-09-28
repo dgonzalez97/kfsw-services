@@ -61,7 +61,7 @@ struct kfsw_gndwdt_status {
 /** Start the timer. The countdown begins now, not at boot. */
 int kfsw_gndwdt_start(void);
 
-/** Stop the timer. Does not cancel a reset already queued. */
+/** Stop the timer, and cancel a reset already queued. */
 int kfsw_gndwdt_stop(void);
 
 /** Stable wire ID for ground_wtd, with one text argument: KFSWWSFK or get. */

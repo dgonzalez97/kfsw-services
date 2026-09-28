@@ -628,7 +628,9 @@ config KFSW_GNDWDT
 	help
 	  Reset the node unless the ground_wtd CSP command supplies KFSWWSFK
 	  within the configured timeout. Any subsystem may send the command.
-	  Enable KFSW_COMMAND_CSP in compositions that receive it.
+	  The handler only counts the command when it arrives over CSP and an
+	  expiry ends in a reset, so KFSW_COMMAND_CSP and REBOOT are both
+	  required. A composition missing either fails to build.
 
 if KFSW_GNDWDT
 

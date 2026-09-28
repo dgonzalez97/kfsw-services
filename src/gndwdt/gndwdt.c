@@ -6,9 +6,7 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/sys/byteorder.h>
-#if CONFIG_REBOOT
 #include <zephyr/sys/reboot.h>
-#endif
 
 #include <kfsw/platform/time.h>
 #include <kfsw/services/gndwdt.h>
@@ -17,6 +15,14 @@
 #if CONFIG_KFSW_EVENT
 #include <kfsw/services/event.h>
 #endif
+
+/* A composition that cannot be fed, or cannot reset, would arm a timer that
+ * runs out once and then does nothing useful for the rest of the mission.
+ * Tests call the handler directly and supply the source themselves.
+ */
+BUILD_ASSERT(IS_ENABLED(CONFIG_KFSW_COMMAND_CSP) || IS_ENABLED(CONFIG_ZTEST),
+	     "KFSW_GNDWDT needs KFSW_COMMAND_CSP: only a feed over CSP counts");
+BUILD_ASSERT(IS_ENABLED(CONFIG_REBOOT), "KFSW_GNDWDT needs REBOOT to act on an expiry");
 
 /* The command worker and timeout worker share this state. */
 static uint64_t last_contact_ms;
@@ -65,8 +71,13 @@ int kfsw_gndwdt_stop(void)
 		return -EALREADY;
 	}
 	running = false;
+	/* Taking the service out of service is the one thing that calls off a
+	 * reset already decided. A late feed does not.
+	 */
+	resetting = false;
 	k_mutex_unlock(&gndwdt_lock);
 
+	(void)k_work_cancel_delayable(&gndwdt_reset_work);
 	(void)k_work_cancel_delayable(&gndwdt_work);
 	kfsw_log_info("Ground watchdog stopped");
 	return 0;
@@ -144,7 +155,8 @@ int kfsw_gndwdt_evaluate(void)
 	uint32_t allowed_s;
 
 	k_mutex_lock(&gndwdt_lock, K_FOREVER);
-	if (!running || !enabled) {
+	/* A decided reset is reported once, not again on every later check. */
+	if (!running || !enabled || resetting) {
 		k_mutex_unlock(&gndwdt_lock);
 		return 0;
 	}
@@ -159,7 +171,7 @@ int kfsw_gndwdt_evaluate(void)
 	if (expiries < UINT32_MAX) {
 		expiries++;
 	}
-	/* Without reboot support, report expiry once per timeout. */
+	/* So a disarm and re-arm starts from now rather than from the expiry. */
 	restart_countdown();
 	k_mutex_unlock(&gndwdt_lock);
 
@@ -223,11 +235,7 @@ static void gndwdt_reset_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
 
-#if CONFIG_REBOOT
 	sys_reboot(SYS_REBOOT_COLD);
-#else
-	kfsw_log_error("Ground watchdog: this build cannot reset the node");
-#endif
 }
 
 static void gndwdt_work_handler(struct k_work *work)
