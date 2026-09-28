@@ -7,18 +7,23 @@ events, commands, health, firmware update and housekeeping.
 | --- | --- | --- |
 | Boot | always | Startup markers, reset cause, image version and the note from the previous run |
 | Log | always | Console output, with a level per module |
+| Log history | `KFSW_LOG_HISTORY` | Recent text messages in RAM, with optional remote reads |
 | Parameters | `KFSW_PARAM` | Named settings in tables, local or from the ground |
 | Persistence | `KFSW_PARAM_PERSISTENCE` | A saved snapshot of the persistent settings |
 | Files | `KFSW_FTP` | File transfer in both directions, checked before commit |
 | Events | `KFSW_EVENT` | A RAM record of events, separate from the log |
+| Journal | `KFSW_JOURNAL` | Boot reports and selected events saved to storage |
 | Commands | `KFSW_COMMAND` | Typed commands with typed results, local or remote |
 | Health | `KFSW_HEALTH` | Component deadlines and the watchdog |
+| Ground watchdog | `KFSW_GNDWDT` | Reset after a configured period without contact |
+| Resource monitor | `KFSW_RESMON` | Thread stack use and alert events |
 | Firmware update | `KFSW_FWU` | Receives and checks an image and hands it to the bootloader |
 | Housekeeping | `KFSW_HK` | Collects a set of values together and keeps the samples |
 | File based operations | `KFSW_FBO` | Runs a list of commands from a file |
 
-Each service can be enabled on its own. One only pulls in another when it needs
-it, and none of them need CSP.
+Kconfig selects each service and checks its dependencies. Local parameters,
+logging, events and health can run without CSP. Remote adapters and FTP need
+the communications layer; FTP also needs storage.
 
 Full documentation is on the [K-FSW site](https://dgonzalez97.github.io/k-fsw/).
 
@@ -47,7 +52,8 @@ validated as a whole.
 
 `CONFIG_KFSW_PARAM_CSP` adds remote access with the MIT-licensed
 [Space Inventor libparam](https://github.com/spaceinventor/libparam) wire
-codec, pinned as a separate west project. CSP itself is in `kfsw-comms`.
+codec. The composition pins the K-FSW fork as a separate west project. CSP
+itself is in `kfsw-comms`.
 
 A write from a ground node to two flight nodes, read back afterwards:
 
@@ -72,8 +78,8 @@ Prints the startup markers, keeps the reset cause and reports the image
 version.
 
 It also reads the last words note the previous run left in `kfsw-platform`,
-logs it and records it as an event so the ground can see it. No note means the
-node lost power.
+logs it and records it as an event. A missing note means no valid record was
+retained; use the reset-cause flags to distinguish power loss from other resets.
 
 ## Log
 
@@ -91,18 +97,27 @@ downlink, with a sequence number that shows when records were missed.
 
 The ring does not survive a reset, and it counts the records it overwrites.
 
+The optional journal saves boot reports and events at or above a configured
+severity. Its worker drains a bounded queue to a checksummed file. Queued
+records can be lost on power failure; full queues and write failures are
+counted. `journal_stats`, `journal_tail` and `journal_time` expose the stored
+records through the command service.
+
 ## Commands
 
 A command has a name, up to four typed arguments and a typed result. Handlers
 run to completion, and commands that change something are marked as mutating.
 
-Each request is one packet and each result another, with no retransmission. The
-server matches the reply to the request ID but doesn't deduplicate, so a resent
-`reboot` would run twice. A lost packet shows up as a timeout, and the operator
-decides whether to send it again.
+Legacy calls send one request and wait for one result. Resending is a new
+operation, so inspect the node after a timeout before trying again.
 
-There is no authentication yet. The request has a source node and an
-authentication flag that is always false.
+`KFSW_COMMAND_RETRY` adds ticket reservations and cached results. `cmd retry`
+reuses one ticket within an invocation; a new invocation is a new operation.
+Tickets expire and are lost on reset. A lost reply can still leave the outcome
+unknown.
+
+Tickets do not authenticate commands. The source authentication flag remains
+false; optional radio encryption protects that link separately.
 
 ## Health
 
@@ -119,11 +134,12 @@ CRC32 and handed to the bootloader. It can arrive through the file transfer
 service, or through FWU lite, which sends blocks with their own checksum and
 resends failed ones for poor links.
 
-Receiving and flashing are separate steps. A verified image stays in the slot
-until `fwu flash` is sent.
+FWU lite separates upload from activation: a verified image waits for
+`fwu flash`. A successful FTP upload to the reserved firmware path schedules
+the trial boot immediately. Both paths expose the slots for readback.
 
-MCUboot checks the signature and reverts an image that isn't confirmed. K-FSW
-adds no authentication of its own.
+MCUboot checks the signature and reverts an image that isn't confirmed.
+Signing an image and authorizing its upload are separate checks.
 
 ## File transfer
 
@@ -156,8 +172,9 @@ into the transport's buffer until it is released.
 
 ### Transfer rules
 
-Every path is inside `/kfsw/ftp`. Path traversal, empty components,
-backslashes, control characters and embedded NULs are rejected.
+Ordinary paths resolve inside `/kfsw/ftp`. Read-only `/hk` and `/boot` paths
+expose sample files and firmware slots when enabled. Path traversal, empty
+components, backslashes, control characters and embedded NULs are rejected.
 
 A receiver writes a `.part` file, syncs it, checks it and then renames it over
 the final name. A failed transfer removes the partial file and leaves any
@@ -193,11 +210,11 @@ Report definitions survive a reset. Samples are kept in RAM unless `hk store`
 writes them to a file. A report can also be sent periodically as a beacon with
 `hk beacon`, with a minimum interval.
 
-## Not implemented yet
+## Limits
 
-- a persistent event log, rate limiting and coalescing
-- authentication of commands
-- a flight planner
+- No per-node command authorization.
+- No general event rate limiting or coalescing.
+- File procedures have bounded waits, but no persistent flight planner.
 
 ## License
 
