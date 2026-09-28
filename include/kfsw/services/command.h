@@ -97,6 +97,8 @@ struct kfsw_command_source {
 	uint16_t node;
 	/** End-to-end command identity, separate from link protection. Currently false. */
 	bool authenticated;
+	/** Set by the CSP front end; false for shell and procedure calls. */
+	bool via_csp;
 };
 
 /** What a handler reports back. */

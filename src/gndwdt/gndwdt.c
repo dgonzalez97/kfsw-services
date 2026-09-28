@@ -1,9 +1,9 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <zephyr/kernel.h>
-#include <zephyr/sys/atomic.h>
 #include <zephyr/sys/byteorder.h>
 #if CONFIG_REBOOT
 #include <zephyr/sys/reboot.h>
@@ -17,12 +17,10 @@
 #include <kfsw/services/event.h>
 #endif
 
-/* Contact is recorded from the router thread and read by the work handler, so
- * the timestamp is atomic and no lock is taken on the receive path.
- */
-static atomic_t last_contact_ms;
-static atomic_t contacts;
-static atomic_t last_node;
+/* The command worker and timeout worker share this state. */
+static uint64_t last_contact_ms;
+static uint32_t contacts;
+static uint16_t last_node;
 
 static K_MUTEX_DEFINE(gndwdt_lock);
 static uint32_t timeout_s = CONFIG_KFSW_GNDWDT_TIMEOUT_S;
@@ -38,7 +36,7 @@ K_WORK_DELAYABLE_DEFINE(gndwdt_reset_work, gndwdt_reset_handler);
 
 static void restart_countdown(void)
 {
-	atomic_set(&last_contact_ms, (atomic_val_t)kfsw_time_monotonic_ms());
+	last_contact_ms = kfsw_time_monotonic_ms();
 }
 
 int kfsw_gndwdt_start(void)
@@ -73,25 +71,53 @@ int kfsw_gndwdt_stop(void)
 	return 0;
 }
 
-void kfsw_gndwdt_contact(uint16_t node)
+static int ground_wtd(const struct kfsw_command_arg *args, size_t arg_count,
+		      const struct kfsw_command_source *source, struct kfsw_command_result *result)
 {
-	/* The caller decides what counts as contact; this node's own address is
-	 * filtered where the address is known.
-	 */
-	if (!running) {
-		return;
+	ARG_UNUSED(arg_count);
+
+	if (!source->via_csp || strcmp(args[0].value.text, "KFSWWSFK") != 0) {
+		result->status = KFSW_COMMAND_DENIED;
+		return -EACCES;
 	}
 
-	restart_countdown();
-	atomic_set(&last_node, (atomic_val_t)node);
-	if (atomic_get(&contacts) < (atomic_val_t)UINT32_MAX) {
-		atomic_inc(&contacts);
+	k_mutex_lock(&gndwdt_lock, K_FOREVER);
+	if (!running || resetting) {
+		k_mutex_unlock(&gndwdt_lock);
+		result->status = KFSW_COMMAND_UNAVAILABLE;
+		return -EAGAIN;
 	}
+	restart_countdown();
+	last_node = source->node;
+	if (contacts < UINT32_MAX) {
+		contacts++;
+	}
+	k_mutex_unlock(&gndwdt_lock);
+	result->status = KFSW_COMMAND_OK;
+	return 0;
 }
+
+static const enum kfsw_command_type ground_wtd_args[] = {KFSW_COMMAND_TYPE_TEXT};
+static const struct kfsw_command_definition ground_wtd_commands[] = {
+	{
+		.id = KFSW_COMMAND_ID_GROUND_WTD,
+		.name = "ground_wtd",
+		.help = "Feed the ground watchdog over CSP: ground_wtd KFSWWSFK.",
+		.flags = KFSW_COMMAND_FLAG_MUTATING,
+		.arg_count = 1U,
+		.arg_types = ground_wtd_args,
+		.handler = ground_wtd,
+	},
+};
+
+const struct kfsw_command_definition_set kfsw_gndwdt_command_definitions = {
+	.commands = ground_wtd_commands,
+	.count = ARRAY_SIZE(ground_wtd_commands),
+};
 
 int kfsw_gndwdt_evaluate(void)
 {
-	uint32_t elapsed_ms;
+	uint64_t elapsed_ms;
 	uint32_t allowed_s;
 
 	k_mutex_lock(&gndwdt_lock, K_FOREVER);
@@ -100,7 +126,7 @@ int kfsw_gndwdt_evaluate(void)
 		return 0;
 	}
 	allowed_s = timeout_s;
-	elapsed_ms = (uint32_t)(kfsw_time_monotonic_ms() - (uint64_t)atomic_get(&last_contact_ms));
+	elapsed_ms = kfsw_time_monotonic_ms() - last_contact_ms;
 
 	if ((elapsed_ms / MSEC_PER_SEC) < allowed_s) {
 		k_mutex_unlock(&gndwdt_lock);
@@ -131,35 +157,33 @@ int kfsw_gndwdt_evaluate(void)
 
 void kfsw_gndwdt_get_status(struct kfsw_gndwdt_status *status)
 {
-	uint32_t elapsed_ms;
+	uint64_t elapsed_ms;
 
 	if (status == NULL) {
 		return;
 	}
 
-	elapsed_ms = (uint32_t)(kfsw_time_monotonic_ms() - (uint64_t)atomic_get(&last_contact_ms));
-
 	k_mutex_lock(&gndwdt_lock, K_FOREVER);
+	elapsed_ms = kfsw_time_monotonic_ms() - last_contact_ms;
 	status->timeout_s = timeout_s;
 	status->expiries = expiries;
 	status->enabled = enabled;
 	status->running = running;
+	status->since_contact_s = MIN(elapsed_ms / MSEC_PER_SEC, UINT32_MAX);
+	status->contacts = contacts;
+	status->last_node = last_node;
 	k_mutex_unlock(&gndwdt_lock);
-
-	status->since_contact_s = elapsed_ms / MSEC_PER_SEC;
-	status->contacts = (uint32_t)atomic_get(&contacts);
-	status->last_node = (uint16_t)atomic_get(&last_node);
 }
 
 int kfsw_gndwdt_set_timeout_s(uint32_t value)
 {
-	if ((value < CONFIG_KFSW_GNDWDT_TIMEOUT_MIN_S) || (value > CONFIG_KFSW_GNDWDT_TIMEOUT_MAX_S)) {
+	if ((value < CONFIG_KFSW_GNDWDT_TIMEOUT_MIN_S) ||
+	    (value > CONFIG_KFSW_GNDWDT_TIMEOUT_MAX_S)) {
 		return -ERANGE;
 	}
 
 	k_mutex_lock(&gndwdt_lock, K_FOREVER);
 	timeout_s = value;
-	restart_countdown();
 	k_mutex_unlock(&gndwdt_lock);
 	return 0;
 }
@@ -168,9 +192,6 @@ void kfsw_gndwdt_set_enabled(bool value)
 {
 	k_mutex_lock(&gndwdt_lock, K_FOREVER);
 	enabled = value;
-	if (value) {
-		restart_countdown();
-	}
 	k_mutex_unlock(&gndwdt_lock);
 }
 
@@ -202,7 +223,9 @@ static void gndwdt_work_handler(struct k_work *work)
 		}
 	}
 
+	k_mutex_lock(&gndwdt_lock, K_FOREVER);
 	if (running) {
 		(void)k_work_reschedule(&gndwdt_work, K_MSEC(CONFIG_KFSW_GNDWDT_CHECK_MS));
 	}
+	k_mutex_unlock(&gndwdt_lock);
 }

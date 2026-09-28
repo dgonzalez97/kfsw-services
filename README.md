@@ -15,7 +15,7 @@ events, commands, health, firmware update and housekeeping.
 | Journal | `KFSW_JOURNAL` | Boot reports and selected events saved to storage |
 | Commands | `KFSW_COMMAND` | Typed commands with typed results, local or remote |
 | Health | `KFSW_HEALTH` | Component deadlines and the watchdog |
-| Ground watchdog | `KFSW_GNDWDT` | Reset after a configured period without contact |
+| Ground watchdog | `KFSW_GNDWDT` | Reset without a valid `ground_wtd KFSWWSFK` CSP command |
 | Resource monitor | `KFSW_RESMON` | Thread stack use and alert events |
 | Firmware update | `KFSW_FWU` | Receives and checks an image and hands it to the bootloader |
 | Housekeeping | `KFSW_HK` | Collects a set of values together and keeps the samples |

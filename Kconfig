@@ -627,10 +627,11 @@ endif # KFSW_RESMON
 
 config KFSW_GNDWDT
 	bool "K-FSW ground watchdog"
+	select KFSW_COMMAND
 	help
-	  Reset the node when it hears nothing from another node for the
-	  configured time. It recovers a node that is still running but cannot
-	  be commanded, which the health watchdog cannot see.
+	  Reset the node unless the ground_wtd CSP command supplies KFSWWSFK
+	  within the configured timeout. Any subsystem may send the command.
+	  Enable KFSW_COMMAND_CSP in compositions that receive it.
 
 if KFSW_GNDWDT
 

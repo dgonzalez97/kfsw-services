@@ -134,7 +134,7 @@ static const struct kfsw_param_definition gndwdt_param_definitions[] = {
 		.type = KFSW_PARAM_U32,
 		.flags = KFSW_PARAM_FLAG_READ_ONLY,
 		.name = "gndwdt_contacts",
-		.description = "Packets counted as contact since start",
+		.description = "Valid ground_wtd feeds since boot",
 		.value = &gndwdt_contacts,
 		.default_value = {.u32 = 0U},
 		.sample = sample_contacts,
