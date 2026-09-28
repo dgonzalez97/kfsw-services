@@ -7,7 +7,7 @@ events, commands, health, firmware update and housekeeping.
 | --- | --- | --- |
 | Boot | always | Startup markers, reset cause, image version and the note from the previous run |
 | Log | always | Console output, with a level per module |
-| Log history | `KFSW_LOG_HISTORY` | Recent text messages in RAM, with optional remote reads |
+| Log history | `KFSW_LOG_HISTORY` | Recent text messages in RAM, kept across a reset, with optional remote reads |
 | Parameters | `KFSW_PARAM` | Named settings in tables, local or from the ground |
 | Persistence | `KFSW_PARAM_PERSISTENCE` | A saved snapshot of the persistent settings |
 | Files | `KFSW_FTP` | File transfer in both directions, checked before commit |

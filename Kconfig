@@ -18,15 +18,26 @@ config KFSW_LOG_COLOR
 config KFSW_LOG_HISTORY
 	bool "Keep recent K-FSW text logs in RAM"
 	depends on KFSW_LOG_MIN_LEVEL < 4
+	select CRC
 	help
 	  Retain messages that pass the runtime level filters. Console output
-	  from Zephyr and drivers is not included. Records do not survive reset.
+	  from Zephyr and drivers is not included.
 
 config KFSW_LOG_HISTORY_DEPTH
 	int "Retained log messages"
 	depends on KFSW_LOG_HISTORY
 	range 1 128
 	default 32
+
+config KFSW_LOG_HISTORY_RETAINED
+	bool "Keep the ring across a reset"
+	depends on KFSW_LOG_HISTORY
+	default y
+	help
+	  Place the ring outside .bss so start-up does not clear it, which
+	  leaves the messages that explain a reset readable after it. The ring
+	  is validated on first use and starts clean when it does not belong to
+	  the running image. Turn this off for a ring that always starts empty.
 
 config KFSW_LOG_HISTORY_CSP
 	bool "Read log history over CSP"
