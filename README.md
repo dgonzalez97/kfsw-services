@@ -42,8 +42,7 @@ kind of component defines it:
        50-99 ---- modules
 ```
 
-On the wire the pair becomes one ID that is unique on the node and decodes back
-to the table and offset.
+The wire ID uses the table as its high byte and the offset as its low byte.
 
 Scalars, strings and byte arrays are supported. An array is always written and
 validated as a whole.
@@ -65,9 +64,8 @@ packet fails the download instead of leaving a parameter out.
 
 ### Persistence
 
-One snapshot with a CRC. With `param_autosave` on, the default, an accepted
-change to a persistent value is saved; `kfsw_param_persist_save()` saves on
-request.
+Persistent values share one CRC-checked snapshot. `param_autosave` saves
+accepted changes by default; `kfsw_param_persist_save()` saves on request.
 
 Read-only values can still be saved: the boot counter is read-only and
 persistent.
@@ -185,8 +183,8 @@ implementations.
 
 ## Housekeeping
 
-Reading a node one value at a time costs one round trip per value. A report
-names a set of values once, and then one request returns the whole set.
+A housekeeping report collects a set of parameters and returns them in one
+request.
 
 A report stores parameter IDs, the same table and offset pair the wire uses,
 instead of names. It is checked when it is defined: every parameter must exist
@@ -196,10 +194,7 @@ Widths come from the declarations, so every sample of a report has the same
 layout. A value that can't be read is zero-filled and flagged instead of left
 out.
 
-```text
-  one sample = one CSP packet
-  a lost packet costs one sample, and the sequence number shows the gap
-```
+Each sample fits one CSP packet. Sequence gaps show missed samples.
 
 The timestamp is when the collection started. Local values are read in one
 loop, and remote values arrive over the link.
