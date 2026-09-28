@@ -71,6 +71,7 @@ static void serve_request(csp_conn_t *connection, uint16_t source_node)
 	struct kfsw_command_result result;
 	struct kfsw_command_source source = {
 		.node = source_node,
+		.via_csp = true,
 		/* Link protection does not provide a command-level identity here. */
 		.authenticated = false,
 	};

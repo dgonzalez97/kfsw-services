@@ -599,10 +599,8 @@ config KFSW_RESMON
 	select THREAD_MONITOR
 	select THREAD_NAME
 	help
-	  Walk the kernel's thread list on a period and record how much stack
-	  each thread has left. The selected options fill stacks with a known
-	  value at creation and keep the thread list, which is what makes the
-	  measurement possible.
+	  Periodically record stack use from the kernel thread list and the
+	  initial stack fill pattern.
 
 if KFSW_RESMON
 
@@ -619,40 +617,40 @@ config KFSW_RESMON_ALERT_PERCENT
 	default 90
 	range 1 100
 	help
-	  Usage is measured against each thread's own stack. Bytes alone say
-	  nothing across threads sized differently: the idle thread sits near
-	  its limit by design.
+	  Alert when used stack reaches this percentage of a thread's
+	  configured stack size.
 
 endif # KFSW_RESMON
 
 config KFSW_GNDWDT
 	bool "K-FSW ground watchdog"
+	select KFSW_COMMAND
 	help
-	  Reset the node when it hears nothing from another node for the
-	  configured time. It recovers a node that is still running but cannot
-	  be commanded, which the health watchdog cannot see.
+	  Reset the node unless the ground_wtd CSP command supplies KFSWWSFK
+	  within the configured timeout. Any subsystem may send the command.
+	  Enable KFSW_COMMAND_CSP in compositions that receive it.
 
 if KFSW_GNDWDT
 
 config KFSW_GNDWDT_TIMEOUT_S
 	int "Silence allowed before a reset, in seconds"
 	range KFSW_GNDWDT_TIMEOUT_MIN_S KFSW_GNDWDT_TIMEOUT_MAX_S
-	default 432000
+	default 86400
 	help
-	  Starting timeout, five days. Table 35 changes it at run time.
+	  Starting timeout, 24 hours. Table 35 accepts two hours to five days.
 
 config KFSW_GNDWDT_TIMEOUT_MIN_S
 	int "Shortest timeout that can be set"
-	default 432000
-	range 432000 2592000
+	default 7200
+	range 7200 432000
 	help
 	  A floor on what an operator can write, so a short value cannot put a
 	  node into a reset loop it takes a pass to notice.
 
 config KFSW_GNDWDT_TIMEOUT_MAX_S
 	int "Longest timeout that can be set"
-	default 604800
-	range KFSW_GNDWDT_TIMEOUT_MIN_S 2592000
+	default 432000
+	range KFSW_GNDWDT_TIMEOUT_MIN_S 432000
 
 config KFSW_GNDWDT_CHECK_MS
 	int "How often the timer is checked, in milliseconds"

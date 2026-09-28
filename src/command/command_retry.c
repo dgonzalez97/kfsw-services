@@ -38,7 +38,7 @@ void kfsw_command_retry_dispatch(struct kfsw_command_retry_cache *cache, uint16_
 	struct kfsw_command_ticket *free_entry = NULL;
 	struct kfsw_command_arg args[KFSW_COMMAND_MAX_ARGS];
 	char text[KFSW_COMMAND_MAX_ARGS][KFSW_COMMAND_MAX_TEXT_SIZE + 1U];
-	struct kfsw_command_source origin = {.node = source};
+	struct kfsw_command_source origin = {.node = source, .via_csp = true};
 	bool collision = false;
 	int count;
 

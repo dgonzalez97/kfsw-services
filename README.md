@@ -15,7 +15,7 @@ events, commands, health, firmware update and housekeeping.
 | Journal | `KFSW_JOURNAL` | Boot reports and selected events saved to storage |
 | Commands | `KFSW_COMMAND` | Typed commands with typed results, local or remote |
 | Health | `KFSW_HEALTH` | Component deadlines and the watchdog |
-| Ground watchdog | `KFSW_GNDWDT` | Reset after a configured period without contact |
+| Ground watchdog | `KFSW_GNDWDT` | CSP feed with `KFSWWSFK`; `ground_wtd get` reads the countdown |
 | Resource monitor | `KFSW_RESMON` | Thread stack use and alert events |
 | Firmware update | `KFSW_FWU` | Receives and checks an image and hands it to the bootloader |
 | Housekeeping | `KFSW_HK` | Collects a set of values together and keeps the samples |
@@ -42,8 +42,7 @@ kind of component defines it:
        50-99 ---- modules
 ```
 
-On the wire the pair becomes one ID that is unique on the node and decodes back
-to the table and offset.
+The wire ID uses the table as its high byte and the offset as its low byte.
 
 Scalars, strings and byte arrays are supported. An array is always written and
 validated as a whole.
@@ -65,9 +64,8 @@ packet fails the download instead of leaving a parameter out.
 
 ### Persistence
 
-One snapshot with a CRC. With `param_autosave` on, the default, an accepted
-change to a persistent value is saved; `kfsw_param_persist_save()` saves on
-request.
+Persistent values share one CRC-checked snapshot. `param_autosave` saves
+accepted changes by default; `kfsw_param_persist_save()` saves on request.
 
 Read-only values can still be saved: the boot counter is read-only and
 persistent.
@@ -92,10 +90,8 @@ before the include.
 A RAM ring of numeric records: ID, timestamp, sequence number, severity and a
 small payload.
 
-Events are separate from the log: small numeric records that are cheap to
-downlink, with a sequence number that shows when records were missed.
-
-The ring does not survive a reset, and it counts the records it overwrites.
+Sequence gaps show missed records. The ring counts overwritten records and
+is cleared at reset.
 
 The optional journal saves boot reports and events at or above a configured
 severity. Its worker drains a bounded queue to a checksummed file. Queued
@@ -187,8 +183,8 @@ implementations.
 
 ## Housekeeping
 
-Reading a node one value at a time costs one round trip per value. A report
-names a set of values once, and then one request returns the whole set.
+A housekeeping report collects a set of parameters and returns them in one
+request.
 
 A report stores parameter IDs, the same table and offset pair the wire uses,
 instead of names. It is checked when it is defined: every parameter must exist
@@ -198,10 +194,7 @@ Widths come from the declarations, so every sample of a report has the same
 layout. A value that can't be read is zero-filled and flagged instead of left
 out.
 
-```text
-  one sample = one CSP packet
-  a lost packet costs one sample, and the sequence number shows the gap
-```
+Each sample fits one CSP packet. Sequence gaps show missed samples.
 
 The timestamp is when the collection started. Local values are read in one
 loop, and remote values arrive over the link.

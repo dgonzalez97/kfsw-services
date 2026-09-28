@@ -16,20 +16,14 @@ extern "C" {
  * @defgroup kfsw_services_resmon K-FSW resource monitor
  * @ingroup kfsw_services
  *
- * How much stack the threads of this node have left. A thread that runs out
- * fails in a way that is hard to read afterwards, and the numbers were only
- * reachable from a bench probe until now.
+ * Reports stack use and unused bytes for each thread. Sampling uses the
+ * kernel thread list; threads need no separate registration.
  *
- * Usage is a percentage of each thread's own stack. Bytes alone say nothing
- * across threads sized differently: the idle thread sits near its limit by
- * design, and a worker with a kilobyte spare may still be the one in trouble.
+ * Usage is a percentage of each thread's configured stack size. Check it
+ * together with the unused bytes under the intended workload.
  *
- * Sampling walks the kernel's thread list, so nothing has to be instrumented
- * or registered.
- *
- * The figures are real on an MCU target. On the POSIX architecture a thread
- * runs on a host stack and the declared one is ignored, so what a Linux build
- * reports exercises the mechanism without measuring anything.
+ * MCU targets measure their configured stacks. Native simulation uses host
+ * stacks, so its reported values do not measure stack headroom.
  *
  * @{
  */
@@ -50,7 +44,7 @@ enum kfsw_resmon_event {
 	KFSW_EVENT_RESMON_LOW_STACK = 1,
 };
 
-/** What the sweeps have found. */
+/** Stack measurements and sweep counters. */
 struct kfsw_resmon_status {
 	/** Sweeps completed since start; saturates. */
 	uint32_t sweeps;
@@ -87,7 +81,7 @@ int kfsw_resmon_stop(void);
  */
 int kfsw_resmon_sample(void);
 
-/** Copy the current numbers. */
+/** Copy the current measurements and counters. */
 void kfsw_resmon_get_status(struct kfsw_resmon_status *status);
 
 /**
