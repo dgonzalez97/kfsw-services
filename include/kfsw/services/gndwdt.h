@@ -46,6 +46,8 @@ struct kfsw_gndwdt_status {
 	uint32_t timeout_s;
 	/** Seconds since the last contact, or since the service started. */
 	uint32_t since_contact_s;
+	/** Seconds left; zero if stopped, expired or waiting to reset. */
+	uint32_t remaining_s;
 	/** Contacts counted since start; saturates. */
 	uint32_t contacts;
 	/** Times the timeout passed since start; saturates. */
@@ -64,7 +66,7 @@ int kfsw_gndwdt_start(void);
 /** Stop the timer. Does not cancel a reset already queued. */
 int kfsw_gndwdt_stop(void);
 
-/** Stable wire ID for ground_wtd, with one text argument: KFSWWSFK. */
+/** Stable wire ID for ground_wtd, with one text argument: KFSWWSFK or get. */
 #define KFSW_COMMAND_ID_GROUND_WTD 16U
 
 /** Register this set on both the flight node and its command clients. */

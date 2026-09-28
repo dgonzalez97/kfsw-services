@@ -1,6 +1,7 @@
 #include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include <zephyr/kernel.h>
@@ -71,10 +72,27 @@ int kfsw_gndwdt_stop(void)
 	return 0;
 }
 
+static void ground_wtd_reply(struct kfsw_command_result *result)
+{
+	struct kfsw_gndwdt_status status;
+
+	/* Parameter samples use this same snapshot. */
+	kfsw_gndwdt_get_status(&status);
+	result->status = KFSW_COMMAND_OK;
+	(void)snprintf(result->detail, sizeof(result->detail),
+		       "ground_wtd_cnt=%u ground_wtd_timeout=%u", status.remaining_s,
+		       status.timeout_s);
+}
+
 static int ground_wtd(const struct kfsw_command_arg *args, size_t arg_count,
 		      const struct kfsw_command_source *source, struct kfsw_command_result *result)
 {
 	ARG_UNUSED(arg_count);
+
+	if (strcmp(args[0].value.text, "get") == 0) {
+		ground_wtd_reply(result);
+		return 0;
+	}
 
 	if (!source->via_csp || strcmp(args[0].value.text, "KFSWWSFK") != 0) {
 		result->status = KFSW_COMMAND_DENIED;
@@ -93,7 +111,12 @@ static int ground_wtd(const struct kfsw_command_arg *args, size_t arg_count,
 		contacts++;
 	}
 	k_mutex_unlock(&gndwdt_lock);
+#if CONFIG_KFSW_PARAM
+	ground_wtd_reply(result);
+#else
 	result->status = KFSW_COMMAND_OK;
+	(void)snprintf(result->detail, sizeof(result->detail), "ground_wtd restarted");
+#endif
 	return 0;
 }
 
@@ -102,7 +125,7 @@ static const struct kfsw_command_definition ground_wtd_commands[] = {
 	{
 		.id = KFSW_COMMAND_ID_GROUND_WTD,
 		.name = "ground_wtd",
-		.help = "Feed the ground watchdog over CSP: ground_wtd KFSWWSFK.",
+		.help = "Ground watchdog: get, or KFSWWSFK to feed over CSP.",
 		.flags = KFSW_COMMAND_FLAG_MUTATING,
 		.arg_count = 1U,
 		.arg_types = ground_wtd_args,
@@ -170,6 +193,9 @@ void kfsw_gndwdt_get_status(struct kfsw_gndwdt_status *status)
 	status->enabled = enabled;
 	status->running = running;
 	status->since_contact_s = MIN(elapsed_ms / MSEC_PER_SEC, UINT32_MAX);
+	status->remaining_s = (!running || resetting || status->since_contact_s >= timeout_s)
+				      ? 0U
+				      : timeout_s - status->since_contact_s;
 	status->contacts = contacts;
 	status->last_node = last_node;
 	k_mutex_unlock(&gndwdt_lock);

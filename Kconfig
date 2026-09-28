@@ -638,22 +638,22 @@ if KFSW_GNDWDT
 config KFSW_GNDWDT_TIMEOUT_S
 	int "Silence allowed before a reset, in seconds"
 	range KFSW_GNDWDT_TIMEOUT_MIN_S KFSW_GNDWDT_TIMEOUT_MAX_S
-	default 432000
+	default 86400
 	help
-	  Starting timeout, five days. Table 35 changes it at run time.
+	  Starting timeout, 24 hours. Table 35 accepts two hours to five days.
 
 config KFSW_GNDWDT_TIMEOUT_MIN_S
 	int "Shortest timeout that can be set"
-	default 432000
-	range 432000 2592000
+	default 7200
+	range 7200 432000
 	help
 	  A floor on what an operator can write, so a short value cannot put a
 	  node into a reset loop it takes a pass to notice.
 
 config KFSW_GNDWDT_TIMEOUT_MAX_S
 	int "Longest timeout that can be set"
-	default 604800
-	range KFSW_GNDWDT_TIMEOUT_MIN_S 2592000
+	default 432000
+	range KFSW_GNDWDT_TIMEOUT_MIN_S 432000
 
 config KFSW_GNDWDT_CHECK_MS
 	int "How often the timer is checked, in milliseconds"

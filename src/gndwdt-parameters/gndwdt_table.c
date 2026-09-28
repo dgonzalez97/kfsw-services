@@ -8,8 +8,9 @@
 
 static uint8_t gndwdt_enabled = IS_ENABLED(CONFIG_KFSW_GNDWDT_ENABLED_AT_START);
 static uint8_t gndwdt_running;
-static uint32_t gndwdt_timeout_s = CONFIG_KFSW_GNDWDT_TIMEOUT_S;
+static uint32_t ground_wtd_timeout = CONFIG_KFSW_GNDWDT_TIMEOUT_S;
 static uint32_t gndwdt_since_s;
+static uint32_t ground_wtd_cnt;
 static uint32_t gndwdt_contacts;
 static uint32_t gndwdt_expiries;
 static uint16_t gndwdt_last_node;
@@ -21,8 +22,9 @@ static void sample_status(void)
 	kfsw_gndwdt_get_status(&status);
 	gndwdt_enabled = status.enabled ? 1U : 0U;
 	gndwdt_running = status.running ? 1U : 0U;
-	gndwdt_timeout_s = status.timeout_s;
+	ground_wtd_timeout = status.timeout_s;
 	gndwdt_since_s = status.since_contact_s;
+	ground_wtd_cnt = status.remaining_s;
 	gndwdt_contacts = status.contacts;
 	gndwdt_expiries = status.expiries;
 	gndwdt_last_node = status.last_node;
@@ -43,13 +45,19 @@ static void sample_running(void *value)
 static void sample_timeout(void *value)
 {
 	sample_status();
-	*(uint32_t *)value = gndwdt_timeout_s;
+	*(uint32_t *)value = ground_wtd_timeout;
 }
 
 static void sample_since(void *value)
 {
 	sample_status();
 	*(uint32_t *)value = gndwdt_since_s;
+}
+
+static void sample_countdown(void *value)
+{
+	sample_status();
+	*(uint32_t *)value = ground_wtd_cnt;
 }
 
 static void sample_contacts(void *value)
@@ -110,9 +118,9 @@ static const struct kfsw_param_definition gndwdt_param_definitions[] = {
 		.offset = 0x04U,
 		.type = KFSW_PARAM_U32,
 		.unit = "s",
-		.name = "gndwdt_timeout_s",
-		.description = "Silence allowed before the node resets itself",
-		.value = &gndwdt_timeout_s,
+		.name = "ground_wtd_timeout",
+		.description = "Timeout in seconds, 7200 to 432000",
+		.value = &ground_wtd_timeout,
 		.default_value = {.u32 = CONFIG_KFSW_GNDWDT_TIMEOUT_S},
 		.validate = validate_timeout,
 		.changed = apply_timeout,
@@ -168,6 +176,17 @@ static const struct kfsw_param_definition gndwdt_param_definitions[] = {
 		.value = &gndwdt_running,
 		.default_value = {.u8 = 0U},
 		.sample = sample_running,
+	},
+	{
+		.offset = 0x18U,
+		.type = KFSW_PARAM_U32,
+		.unit = "s",
+		.flags = KFSW_PARAM_FLAG_READ_ONLY,
+		.name = "ground_wtd_cnt",
+		.description = "Seconds remaining on the ground watchdog",
+		.value = &ground_wtd_cnt,
+		.default_value = {.u32 = 0U},
+		.sample = sample_countdown,
 	},
 };
 
