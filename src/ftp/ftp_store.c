@@ -76,6 +76,166 @@ int kfsw_ftp_make_temporary_path(const char *path, char *temporary_path, size_t 
 	return 0;
 }
 
+/*
+ * A partial upload keeps a short note beside it saying what it is going to
+ * become. Without that, continuing a partial left by a different version of the
+ * same file would spend the whole transfer before the final CRC rejected it.
+ * Chunks arrive strictly in order, so the note holds no chunk map: the
+ * partial's own size is the resume point.
+ */
+#define KFSW_FTP_PARTIAL_MAGIC 0x4B465450UL /* "KFTP" */
+#define KFSW_FTP_PARTIAL_VERSION 1U
+
+struct partial_note {
+	uint32_t magic;
+	uint32_t version;
+	uint32_t total_size;
+	uint32_t crc32;
+	uint32_t note_crc32;
+};
+
+static uint32_t note_crc(const struct partial_note *note)
+{
+	return crc32_ieee((const uint8_t *)note, offsetof(struct partial_note, note_crc32));
+}
+
+static int make_note_path(const char *path, char *note_path, size_t note_path_size)
+{
+	static const char suffix[] = ".map";
+	size_t path_size;
+	int result = kfsw_ftp_make_temporary_path(path, note_path, note_path_size);
+
+	if (result != 0) {
+		return result;
+	}
+	path_size = strnlen(note_path, note_path_size);
+	if (path_size + sizeof(suffix) > note_path_size) {
+		return -ENAMETOOLONG;
+	}
+	memcpy(&note_path[path_size], suffix, sizeof(suffix));
+	return 0;
+}
+
+static int read_note(const char *note_path, struct partial_note *note)
+{
+	struct fs_file_t file;
+	ssize_t bytes_read;
+	int close_result;
+	int result;
+
+	fs_file_t_init(&file);
+	result = fs_open(&file, note_path, FS_O_READ);
+	if (result != 0) {
+		return result;
+	}
+	bytes_read = fs_read(&file, note, sizeof(*note));
+	close_result = fs_close(&file);
+	if (bytes_read < 0) {
+		return (int)bytes_read;
+	}
+	if (close_result != 0) {
+		return close_result;
+	}
+	if ((size_t)bytes_read != sizeof(*note)) {
+		return -EILSEQ;
+	}
+	if ((note->magic != KFSW_FTP_PARTIAL_MAGIC) ||
+	    (note->version != KFSW_FTP_PARTIAL_VERSION) || (note->note_crc32 != note_crc(note))) {
+		return -EILSEQ;
+	}
+	return 0;
+}
+
+int kfsw_ftp_partial_resume_point(const char *path, struct kfsw_ftp_workspace *workspace,
+				  uint32_t total_size, uint32_t crc32, uint32_t *offset,
+				  uint32_t *partial_crc32)
+{
+	char note_path[KFSW_FTP_FULL_PATH_SIZE];
+	char partial_path[KFSW_FTP_FULL_PATH_SIZE];
+	struct partial_note note;
+	uint32_t partial_size;
+
+	if ((path == NULL) || (workspace == NULL) || (offset == NULL) || (partial_crc32 == NULL)) {
+		return -EINVAL;
+	}
+	*offset = 0U;
+	*partial_crc32 = 0U;
+
+	if ((make_note_path(path, note_path, sizeof(note_path)) != 0) ||
+	    (kfsw_ftp_make_temporary_path(path, partial_path, sizeof(partial_path)) != 0)) {
+		return 0;
+	}
+	if (read_note(note_path, &note) != 0) {
+		return 0;
+	}
+	/* A note for a different file is no use, however far that upload got. */
+	if ((note.total_size != total_size) || (note.crc32 != crc32)) {
+		return 0;
+	}
+	if (kfsw_ftp_file_crc(partial_path, workspace, &partial_size, partial_crc32) != 0) {
+		*partial_crc32 = 0U;
+		return 0;
+	}
+	/* Nothing to continue from an empty or already complete partial. */
+	if ((partial_size == 0U) || (partial_size >= total_size)) {
+		*partial_crc32 = 0U;
+		return 0;
+	}
+	*offset = partial_size;
+	return 0;
+}
+
+int kfsw_ftp_partial_note_write(const char *path, uint32_t total_size, uint32_t crc32)
+{
+	char note_path[KFSW_FTP_FULL_PATH_SIZE];
+	struct partial_note note = {
+		.magic = KFSW_FTP_PARTIAL_MAGIC,
+		.version = KFSW_FTP_PARTIAL_VERSION,
+		.total_size = total_size,
+		.crc32 = crc32,
+	};
+	struct fs_file_t file;
+	ssize_t written;
+	int close_result;
+	int result = make_note_path(path, note_path, sizeof(note_path));
+
+	if (result != 0) {
+		return result;
+	}
+	note.note_crc32 = note_crc(&note);
+	fs_file_t_init(&file);
+	result = fs_open(&file, note_path, FS_O_CREATE | FS_O_WRITE | FS_O_TRUNC);
+	if (result != 0) {
+		return result;
+	}
+	written = fs_write(&file, &note, sizeof(note));
+	if ((written >= 0) && ((size_t)written != sizeof(note))) {
+		result = -EIO;
+	} else if (written < 0) {
+		result = (int)written;
+	}
+	if (result == 0) {
+		result = fs_sync(&file);
+	}
+	close_result = fs_close(&file);
+	if (result == 0) {
+		result = close_result;
+	}
+	if (result != 0) {
+		(void)fs_unlink(note_path);
+	}
+	return result;
+}
+
+void kfsw_ftp_partial_note_remove(const char *path)
+{
+	char note_path[KFSW_FTP_FULL_PATH_SIZE];
+
+	if (make_note_path(path, note_path, sizeof(note_path)) == 0) {
+		(void)fs_unlink(note_path);
+	}
+}
+
 int kfsw_ftp_commit_temporary(const char *path, const char *temporary_path, uint32_t actual_size,
 			      uint32_t actual_crc32, uint32_t expected_size,
 			      uint32_t expected_crc32)
@@ -93,6 +253,8 @@ int kfsw_ftp_commit_temporary(const char *path, const char *temporary_path, uint
 	if (result != 0) {
 		(void)fs_unlink(temporary_path);
 	}
+	/* The partial is gone either way, so its note describes nothing. */
+	kfsw_ftp_partial_note_remove(path);
 	return result;
 }
 

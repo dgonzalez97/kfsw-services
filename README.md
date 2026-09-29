@@ -178,13 +178,16 @@ expose sample files and firmware slots when enabled. Path traversal, empty
 components, backslashes, control characters and embedded NULs are rejected.
 
 A receiver writes a `.part` file, syncs it, checks it and then renames it over
-the final name. A failed transfer removes the partial file and leaves any
-existing file alone. The server handles one request at a time and answers
-`busy` to the rest.
+the final name. An existing file is left alone until the rename. The server
+handles one request at a time and answers `busy` to the rest.
 
-Version 1 has no resume, recursion, globbing, compression or encryption. The
-protocol is K-FSW's own and is not compatible with other FTP or TFTP
-implementations.
+An interrupted upload resumes by itself: the server keeps the partial, records
+the intended size and CRC32 in `<path>.part.map`, and tells the next upload of
+the same path where to start. A note that does not match the new request is
+ignored. The final check still covers the whole file.
+
+Version 1 has no recursion, globbing, compression or encryption. The protocol is
+K-FSW's own and is not compatible with other FTP or TFTP implementations.
 
 ## Housekeeping
 

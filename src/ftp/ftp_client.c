@@ -309,11 +309,17 @@ static int prepare_upload(const char *local_path, const char *remote_path,
 	request->path_size = remote_path_size;
 	request->total_size = transfer->total_size;
 	request->crc32 = transfer->crc32;
+	/* Ask to continue an interrupted upload of this same file. */
+	request->flags = KFSW_FTP_FLAG_RESUME;
 	return 0;
 }
 
-/* PUT_READY means the server opened its temporary file; PUT_RESULT means it refused. */
-static int await_put_ready(struct kfsw_ftp_link *link, uint32_t request_id)
+/*
+ * PUT_READY means the server opened its temporary file; PUT_RESULT means it
+ * refused. A ready reply also says where to start, which is non-zero when the
+ * server still holds a partial of this same file.
+ */
+static int await_put_ready(struct kfsw_ftp_link *link, struct kfsw_ftp_transfer *transfer)
 {
 	struct kfsw_ftp_link_frame frame;
 	int result = kfsw_ftp_link_receive(link, &frame);
@@ -321,7 +327,7 @@ static int await_put_ready(struct kfsw_ftp_link *link, uint32_t request_id)
 	if (result != 0) {
 		return result;
 	}
-	if ((frame.message.request_id != request_id) ||
+	if ((frame.message.request_id != transfer->request_id) ||
 	    ((frame.message.opcode != KFSW_FTP_OP_PUT_READY) &&
 	     (frame.message.opcode != KFSW_FTP_OP_PUT_RESULT))) {
 		result = -EBADMSG;
@@ -331,8 +337,27 @@ static int await_put_ready(struct kfsw_ftp_link *link, uint32_t request_id)
 			result = -EBADMSG;
 		}
 	}
+	if (result == 0) {
+		/* Past the end is nonsense; equal to it is an empty file, which has
+		 * nothing to send and still has to be created.
+		 */
+		if (frame.message.offset > transfer->total_size) {
+			result = -EBADMSG;
+		} else {
+			transfer->offset = frame.message.offset;
+		}
+	}
 	kfsw_ftp_link_release(&frame);
 	return result;
+}
+
+/* Skip what the server already holds. */
+static int seek_source_to_offset(struct kfsw_ftp_transfer *transfer)
+{
+	if (transfer->offset == 0U) {
+		return 0;
+	}
+	return fs_seek(&transfer->file, (off_t)transfer->offset, FS_SEEK_SET);
 }
 
 /* The peer echoes what it committed; a disagreement is an integrity failure. */
@@ -422,10 +447,13 @@ int kfsw_ftp_put(uint16_t node, const char *local_path, const char *remote_path,
 		result = kfsw_ftp_link_send(&link, &request);
 	}
 	if (result == 0) {
-		result = await_put_ready(&link, request.request_id);
+		result = await_put_ready(&link, &transfer);
 	}
 	if (result == 0) {
 		result = kfsw_ftp_transfer_open_source(&transfer, client_workspace.path);
+	}
+	if (result == 0) {
+		result = seek_source_to_offset(&transfer);
 	}
 	if (result == 0) {
 		result = kfsw_ftp_transfer_send(&transfer);
@@ -481,7 +509,8 @@ static int prepare_download(const char *remote_path, const char *local_path,
 					    sizeof(client_workspace.temporary_path));
 }
 
-/* GET_INFO carries the expected size and CRC; GET_RESULT means the server refused. */
+/* GET_INFO carries the expected size and CRC; GET_RESULT means the server
+ * refused. */
 static int await_get_info(struct kfsw_ftp_link *link, struct kfsw_ftp_transfer *transfer)
 {
 	struct kfsw_ftp_link_frame frame;

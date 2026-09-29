@@ -10,6 +10,8 @@
 
 #include <kfsw/platform/storage.h>
 #include <kfsw/services/ftp.h>
+#define KFSW_LOG_MODULE KFSW_LOG_MODULE_FTP
+#include <kfsw/services/log.h>
 
 #include "ftp_link.h"
 
@@ -55,6 +57,22 @@ static int send_status(struct kfsw_ftp_link *link, uint8_t opcode, uint32_t requ
 		.opcode = opcode,
 		.status = status,
 		.request_id = request_id,
+		.total_size = total_size,
+		.crc32 = crc32,
+	};
+
+	return kfsw_ftp_link_send(link, &response);
+}
+
+/* PUT_READY differs from a plain status by carrying where to start writing. */
+static int send_ready(struct kfsw_ftp_link *link, uint32_t request_id, uint32_t offset,
+		      uint32_t total_size, uint32_t crc32)
+{
+	const struct kfsw_ftp_message response = {
+		.opcode = KFSW_FTP_OP_PUT_READY,
+		.status = KFSW_FTP_STATUS_OK,
+		.request_id = request_id,
+		.offset = offset,
 		.total_size = total_size,
 		.crc32 = crc32,
 	};
@@ -167,7 +185,7 @@ static int serve_list(struct kfsw_ftp_link *link, const struct kfsw_ftp_message 
 			   0U);
 }
 
-static int prepare_upload_target(void)
+static int prepare_upload_target(struct kfsw_ftp_transfer *transfer, bool may_resume)
 {
 	struct fs_dirent entry;
 	int result;
@@ -185,6 +203,22 @@ static int prepare_upload_target(void)
 	if ((result != 0) && (result != -ENOENT)) {
 		return result;
 	}
+
+	if (may_resume) {
+		result = kfsw_ftp_partial_resume_point(server_workspace.path, &server_workspace,
+						       transfer->total_size, transfer->crc32,
+						       &transfer->offset, &transfer->actual_crc32);
+		if (result != 0) {
+			return result;
+		}
+	}
+	if (transfer->offset == 0U) {
+		/* A fresh partial needs its note before any data can be kept. */
+		return kfsw_ftp_partial_note_write(server_workspace.path, transfer->total_size,
+						   transfer->crc32);
+	}
+	kfsw_log_info("FTP: continuing %s at %u of %u bytes", server_workspace.path,
+		      transfer->offset, transfer->total_size);
 	return 0;
 }
 
@@ -200,8 +234,8 @@ static int serve_put(struct kfsw_ftp_link *link, const struct kfsw_ftp_message *
 	};
 	int result;
 
-	if ((request->data_size != 0U) || (request->status != 0U) || (request->flags != 0U) ||
-	    (request->offset != 0U)) {
+	if ((request->data_size != 0U) || (request->status != 0U) ||
+	    ((request->flags & (uint8_t)~KFSW_FTP_FLAG_RESUME) != 0U) || (request->offset != 0U)) {
 		result = -EBADMSG;
 	} else {
 		result = resolve_message_path(request, false);
@@ -219,7 +253,8 @@ static int serve_put(struct kfsw_ftp_link *link, const struct kfsw_ftp_message *
 #else
 	if (result == 0) {
 #endif
-		result = prepare_upload_target();
+		result = prepare_upload_target(&transfer,
+					       (request->flags & KFSW_FTP_FLAG_RESUME) != 0U);
 		if (result == 0) {
 			result = kfsw_ftp_transfer_open_sink(&transfer,
 							     server_workspace.temporary_path);
@@ -230,9 +265,11 @@ static int serve_put(struct kfsw_ftp_link *link, const struct kfsw_ftp_message *
 				   wire_status(result), 0U, 0U);
 	}
 
-	/* The temporary file exists from here on, so the client may start sending. */
-	result = send_status(link, KFSW_FTP_OP_PUT_READY, request->request_id, KFSW_FTP_STATUS_OK,
-			     request->total_size, request->crc32);
+	/* The temporary file exists from here on, so the client may start sending.
+	 * The offset tells the client where to pick up; zero means from the start.
+	 */
+	result = send_ready(link, request->request_id, transfer.offset, request->total_size,
+			    request->crc32);
 	if (result == 0) {
 		result = kfsw_ftp_transfer_receive(&transfer);
 	}
