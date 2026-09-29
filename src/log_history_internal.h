@@ -8,7 +8,7 @@
 
 /*
  * Where the reader picks up. Kept beside the records so a reset that preserves
- * RAM leaves a readable history rather than a ring of plausible garbage.
+ * RAM leaves a readable history instead of unvalidated bytes.
  */
 struct kfsw_log_retained_header {
 	uint32_t magic;

@@ -77,11 +77,9 @@ int kfsw_ftp_make_temporary_path(const char *path, char *temporary_path, size_t 
 }
 
 /*
- * A partial upload keeps a short note beside it saying what it is going to
- * become. Without that, continuing a partial left by a different version of the
- * same file would spend the whole transfer before the final CRC rejected it.
- * Chunks arrive strictly in order, so the note holds no chunk map: the
- * partial's own size is the resume point.
+ * A partial upload keeps a note beside it naming the file it will become, so a
+ * partial from a different version is not continued into this one. Chunks
+ * arrive in order, so the partial's own size is the resume point.
  */
 #define KFSW_FTP_PARTIAL_MAGIC 0x4B465450UL /* "KFTP" */
 #define KFSW_FTP_PARTIAL_VERSION 1U
@@ -150,8 +148,7 @@ int kfsw_ftp_partial_resume_point(const char *path, struct kfsw_ftp_workspace *w
 				  uint32_t total_size, uint32_t crc32, uint32_t *offset,
 				  uint32_t *partial_crc32)
 {
-	char note_path[KFSW_FTP_FULL_PATH_SIZE];
-	char partial_path[KFSW_FTP_FULL_PATH_SIZE];
+	char scratch[KFSW_FTP_FULL_PATH_SIZE];
 	struct partial_note note;
 	uint32_t partial_size;
 
@@ -161,19 +158,20 @@ int kfsw_ftp_partial_resume_point(const char *path, struct kfsw_ftp_workspace *w
 	*offset = 0U;
 	*partial_crc32 = 0U;
 
-	if ((make_note_path(path, note_path, sizeof(note_path)) != 0) ||
-	    (kfsw_ftp_make_temporary_path(path, partial_path, sizeof(partial_path)) != 0)) {
+	if (make_note_path(path, scratch, sizeof(scratch)) != 0) {
 		return 0;
 	}
-	if (read_note(note_path, &note) != 0) {
+	if (read_note(scratch, &note) != 0) {
 		return 0;
 	}
 	/* A note for a different file is no use, however far that upload got. */
 	if ((note.total_size != total_size) || (note.crc32 != crc32)) {
 		return 0;
 	}
-	if (kfsw_ftp_file_crc(partial_path, workspace, &partial_size, partial_crc32) != 0) {
-		*partial_crc32 = 0U;
+	if (kfsw_ftp_make_temporary_path(path, scratch, sizeof(scratch)) != 0) {
+		return 0;
+	}
+	if (kfsw_ftp_file_crc(scratch, workspace, &partial_size, partial_crc32) != 0) {
 		return 0;
 	}
 	/* Nothing to continue from an empty or already complete partial. */
@@ -209,10 +207,10 @@ int kfsw_ftp_partial_note_write(const char *path, uint32_t total_size, uint32_t 
 		return result;
 	}
 	written = fs_write(&file, &note, sizeof(note));
-	if ((written >= 0) && ((size_t)written != sizeof(note))) {
-		result = -EIO;
-	} else if (written < 0) {
+	if (written < 0) {
 		result = (int)written;
+	} else if ((size_t)written != sizeof(note)) {
+		result = -EIO;
 	}
 	if (result == 0) {
 		result = fs_sync(&file);

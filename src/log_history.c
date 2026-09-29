@@ -64,22 +64,6 @@ static void restore_once(void)
 	}
 }
 
-#if CONFIG_ZTEST
-uint32_t kfsw_log_history_header_crc(const struct kfsw_log_retained_header *retained)
-{
-	return header_crc(retained);
-}
-
-void kfsw_log_history_install_retained(const struct kfsw_log_retained_header *retained)
-{
-	k_spinlock_key_t key = k_spin_lock(&history_lock);
-
-	header = *retained;
-	restored = false;
-	k_spin_unlock(&history_lock, key);
-}
-#endif
-
 void kfsw_log_history_append(uint8_t module, uint8_t severity, const char *text, bool truncated)
 {
 	k_spinlock_key_t key = k_spin_lock(&history_lock);
@@ -143,3 +127,19 @@ int kfsw_log_history_get(uint64_t sequence, struct kfsw_log_record *record)
 	k_spin_unlock(&history_lock, key);
 	return 0;
 }
+
+#if CONFIG_ZTEST
+uint32_t kfsw_log_history_header_crc(const struct kfsw_log_retained_header *retained)
+{
+	return header_crc(retained);
+}
+
+void kfsw_log_history_install_retained(const struct kfsw_log_retained_header *retained)
+{
+	k_spinlock_key_t key = k_spin_lock(&history_lock);
+
+	header = *retained;
+	restored = false;
+	k_spin_unlock(&history_lock, key);
+}
+#endif
