@@ -47,6 +47,11 @@ The wire ID uses the table as its high byte and the offset as its low byte.
 Scalars, strings and byte arrays are supported. An array is always written and
 validated as a whole.
 
+Float and double parameters need `CONFIG_KFSW_PARAM_FLOAT`, on by default.
+Their formatting costs about 3.2 KB of flash, and 6.7 KB once the shell's own
+conversions go with it, so a composition with no float parameter can turn it
+off. Registering one with the option off is refused with `-ENOTSUP`.
+
 ### From the ground
 
 `CONFIG_KFSW_PARAM_CSP` adds remote access with the MIT-licensed

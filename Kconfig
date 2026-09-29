@@ -59,11 +59,20 @@ config KFSW_LOG_HISTORY_STACK_SIZE
 
 config KFSW_PARAM
 	bool "K-FSW parameter service"
-	select CBPRINTF_FP_SUPPORT
 	help
 	  Enable the local parameter tables and API. CSP is not needed.
 
 if KFSW_PARAM
+
+config KFSW_PARAM_FLOAT
+	bool "Allow float and double parameters"
+	default y
+	select CBPRINTF_FP_SUPPORT
+	help
+	  Float formatting costs about 3.2 KB of flash, which a composition with
+	  no float parameter is paying for nothing. With this off, registering a
+	  float or double parameter is refused and the shell reports the type as
+	  unsupported.
 
 config KFSW_PARAM_MAX_DEFINITIONS
 	int "Parameters the local table can hold"
