@@ -11,11 +11,11 @@
 #define LOG_REQUEST_SIZE 12U
 #define LOG_HEADER_SIZE 10U
 #define LOG_RECORD_HEADER_SIZE (LOG_HEADER_SIZE + 20U)
-/* Keep records within the 220-byte application payload of encrypted KISS. */
+/* A round number under what the encrypted link takes, leaving some margin. */
 #define LOG_WIRE_TEXT_MAX 190U
 
-BUILD_ASSERT(LOG_RECORD_HEADER_SIZE + LOG_WIRE_TEXT_MAX + 2U * sizeof(uint32_t) <= CSP_BUFFER_SIZE,
-	     "a log record must fit one CSP packet");
+BUILD_ASSERT(LOG_RECORD_HEADER_SIZE + LOG_WIRE_TEXT_MAX <= KFSW_CSP_PAYLOAD_MAX,
+	     "a log record must fit the tightest transport, not just a CSP buffer");
 
 static csp_socket_t log_socket;
 static bool running;
