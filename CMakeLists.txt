@@ -257,6 +257,7 @@ if(CONFIG_KFSW_HK)
     endif()
     if(CONFIG_KFSW_HK_STORE)
         list(APPEND kfsw_services_sources src/hk/hk_store.c)
+        list(APPEND kfsw_services_sources src/hk/hk_reader.c)
     endif()
 endif()
 

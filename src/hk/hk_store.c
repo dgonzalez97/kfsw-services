@@ -23,14 +23,6 @@
  * once every slot is used. The newest record is found from the sequence numbers
  * when the file is opened, so no header is rewritten on each write.
  */
-#define KFSW_HK_STORE_DIRECTORY KFSW_STORAGE_MOUNT_POINT "/hk"
-#define KFSW_HK_STORE_MAGIC "KHKS"
-#define KFSW_HK_STORE_MAGIC_SIZE 4U
-#define KFSW_HK_STORE_VERSION 1U
-
-/* magic 4, version 1, report 1, record size 2, capacity 4 */
-#define KFSW_HK_STORE_HEADER_SIZE 12U
-
 struct store_state {
 	uint32_t interval_ms;
 	uint16_t every_n;
@@ -41,7 +33,7 @@ struct store_state {
 
 static struct store_state stores[CONFIG_KFSW_HK_REPORTS];
 
-static void store_path(uint8_t report, char *out, size_t size)
+void kfsw_hk_store_path(uint8_t report, char *out, size_t size)
 {
 	(void)snprintf(out, size, KFSW_HK_STORE_DIRECTORY "/report%u.bin", report);
 }
@@ -99,7 +91,7 @@ static int create_file(uint8_t report, uint16_t record_size)
 	sys_put_be16(record_size, &header[6]);
 	sys_put_be32(CONFIG_KFSW_HK_STORE_CAPACITY, &header[8]);
 
-	store_path(report, path, sizeof(path));
+	kfsw_hk_store_path(report, path, sizeof(path));
 	fs_file_t_init(&file);
 	result = fs_open(&file, path, FS_O_CREATE | FS_O_WRITE | FS_O_TRUNC);
 	if (result != 0) {
@@ -205,7 +197,7 @@ void kfsw_hk_store_forget(uint8_t report)
 	stores[report].open = false;
 	stores[report].interval_ms = 0U;
 	stores[report].pending = 0U;
-	store_path(report, path, sizeof(path));
+	kfsw_hk_store_path(report, path, sizeof(path));
 	(void)fs_unlink(path);
 }
 
@@ -226,7 +218,7 @@ int kfsw_hk_store_flush(uint8_t report, uint16_t next_sequence)
 		return 0;
 	}
 
-	store_path(report, path, sizeof(path));
+	kfsw_hk_store_path(report, path, sizeof(path));
 	fs_file_t_init(&file);
 	result = fs_open(&file, path, FS_O_WRITE);
 	if (result != 0) {
@@ -277,7 +269,7 @@ int kfsw_hk_store_restore_prepare(uint8_t report, uint32_t interval_ms, uint32_t
 	if (interval_ms == 0U) {
 		return 0;
 	}
-	store_path(report, path, sizeof(path));
+	kfsw_hk_store_path(report, path, sizeof(path));
 	fs_file_t_init(&file);
 	result = fs_open(&file, path, FS_O_READ);
 	if (result == -ENOENT) {

@@ -2,6 +2,7 @@
 #define KFSW_HK_INTERNAL_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include <kfsw/services/hk.h>
@@ -90,6 +91,28 @@ int kfsw_hk_persist_load(void);
 #endif
 
 #if CONFIG_KFSW_HK_STORE
+/*
+ * The stored history on disk: a header, then one fixed-size slot per sequence
+ * number modulo the capacity. Both the writer and the reader need these.
+ *
+ *   0  magic "KHKS"
+ *   4  format version
+ *   5  report
+ *   6  record size
+ *   8  capacity
+ *
+ * A slot holds the report's frame unchanged, which carries its own version,
+ * report, sequence and collection time, so a slot identifies itself.
+ */
+#define KFSW_HK_STORE_DIRECTORY KFSW_HK_STORE_PATH
+#define KFSW_HK_STORE_MAGIC "KHKS"
+#define KFSW_HK_STORE_MAGIC_SIZE 4U
+#define KFSW_HK_STORE_VERSION 1U
+#define KFSW_HK_STORE_HEADER_SIZE 12U
+
+/** Path of a report's store file. */
+void kfsw_hk_store_path(uint8_t report, char *out, size_t size);
+
 int kfsw_hk_store_configure(uint8_t report, uint32_t interval_ms, uint32_t period_ms,
 			    uint16_t record_size);
 uint32_t kfsw_hk_store_interval(uint8_t report);
