@@ -10,8 +10,8 @@ if(CONFIG_KFSW_LOG_HISTORY_CSP)
     list(APPEND kfsw_services_sources src/log_history_csp.c)
 endif()
 
-# Atomic snapshot writes, shared by parameters and housekeeping.
-if(CONFIG_KFSW_PARAM_PERSISTENCE OR CONFIG_KFSW_HK_PERSISTENCE)
+# Atomic snapshot writes, shared by parameters, housekeeping and table dumps.
+if(CONFIG_KFSW_PARAM_PERSISTENCE OR CONFIG_KFSW_HK_PERSISTENCE OR CONFIG_KFSW_TABLE)
     list(APPEND kfsw_services_sources src/snapshot_file.c)
 endif()
 
@@ -65,8 +65,15 @@ message(STATUS "K-FSW image version: ${KFSW_IMAGE_VERSION}")
 if(CONFIG_KFSW_PARAM)
     list(APPEND kfsw_services_sources src/parameter/parameter.c)
     list(APPEND kfsw_services_sources src/param-parameters/param_table.c)
+    if(CONFIG_KFSW_PARAM_PERSISTENCE OR CONFIG_KFSW_TABLE)
+        list(APPEND kfsw_services_sources src/parameter/param_wire.c)
+    endif()
     if(CONFIG_KFSW_PARAM_PERSISTENCE)
         list(APPEND kfsw_services_sources src/parameter/parameter_persistence.c)
+    endif()
+    if(CONFIG_KFSW_TABLE)
+        list(APPEND kfsw_services_sources src/table/table.c)
+        list(APPEND kfsw_services_sources src/table-parameters/table_parameters.c)
     endif()
 endif()
 

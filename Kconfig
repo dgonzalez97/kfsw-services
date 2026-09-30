@@ -117,6 +117,29 @@ config KFSW_PARAM_PERSISTENCE
 	  Save persistent parameters in a versioned snapshot under /kfsw/params
 	  and restore them at boot.
 
+config KFSW_TABLE
+	bool "Parameter tables uploaded as files"
+	depends on KFSW_STORAGE
+	select CRC
+	help
+	  Replace one parameter table from a file, checked completely before any
+	  of it takes effect and undoable afterwards. The file is written on the
+	  ground and uploaded, so a configuration change during a pass is one
+	  transfer rather than a sequence of writes that can be interrupted
+	  half-applied.
+
+if KFSW_TABLE
+
+config KFSW_TABLE_MAX_ENTRIES
+	int "Entries one table file may carry"
+	default 16
+	range 1 255
+	help
+	  Sets the read buffer and the number of replaced values kept for a
+	  revert, so it costs RAM whether or not a file is ever loaded.
+
+endif # KFSW_TABLE
+
 endif # KFSW_PARAM
 
 config KFSW_PARAM_CSP
