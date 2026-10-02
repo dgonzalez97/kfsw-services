@@ -341,8 +341,7 @@ target_link_libraries(kfsw_services
         kernel
 )
 
-if(CONFIG_KFSW_LOG_HISTORY_CSP OR CONFIG_KFSW_PARAM_CSP OR CONFIG_KFSW_FTP OR CONFIG_KFSW_COMMAND_CSP
-   OR CONFIG_KFSW_FWU_LITE_CSP OR CONFIG_KFSW_HK_CSP OR ((CONFIG_KFSW_FBO OR CONFIG_KFSW_JOURNAL) AND CONFIG_KFSW_CSP))
+if(CONFIG_KFSW_CSP)
     target_link_libraries(kfsw_services
         PRIVATE
             kfsw::comms

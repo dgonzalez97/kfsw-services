@@ -14,7 +14,7 @@ extern "C" {
 #endif
 
 /**
- * @defgroup kfsw_services_fwu K-FSW firmware update
+ * @defgroup kfsw_services_fwu Firmware update
  * @ingroup kfsw_services
  *
  * Receives a firmware image into the secondary image slot and asks the

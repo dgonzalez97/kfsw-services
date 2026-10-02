@@ -13,6 +13,9 @@
 #if CONFIG_KFSW_PARAM
 #include <kfsw/services/parameter.h>
 #endif
+#if CONFIG_KFSW_CSP
+#include <csp/csp_debug.h>
+#endif
 
 #define KFSW_LOG_MESSAGE_SIZE 192U
 
@@ -276,6 +279,27 @@ static void kfsw_log_vwrite(uint8_t module, uint8_t severity, const char *level,
 }
 #endif
 
+void kfsw_log_write_marker(uint8_t module, const char *format, ...)
+{
+	char message[KFSW_LOG_MESSAGE_SIZE];
+	va_list args;
+	int length;
+
+	va_start(args, format);
+	length = vsnprintk(message, sizeof(message), format, args);
+	va_end(args);
+
+	(void)atomic_inc(&kfsw_log_emitted);
+#if CONFIG_KFSW_LOG_HISTORY
+	kfsw_log_history_append(module, 1U, message,
+				(length < 0) || ((size_t)length >= sizeof(message)));
+#else
+	ARG_UNUSED(module);
+	ARG_UNUSED(length);
+#endif
+	printk("%s\n", message);
+}
+
 #if CONFIG_KFSW_LOG_MIN_LEVEL < 4
 /*
  * Called by the macros in the header.
@@ -291,5 +315,48 @@ void kfsw_log_write(uint8_t module, uint8_t severity, const char *format, ...)
 	va_start(args, format);
 	kfsw_log_vwrite(module, severity, names[severity], format, args);
 	va_end(args);
+}
+#endif
+
+#if CONFIG_KFSW_CSP && (CONFIG_KFSW_LOG_MIN_LEVEL <= 1)
+/* libcsp ends each line itself and colours it; the log does both its own way. */
+static void strip_line_formatting(char *text)
+{
+	size_t read = 0U;
+	size_t write = 0U;
+
+	while (text[read] != '\0') {
+		if ((text[read] == '\n') || (text[read] == '\r')) {
+			read++;
+			continue;
+		}
+		if (text[read] != '\033') {
+			text[write++] = text[read++];
+			continue;
+		}
+		while ((text[read] != '\0') && (text[read] != 'm')) {
+			read++;
+		}
+		if (text[read] == 'm') {
+			read++;
+		}
+	}
+	text[write] = '\0';
+}
+
+/* libcsp prints its packet trace (csp debug on) through this hook. */
+void csp_print_func(const char *fmt, ...)
+{
+	char line[KFSW_LOG_MESSAGE_SIZE];
+	va_list args;
+
+	va_start(args, fmt);
+	(void)vsnprintk(line, sizeof(line), fmt, args);
+	va_end(args);
+
+	strip_line_formatting(line);
+	if (line[0] != '\0') {
+		kfsw_log_write(KFSW_LOG_MODULE_CSP, 1U, "%s", line);
+	}
 }
 #endif

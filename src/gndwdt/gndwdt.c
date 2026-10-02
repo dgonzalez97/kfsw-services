@@ -8,6 +8,10 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/reboot.h>
 
+#if CONFIG_KFSW_COMMAND_CSP
+#include <csp/csp_iflist.h>
+#endif
+
 #include <kfsw/platform/time.h>
 #include <kfsw/services/gndwdt.h>
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_HEALTH
@@ -105,7 +109,7 @@ static int ground_wtd(const struct kfsw_command_arg *args, size_t arg_count,
 		return 0;
 	}
 
-	if (!source->via_csp || strcmp(args[0].value.text, "KFSWWSFK") != 0) {
+	if (!source->via_csp || strcmp(args[0].value.text, KFSW_GNDWDT_FEED_WORD) != 0) {
 		result->status = KFSW_COMMAND_DENIED;
 		return -EACCES;
 	}
@@ -122,12 +126,7 @@ static int ground_wtd(const struct kfsw_command_arg *args, size_t arg_count,
 		contacts++;
 	}
 	k_mutex_unlock(&gndwdt_lock);
-#if CONFIG_KFSW_PARAM
 	ground_wtd_reply(result);
-#else
-	result->status = KFSW_COMMAND_OK;
-	(void)snprintf(result->detail, sizeof(result->detail), "ground_wtd restarted");
-#endif
 	return 0;
 }
 
@@ -148,6 +147,21 @@ const struct kfsw_command_definition_set kfsw_gndwdt_command_definitions = {
 	.commands = ground_wtd_commands,
 	.count = ARRAY_SIZE(ground_wtd_commands),
 };
+
+#if CONFIG_KFSW_COMMAND_CSP
+int kfsw_gndwdt_remote(uint16_t node, bool feed, struct kfsw_command_result *result)
+{
+	struct kfsw_command_arg arg = {
+		.type = KFSW_COMMAND_TYPE_TEXT,
+		.value.text = feed ? KFSW_GNDWDT_FEED_WORD : "get",
+	};
+
+	if ((node == 0U) || (result == NULL) || (csp_iflist_get_by_addr(node) != NULL)) {
+		return -EINVAL;
+	}
+	return kfsw_command_invoke_remote(node, "ground_wtd", &arg, 1U, result);
+}
+#endif
 
 int kfsw_gndwdt_evaluate(void)
 {

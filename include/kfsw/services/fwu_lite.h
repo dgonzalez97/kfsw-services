@@ -10,7 +10,7 @@ extern "C" {
 #endif
 
 /**
- * @defgroup kfsw_services_fwu_lite K-FSW lightweight firmware upload
+ * @defgroup kfsw_services_fwu_lite Lightweight firmware upload
  * @ingroup kfsw_services
  *
  * Uploads firmware in checksummed blocks over CSP, with retries. It shares
