@@ -68,6 +68,18 @@ int kfsw_log_set_module_level(enum kfsw_log_module module, uint8_t level);
 void kfsw_log_write(uint8_t module, uint8_t severity, const char *format, ...)
 	KFSW_LOG_PRINTF_LIKE(3, 4);
 
+/**
+ * @brief Write a marker that scripts look for, such as `@READY`.
+ *
+ * No level hides a marker. It is kept in the history like any message and
+ * printed without a level tag or colour, so the line starts with the marker.
+ * Called through kfsw_log_marker(), not directly.
+ */
+void kfsw_log_write_marker(uint8_t module, const char *format, ...) KFSW_LOG_PRINTF_LIKE(2, 3);
+
+/** Write a marker under the calling file's KFSW_LOG_MODULE. */
+#define kfsw_log_marker(...) kfsw_log_write_marker(KFSW_LOG_MODULE, __VA_ARGS__)
+
 /** Set the runtime minimum log level (0 DEBUG through 4 disabled). */
 int kfsw_log_set_level(uint8_t level);
 

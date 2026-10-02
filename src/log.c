@@ -276,6 +276,27 @@ static void kfsw_log_vwrite(uint8_t module, uint8_t severity, const char *level,
 }
 #endif
 
+void kfsw_log_write_marker(uint8_t module, const char *format, ...)
+{
+	char message[KFSW_LOG_MESSAGE_SIZE];
+	va_list args;
+	int length;
+
+	va_start(args, format);
+	length = vsnprintk(message, sizeof(message), format, args);
+	va_end(args);
+
+	(void)atomic_inc(&kfsw_log_emitted);
+#if CONFIG_KFSW_LOG_HISTORY
+	kfsw_log_history_append(module, 1U, message,
+				(length < 0) || ((size_t)length >= sizeof(message)));
+#else
+	ARG_UNUSED(module);
+	ARG_UNUSED(length);
+#endif
+	printk("%s\n", message);
+}
+
 #if CONFIG_KFSW_LOG_MIN_LEVEL < 4
 /*
  * Called by the macros in the header.
