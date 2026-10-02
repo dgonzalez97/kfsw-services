@@ -8,6 +8,7 @@
 #include <zephyr/sys/util.h>
 
 #if CONFIG_KFSW_CSP
+#include <csp/csp_iflist.h>
 #include <kfsw/comms/csp.h>
 #endif
 #include <kfsw/services/hk.h>
@@ -242,13 +243,28 @@ int kfsw_hk_prepare_definition(uint8_t report, const struct kfsw_hk_entry *entri
 
 static int clear_impl(uint8_t report);
 
-static int define_impl(uint8_t report, const struct kfsw_hk_entry *entries, size_t count)
+/* An entry may name this node by its address; it is read locally all the same. */
+static void name_local_entries(const struct kfsw_hk_entry *entries, size_t count,
+			       struct kfsw_hk_entry *named)
+{
+	for (size_t index = 0U; index < count; index++) {
+		named[index] = entries[index];
+#if CONFIG_KFSW_CSP
+		if (csp_iflist_get_by_addr(named[index].node) != NULL) {
+			named[index].node = KFSW_HK_NODE_LOCAL;
+		}
+#endif
+	}
+}
+
+static int define_impl(uint8_t report, const struct kfsw_hk_entry *requested, size_t count)
 {
 	struct kfsw_hk_report *target = kfsw_hk_report_at(report);
+	struct kfsw_hk_entry entries[CONFIG_KFSW_HK_ENTRIES];
 	struct kfsw_hk_definition definition;
 	int result;
 
-	if (target == NULL || entries == NULL) {
+	if (target == NULL || requested == NULL) {
 		return -EINVAL;
 	}
 	if (count == 0U) {
@@ -257,6 +273,7 @@ static int define_impl(uint8_t report, const struct kfsw_hk_entry *entries, size
 	if (count > CONFIG_KFSW_HK_ENTRIES) {
 		return -E2BIG;
 	}
+	name_local_entries(requested, count, entries);
 	result = kfsw_hk_prepare_definition(report, entries, count, &definition);
 	if (result != 0) {
 		return result;
