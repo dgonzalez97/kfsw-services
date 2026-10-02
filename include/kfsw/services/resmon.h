@@ -13,7 +13,7 @@ extern "C" {
 #endif
 
 /**
- * @defgroup kfsw_services_resmon K-FSW resource monitor
+ * @defgroup kfsw_services_resmon Resource monitor
  * @ingroup kfsw_services
  *
  * Reports stack use and unused bytes for each thread. Sampling uses the

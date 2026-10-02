@@ -15,7 +15,7 @@ extern "C" {
 #endif
 
 /**
- * @defgroup kfsw_services_gndwdt K-FSW ground watchdog
+ * @defgroup kfsw_services_gndwdt Ground watchdog
  * @ingroup kfsw_services
  *
  * Resets the node if no valid ground_wtd CSP feed arrives before the timeout.
