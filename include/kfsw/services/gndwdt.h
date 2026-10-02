@@ -67,6 +67,9 @@ int kfsw_gndwdt_stop(void);
 /** Stable wire ID for ground_wtd, with one text argument: KFSWWSFK or get. */
 #define KFSW_COMMAND_ID_GROUND_WTD 16U
 
+/** The ground_wtd argument that feeds; anything else except get is refused. */
+#define KFSW_GNDWDT_FEED_WORD "KFSWWSFK"
+
 /** Register this set on both the flight node and its command clients. */
 extern const struct kfsw_command_definition_set kfsw_gndwdt_command_definitions;
 
@@ -93,6 +96,24 @@ int kfsw_gndwdt_set_timeout_s(uint32_t timeout_s);
 
 /** Turn the timer on or off. Changing this does not restart the countdown. */
 void kfsw_gndwdt_set_enabled(bool enabled);
+
+#if CONFIG_KFSW_COMMAND_CSP
+/**
+ * @brief Feed another node's ground watchdog over CSP, or only read it.
+ *
+ * Sends ground_wtd to @p node. The reply detail carries the countdown and the
+ * timeout. A node never feeds itself: the watchdog is there to prove that
+ * somebody else still talks to it.
+ *
+ * @param node Node to reach.
+ * @param feed true to feed, false to read without feeding.
+ * @param result Filled with the node's reply.
+ * @retval 0 The node replied; @p result->status says how.
+ * @retval -EINVAL @p node is zero or one of this node's addresses, or @p result is NULL.
+ * @retval other Transport error from the command service.
+ */
+int kfsw_gndwdt_remote(uint16_t node, bool feed, struct kfsw_command_result *result);
+#endif
 
 #if CONFIG_KFSW_PARAM
 /** Parameter table 35. */
