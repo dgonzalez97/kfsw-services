@@ -112,7 +112,7 @@ run to completion, and commands that change something are marked as mutating.
 Legacy calls send one request and wait for one result. Resending is a new
 operation, so inspect the node after a timeout before trying again.
 
-`KFSW_COMMAND_RETRY` adds ticket reservations and cached results. `cmd retry`
+`KFSW_COMMAND_RETRY` adds ticket reservations and cached results. A ticketed call
 reuses one ticket within an invocation; a new invocation is a new operation.
 Tickets expire and are lost on reset. A lost reply can still leave the outcome
 unknown.
