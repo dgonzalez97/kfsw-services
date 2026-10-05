@@ -307,6 +307,7 @@ int kfsw_ftp_local_list(const char *virtual_path, struct kfsw_ftp_workspace *wor
 {
 	struct fs_dir_t directory;
 	struct fs_dirent entry;
+	bool listing_root;
 	int close_result;
 	int result;
 
@@ -318,6 +319,7 @@ int kfsw_ftp_local_list(const char *virtual_path, struct kfsw_ftp_workspace *wor
 	if (result != 0) {
 		return result;
 	}
+	listing_root = strcmp(workspace->path, KFSW_FTP_ROOT_PATH) == 0;
 	fs_dir_t_init(&directory);
 	result = fs_opendir(&directory, workspace->path);
 	if (result != 0) {
@@ -343,9 +345,16 @@ int kfsw_ftp_local_list(const char *virtual_path, struct kfsw_ftp_workspace *wor
 								: KFSW_FTP_ENTRY_FILE;
 		visited.size = (entry.type == FS_DIR_ENTRY_FILE) ? (uint32_t)entry.size : 0U;
 		if (!visitor(&visited, context)) {
+			listing_root = false;
 			break;
 		}
 	}
 	close_result = fs_closedir(&directory);
-	return (result != 0) ? result : close_result;
+	if (result != 0) {
+		return result;
+	}
+	if ((close_result == 0) && listing_root) {
+		(void)kfsw_ftp_list_read_only_roots(visitor, context);
+	}
+	return close_result;
 }

@@ -4,7 +4,9 @@
 #include <stdint.h>
 #include <string.h>
 
+#include <zephyr/fs/fs.h>
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/util.h>
 
 #include "ftp_internal.h"
 
@@ -120,7 +122,7 @@ static int read_only_root(const char *virtual_path)
 	if (relative[0] == '/') {
 		relative++;
 	}
-	for (size_t i = 0U; i < sizeof(read_only_roots) / sizeof(read_only_roots[0]); i++) {
+	for (size_t i = 0U; i < ARRAY_SIZE(read_only_roots); i++) {
 		size_t size = strlen(read_only_roots[i].prefix);
 
 		if ((strncmp(relative, read_only_roots[i].prefix, size) == 0) &&
@@ -134,6 +136,25 @@ static int read_only_root(const char *virtual_path)
 bool kfsw_ftp_path_is_read_only(const char *virtual_path)
 {
 	return read_only_root(virtual_path) >= 0;
+}
+
+bool kfsw_ftp_list_read_only_roots(kfsw_ftp_list_visitor_t visitor, void *context)
+{
+	for (size_t i = 0U; i < ARRAY_SIZE(read_only_roots); i++) {
+		const struct kfsw_ftp_entry entry = {
+			.name = read_only_roots[i].prefix,
+			.type = KFSW_FTP_ENTRY_DIRECTORY,
+		};
+		struct fs_dirent mounted;
+
+		if (fs_stat(read_only_roots[i].root, &mounted) != 0) {
+			continue;
+		}
+		if (!visitor(&entry, context)) {
+			return false;
+		}
+	}
+	return true;
 }
 
 int kfsw_ftp_resolve_write_path(const char *virtual_path, char *resolved, size_t resolved_size)

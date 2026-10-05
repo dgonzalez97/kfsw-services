@@ -118,6 +118,12 @@ int kfsw_ftp_protocol_decode(const uint8_t *buffer, size_t size, struct kfsw_ftp
 
 bool kfsw_ftp_path_is_read_only(const char *virtual_path);
 
+/**
+ * Visit each read-only root that exists as a directory, so a listing of the FTP
+ * root shows them. Returns false when the visitor stopped.
+ */
+bool kfsw_ftp_list_read_only_roots(kfsw_ftp_list_visitor_t visitor, void *context);
+
 /** Resolve a path a caller intends to write, refusing the read-only root. */
 int kfsw_ftp_resolve_write_path(const char *virtual_path, char *resolved, size_t resolved_size);
 
