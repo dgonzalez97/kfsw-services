@@ -22,7 +22,7 @@
 
 #include "fbo_internal.h"
 
-#define KFSW_FBO_DIRECTORY KFSW_FTP_STORAGE_ROOT "/procedures"
+#define KFSW_FBO_DIRECTORY KFSW_FTP_STORAGE_ROOT "/" KFSW_FBO_FTP_PATH
 
 /* Events recorded by this service. */
 #define KFSW_FBO_EVENT_STARTED 1U
