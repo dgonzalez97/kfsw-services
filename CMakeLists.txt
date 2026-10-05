@@ -6,8 +6,8 @@ set(kfsw_services_sources
 if(CONFIG_KFSW_LOG_HISTORY)
     list(APPEND kfsw_services_sources src/log_history.c)
 endif()
-if(CONFIG_KFSW_LOG_HISTORY_CSP)
-    list(APPEND kfsw_services_sources src/log_history_csp.c)
+if(CONFIG_KFSW_LOG_REMOTE)
+    list(APPEND kfsw_services_sources src/log_remote.c)
 endif()
 
 # Atomic snapshot writes, shared by parameters, housekeeping and table dumps.

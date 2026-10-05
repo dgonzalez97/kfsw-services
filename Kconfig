@@ -39,23 +39,37 @@ config KFSW_LOG_HISTORY_RETAINED
 	  is validated on first use and starts clean when it does not belong to
 	  the running image. Turn this off for a ring that always starts empty.
 
-config KFSW_LOG_HISTORY_CSP
-	bool "Read log history over CSP"
+config KFSW_LOG_REMOTE
+	bool "Remote log: serve the log history and the journal over CSP"
 	depends on KFSW_LOG_HISTORY && KFSW_CSP
 	help
-	  Serve bounded, non-destructive reads with CRC32 on a dedicated port.
+	  Another node reads this node's recent log messages, and its journal
+	  when CONFIG_KFSW_JOURNAL is set, with bounded, non-destructive reads
+	  and CRC32 on a dedicated port. The log_remote_format parameter picks
+	  how messages travel: text, or dictionary (a cbprintf package that a
+	  host decodes with the image's ELF).
 
-config KFSW_LOG_HISTORY_PORT
-	int "CSP log history port"
-	depends on KFSW_LOG_HISTORY_CSP
+config KFSW_LOG_REMOTE_PORT
+	int "Remote log CSP port"
+	depends on KFSW_LOG_REMOTE
 	range 1 CSP_PORT_MAX_BIND
 	default 16
 
-config KFSW_LOG_HISTORY_STACK_SIZE
-	int "Log history server stack"
-	depends on KFSW_LOG_HISTORY_CSP
+config KFSW_LOG_REMOTE_STACK_SIZE
+	int "Remote log server stack"
+	depends on KFSW_LOG_REMOTE
 	range 1024 8192
-	default 1536
+	default 2048
+	help
+	  Formats one record at a time, so text needs a record and its package.
+
+config KFSW_LOG_REMOTE_TIMEOUT_MS
+	int "Wait for each remote log reply, in milliseconds"
+	depends on KFSW_LOG_REMOTE
+	range 500 120000
+	default 3000
+	help
+	  Raise it on a slow radio link.
 
 config KFSW_PARAM
 	bool "K-FSW parameter service"

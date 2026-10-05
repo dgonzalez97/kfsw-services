@@ -10,6 +10,9 @@
 #if CONFIG_KFSW_LOG_HISTORY
 #include "log_history_internal.h"
 #endif
+#if CONFIG_KFSW_LOG_REMOTE
+#include <kfsw/services/log_remote.h>
+#endif
 #if CONFIG_KFSW_PARAM
 #include <kfsw/services/parameter.h>
 #endif
@@ -65,6 +68,25 @@ static uint8_t kfsw_log_color_value = IS_ENABLED(CONFIG_KFSW_LOG_COLOR);
 static atomic_t kfsw_log_emitted;
 static atomic_t kfsw_log_dropped;
 
+#if CONFIG_KFSW_LOG_REMOTE
+/* Read by the remote log server for each read; a parameter when PARAM is built. */
+static uint8_t kfsw_log_remote_format_value = KFSW_LOG_REMOTE_TEXT;
+
+uint8_t kfsw_log_remote_format(void)
+{
+	return kfsw_log_remote_format_value;
+}
+
+int kfsw_log_remote_set_format(uint8_t format)
+{
+	if (format > KFSW_LOG_REMOTE_DICTIONARY) {
+		return -ERANGE;
+	}
+	kfsw_log_remote_format_value = format;
+	return 0;
+}
+#endif
+
 #if CONFIG_KFSW_PARAM
 static uint8_t kfsw_log_param_value = CONFIG_KFSW_LOG_MIN_LEVEL;
 
@@ -104,6 +126,13 @@ static int validate_log_color(const union kfsw_param_scalar *value)
 {
 	return (value->u8 > 1U) ? -ERANGE : 0;
 }
+
+#if CONFIG_KFSW_LOG_REMOTE
+static int validate_remote_format(const union kfsw_param_scalar *value)
+{
+	return (value->u8 > KFSW_LOG_REMOTE_DICTIONARY) ? -ERANGE : 0;
+}
+#endif
 
 static uint8_t kfsw_log_levels_value[KFSW_LOG_MODULE_COUNT];
 
@@ -188,6 +217,19 @@ static const struct kfsw_param_definition log_param_definitions[] = {
 		.default_value = {.u8 = IS_ENABLED(CONFIG_KFSW_LOG_COLOR)},
 		.validate = validate_log_color,
 	},
+#if CONFIG_KFSW_LOG_REMOTE
+	{
+		.offset = 0x20U,
+		.type = KFSW_PARAM_U8,
+		.flags = KFSW_PARAM_FLAG_CONFIGURATION | KFSW_PARAM_FLAG_PERSISTENT |
+			 KFSW_PARAM_FLAG_LIVE,
+		.name = "log_remote_format",
+		.description = "How log remote sends messages: 0 text, 1 dictionary",
+		.value = &kfsw_log_remote_format_value,
+		.default_value = {.u8 = KFSW_LOG_REMOTE_TEXT},
+		.validate = validate_remote_format,
+	},
+#endif
 };
 
 const struct kfsw_param_definition_set kfsw_log_param_definitions = {
