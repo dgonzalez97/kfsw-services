@@ -132,6 +132,8 @@ int kfsw_ftp_copy_message_path(const struct kfsw_ftp_message *message, char *pat
 			       size_t path_size);
 
 /* Local storage below the FTP root. */
+/** -ENOSPC unless the volume holding path has bytes plus the margin free. */
+int kfsw_ftp_check_space(const char *path, uint32_t bytes);
 int kfsw_ftp_file_crc(const char *path, struct kfsw_ftp_workspace *workspace, uint32_t *file_size,
 		      uint32_t *crc32);
 int kfsw_ftp_make_temporary_path(const char *path, char *temporary_path,

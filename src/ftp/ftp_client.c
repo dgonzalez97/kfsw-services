@@ -576,6 +576,10 @@ int kfsw_ftp_get(uint16_t node, const char *remote_path, const char *local_path,
 		result = await_get_info(&link, &transfer);
 	}
 	if (result == 0) {
+		result = kfsw_ftp_check_space(client_workspace.path,
+					      transfer.total_size - transfer.offset);
+	}
+	if (result == 0) {
 		result = kfsw_ftp_transfer_open_sink(&transfer, client_workspace.temporary_path);
 	}
 	if (result == 0) {

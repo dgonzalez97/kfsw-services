@@ -212,6 +212,12 @@ static int prepare_upload_target(struct kfsw_ftp_transfer *transfer, bool may_re
 			return result;
 		}
 	}
+	/* Refused before the note, so a refused upload leaves nothing behind. */
+	result = kfsw_ftp_check_space(server_workspace.path,
+				      transfer->total_size - transfer->offset);
+	if (result != 0) {
+		return result;
+	}
 	if (transfer->offset == 0U) {
 		/* A fresh partial needs its note before any data can be kept. */
 		return kfsw_ftp_partial_note_write(server_workspace.path, transfer->total_size,

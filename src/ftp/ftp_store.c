@@ -58,6 +58,21 @@ int kfsw_ftp_file_crc(const char *path, struct kfsw_ftp_workspace *workspace, ui
 	return result;
 }
 
+int kfsw_ftp_check_space(const char *path, uint32_t bytes)
+{
+	struct fs_statvfs volume;
+	int result = fs_statvfs(path, &volume);
+
+	if (result != 0) {
+		return result;
+	}
+	if ((uint64_t)volume.f_bfree * volume.f_frsize <
+	    (uint64_t)bytes + CONFIG_KFSW_FTP_SPACE_MARGIN_BYTES) {
+		return -ENOSPC;
+	}
+	return 0;
+}
+
 int kfsw_ftp_make_temporary_path(const char *path, char *temporary_path, size_t temporary_path_size)
 {
 	static const char suffix[] = ".part";

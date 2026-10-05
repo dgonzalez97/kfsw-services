@@ -270,6 +270,14 @@ config KFSW_FTP_ACCEPTOR_PRIORITY
 	int "File transfer acceptor thread priority"
 	default 2
 
+config KFSW_FTP_SPACE_MARGIN_BYTES
+	int "Free space an upload or download must leave, in bytes"
+	range 0 65536
+	default 4096
+	help
+	  A transfer that would leave less free space on its volume is refused
+	  before any data moves, instead of failing part way through.
+
 endif # KFSW_FTP
 
 config KFSW_EVENT
