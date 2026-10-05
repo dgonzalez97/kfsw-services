@@ -8,6 +8,8 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/util.h>
 
+#include <kfsw/platform/storage.h>
+
 #include "ftp_internal.h"
 
 int kfsw_ftp_protocol_encode(uint8_t *buffer, size_t capacity,
@@ -107,12 +109,16 @@ int kfsw_ftp_copy_message_path(const struct kfsw_ftp_message *message, char *pat
 static const struct {
 	const char *prefix;
 	const char *root;
-} read_only_roots[] = {
-	{KFSW_FTP_READONLY_PREFIX, KFSW_FTP_READONLY_ROOT},
-	{"boot", "/kfsw/boot"},
+	bool writable;
+} extra_roots[] = {
+	{KFSW_FTP_HK_PATH, KFSW_FTP_READONLY_ROOT, false},
+	{KFSW_FTP_BOOT_PATH, "/kfsw/boot", false},
+#if CONFIG_KFSW_STORAGE_TMP
+	{KFSW_FTP_TMP_PATH, KFSW_STORAGE_TMP_MOUNT_POINT, true},
+#endif
 };
 
-static int read_only_root(const char *virtual_path)
+static int extra_root(const char *virtual_path)
 {
 	const char *relative = virtual_path;
 
@@ -122,10 +128,10 @@ static int read_only_root(const char *virtual_path)
 	if (relative[0] == '/') {
 		relative++;
 	}
-	for (size_t i = 0U; i < ARRAY_SIZE(read_only_roots); i++) {
-		size_t size = strlen(read_only_roots[i].prefix);
+	for (size_t i = 0U; i < ARRAY_SIZE(extra_roots); i++) {
+		size_t size = strlen(extra_roots[i].prefix);
 
-		if ((strncmp(relative, read_only_roots[i].prefix, size) == 0) &&
+		if ((strncmp(relative, extra_roots[i].prefix, size) == 0) &&
 		    ((relative[size] == '\0') || (relative[size] == '/'))) {
 			return (int)i;
 		}
@@ -135,19 +141,21 @@ static int read_only_root(const char *virtual_path)
 
 bool kfsw_ftp_path_is_read_only(const char *virtual_path)
 {
-	return read_only_root(virtual_path) >= 0;
+	const int selected = extra_root(virtual_path);
+
+	return (selected >= 0) && !extra_roots[selected].writable;
 }
 
-bool kfsw_ftp_list_read_only_roots(kfsw_ftp_list_visitor_t visitor, void *context)
+bool kfsw_ftp_list_roots(kfsw_ftp_list_visitor_t visitor, void *context)
 {
-	for (size_t i = 0U; i < ARRAY_SIZE(read_only_roots); i++) {
+	for (size_t i = 0U; i < ARRAY_SIZE(extra_roots); i++) {
 		const struct kfsw_ftp_entry entry = {
-			.name = read_only_roots[i].prefix,
+			.name = extra_roots[i].prefix,
 			.type = KFSW_FTP_ENTRY_DIRECTORY,
 		};
 		struct fs_dirent mounted;
 
-		if (fs_stat(read_only_roots[i].root, &mounted) != 0) {
+		if (fs_stat(extra_roots[i].root, &mounted) != 0) {
 			continue;
 		}
 		if (!visitor(&entry, context)) {
@@ -188,11 +196,11 @@ int kfsw_ftp_resolve_path(const char *virtual_path, bool allow_root, char *resol
 		relative++;
 		relative_size--;
 	}
-	selected = read_only_root(virtual_path);
+	selected = extra_root(virtual_path);
 	if (selected >= 0) {
-		const size_t selector = strlen(read_only_roots[selected].prefix);
+		const size_t selector = strlen(extra_roots[selected].prefix);
 
-		root = read_only_roots[selected].root;
+		root = extra_roots[selected].root;
 		root_size = strlen(root);
 		relative += selector;
 		relative_size -= selector;

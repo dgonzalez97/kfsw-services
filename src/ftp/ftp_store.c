@@ -354,7 +354,7 @@ int kfsw_ftp_local_list(const char *virtual_path, struct kfsw_ftp_workspace *wor
 		return result;
 	}
 	if ((close_result == 0) && listing_root) {
-		(void)kfsw_ftp_list_read_only_roots(visitor, context);
+		(void)kfsw_ftp_list_roots(visitor, context);
 	}
 	return close_result;
 }
