@@ -193,6 +193,7 @@ static const struct kfsw_param_definition log_param_definitions[] = {
 const struct kfsw_param_definition_set kfsw_log_param_definitions = {
 	.table = KFSW_LOG_PARAM_TABLE_ID,
 	.name = KFSW_LOG_PARAM_TABLE_NAME,
+	.description = "Log levels, colour and counters",
 	.definitions = log_param_definitions,
 	.count = ARRAY_SIZE(log_param_definitions),
 };

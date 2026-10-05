@@ -167,6 +167,7 @@ static const struct kfsw_param_definition param_param_definitions[] = {
 const struct kfsw_param_definition_set kfsw_param_param_definitions = {
 	.table = KFSW_PARAM_PARAM_TABLE_ID,
 	.name = KFSW_PARAM_PARAM_TABLE_NAME,
+	.description = "Parameter counts and snapshot saves",
 	.definitions = param_param_definitions,
 	.count = ARRAY_SIZE(param_param_definitions),
 };

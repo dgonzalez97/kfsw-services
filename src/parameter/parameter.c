@@ -394,6 +394,7 @@ static int add_table(const struct kfsw_param_definition_set *set)
 	parameter_tables[insert_at] = (struct kfsw_param_table_info){
 		.id = set->table,
 		.name = set->name,
+		.description = set->description,
 		.count = 0U,
 	};
 	table_count++;

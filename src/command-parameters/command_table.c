@@ -155,6 +155,7 @@ static const struct kfsw_param_definition command_param_definitions[] = {
 const struct kfsw_param_definition_set kfsw_command_param_definitions = {
 	.table = KFSW_COMMAND_PARAM_TABLE_ID,
 	.name = KFSW_COMMAND_PARAM_TABLE_NAME,
+	.description = "Command counters, timeout and echo",
 	.definitions = command_param_definitions,
 	.count = ARRAY_SIZE(command_param_definitions),
 };
