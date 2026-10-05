@@ -1,10 +1,12 @@
 #ifndef KFSW_LOG_HISTORY_INTERNAL_H
 #define KFSW_LOG_HISTORY_INTERNAL_H
 
+#include <stdarg.h>
+
 #include <kfsw/services/log_history.h>
 
 #define KFSW_LOG_RETAINED_MAGIC 0x4B464C48UL /* "KFLH" */
-#define KFSW_LOG_RETAINED_VERSION 1U
+#define KFSW_LOG_RETAINED_VERSION 2U
 
 /*
  * Where the reader picks up. Kept beside the records so a reset that preserves
@@ -15,11 +17,23 @@ struct kfsw_log_retained_header {
 	uint32_t version;
 	uint32_t depth;
 	uint32_t record_size;
+	/* Packages point into the image, so a ring left by another image is not served. */
+	uint32_t image;
 	uint64_t next_sequence;
 	uint32_t crc;
 };
 
-void kfsw_log_history_append(uint8_t module, uint8_t severity, const char *text, bool truncated);
+/*
+ * Keep a message as a package of format and args; text, already formatted
+ * for the console, is the fallback when the package does not fit.
+ */
+void kfsw_log_history_append(uint8_t module, uint8_t severity, const char *format, va_list args,
+			     const char *text, bool truncated);
+
+#if CONFIG_ZTEST
+/** The image identity a valid retained header carries. */
+uint32_t kfsw_log_history_image(void);
+#endif
 
 #if CONFIG_ZTEST
 /** Install a retained image and re-run the once-per-boot decision on it. */

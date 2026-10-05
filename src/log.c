@@ -10,6 +10,9 @@
 #if CONFIG_KFSW_LOG_HISTORY
 #include "log_history_internal.h"
 #endif
+#if CONFIG_KFSW_LOG_REMOTE
+#include <kfsw/services/log_remote.h>
+#endif
 #if CONFIG_KFSW_PARAM
 #include <kfsw/services/parameter.h>
 #endif
@@ -65,6 +68,25 @@ static uint8_t kfsw_log_color_value = IS_ENABLED(CONFIG_KFSW_LOG_COLOR);
 static atomic_t kfsw_log_emitted;
 static atomic_t kfsw_log_dropped;
 
+#if CONFIG_KFSW_LOG_REMOTE
+/* Read by the remote log server for each read; a parameter when PARAM is built. */
+static uint8_t kfsw_log_remote_format_value = KFSW_LOG_REMOTE_TEXT;
+
+uint8_t kfsw_log_remote_format(void)
+{
+	return kfsw_log_remote_format_value;
+}
+
+int kfsw_log_remote_set_format(uint8_t format)
+{
+	if (format > KFSW_LOG_REMOTE_DICTIONARY) {
+		return -ERANGE;
+	}
+	kfsw_log_remote_format_value = format;
+	return 0;
+}
+#endif
+
 #if CONFIG_KFSW_PARAM
 static uint8_t kfsw_log_param_value = CONFIG_KFSW_LOG_MIN_LEVEL;
 
@@ -104,6 +126,13 @@ static int validate_log_color(const union kfsw_param_scalar *value)
 {
 	return (value->u8 > 1U) ? -ERANGE : 0;
 }
+
+#if CONFIG_KFSW_LOG_REMOTE
+static int validate_remote_format(const union kfsw_param_scalar *value)
+{
+	return (value->u8 > KFSW_LOG_REMOTE_DICTIONARY) ? -ERANGE : 0;
+}
+#endif
 
 static uint8_t kfsw_log_levels_value[KFSW_LOG_MODULE_COUNT];
 
@@ -188,6 +217,19 @@ static const struct kfsw_param_definition log_param_definitions[] = {
 		.default_value = {.u8 = IS_ENABLED(CONFIG_KFSW_LOG_COLOR)},
 		.validate = validate_log_color,
 	},
+#if CONFIG_KFSW_LOG_REMOTE
+	{
+		.offset = 0x20U,
+		.type = KFSW_PARAM_U8,
+		.flags = KFSW_PARAM_FLAG_CONFIGURATION | KFSW_PARAM_FLAG_PERSISTENT |
+			 KFSW_PARAM_FLAG_LIVE,
+		.name = "log_remote_format",
+		.description = "How log remote sends messages: 0 text, 1 dictionary",
+		.value = &kfsw_log_remote_format_value,
+		.default_value = {.u8 = KFSW_LOG_REMOTE_TEXT},
+		.validate = validate_remote_format,
+	},
+#endif
 };
 
 const struct kfsw_param_definition_set kfsw_log_param_definitions = {
@@ -242,6 +284,7 @@ static void kfsw_log_vwrite(uint8_t module, uint8_t severity, const char *level,
 			    va_list args)
 {
 	char message[KFSW_LOG_MESSAGE_SIZE];
+	va_list copy;
 	int length;
 	size_t i;
 
@@ -257,7 +300,9 @@ static void kfsw_log_vwrite(uint8_t module, uint8_t severity, const char *level,
 	}
 	(void)atomic_inc(&kfsw_log_emitted);
 
-	length = vsnprintk(message, sizeof(message), format, args);
+	va_copy(copy, args);
+	length = vsnprintk(message, sizeof(message), format, copy);
+	va_end(copy);
 
 	for (i = 0U; message[i] != '\0'; i++) {
 		if ((message[i] == '\n') || (message[i] == '\r')) {
@@ -266,7 +311,7 @@ static void kfsw_log_vwrite(uint8_t module, uint8_t severity, const char *level,
 	}
 
 #if CONFIG_KFSW_LOG_HISTORY
-	kfsw_log_history_append(module, severity, message,
+	kfsw_log_history_append(module, severity, format, args, message,
 				(length < 0) || ((size_t)length >= sizeof(message)));
 #else
 	ARG_UNUSED(length);
@@ -292,8 +337,10 @@ void kfsw_log_write_marker(uint8_t module, const char *format, ...)
 
 	(void)atomic_inc(&kfsw_log_emitted);
 #if CONFIG_KFSW_LOG_HISTORY
-	kfsw_log_history_append(module, 1U, message,
+	va_start(args, format);
+	kfsw_log_history_append(module, 1U, format, args, message,
 				(length < 0) || ((size_t)length >= sizeof(message)));
+	va_end(args);
 #else
 	ARG_UNUSED(module);
 	ARG_UNUSED(length);
