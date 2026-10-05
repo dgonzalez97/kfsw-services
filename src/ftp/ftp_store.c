@@ -58,6 +58,21 @@ int kfsw_ftp_file_crc(const char *path, struct kfsw_ftp_workspace *workspace, ui
 	return result;
 }
 
+int kfsw_ftp_check_space(const char *path, uint32_t bytes)
+{
+	struct fs_statvfs volume;
+	int result = fs_statvfs(path, &volume);
+
+	if (result != 0) {
+		return result;
+	}
+	if ((uint64_t)volume.f_bfree * volume.f_frsize <
+	    (uint64_t)bytes + CONFIG_KFSW_FTP_SPACE_MARGIN_BYTES) {
+		return -ENOSPC;
+	}
+	return 0;
+}
+
 int kfsw_ftp_make_temporary_path(const char *path, char *temporary_path, size_t temporary_path_size)
 {
 	static const char suffix[] = ".part";
@@ -307,6 +322,7 @@ int kfsw_ftp_local_list(const char *virtual_path, struct kfsw_ftp_workspace *wor
 {
 	struct fs_dir_t directory;
 	struct fs_dirent entry;
+	bool listing_root;
 	int close_result;
 	int result;
 
@@ -318,6 +334,7 @@ int kfsw_ftp_local_list(const char *virtual_path, struct kfsw_ftp_workspace *wor
 	if (result != 0) {
 		return result;
 	}
+	listing_root = strcmp(workspace->path, KFSW_FTP_ROOT_PATH) == 0;
 	fs_dir_t_init(&directory);
 	result = fs_opendir(&directory, workspace->path);
 	if (result != 0) {
@@ -343,9 +360,16 @@ int kfsw_ftp_local_list(const char *virtual_path, struct kfsw_ftp_workspace *wor
 								: KFSW_FTP_ENTRY_FILE;
 		visited.size = (entry.type == FS_DIR_ENTRY_FILE) ? (uint32_t)entry.size : 0U;
 		if (!visitor(&visited, context)) {
+			listing_root = false;
 			break;
 		}
 	}
 	close_result = fs_closedir(&directory);
-	return (result != 0) ? result : close_result;
+	if (result != 0) {
+		return result;
+	}
+	if ((close_result == 0) && listing_root) {
+		(void)kfsw_ftp_list_roots(visitor, context);
+	}
+	return close_result;
 }
