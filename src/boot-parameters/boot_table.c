@@ -195,6 +195,7 @@ static const struct kfsw_param_definition boot_param_definitions[] = {
 const struct kfsw_param_definition_set kfsw_boot_param_definitions = {
 	.table = KFSW_BOOT_PARAM_TABLE_ID,
 	.name = KFSW_BOOT_PARAM_TABLE_NAME,
+	.description = "Running image, revisions, restarts",
 	.definitions = boot_param_definitions,
 	.count = ARRAY_SIZE(boot_param_definitions),
 };

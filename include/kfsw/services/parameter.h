@@ -112,6 +112,8 @@ struct kfsw_param_table_info {
 	uint8_t id;
 	/** Stable lowercase table name. */
 	const char *name;
+	/** What the table holds, or NULL. */
+	const char *description;
 	/** Parameters registered in this table. */
 	uint16_t count;
 };
@@ -201,6 +203,8 @@ struct kfsw_param_definition_set {
 	uint8_t table;
 	/** Stable lowercase table name, at most KFSW_PARAM_NAME_MAX. */
 	const char *name;
+	/** What the table holds, one short line for listings; may be NULL. */
+	const char *description;
 	const struct kfsw_param_definition *definitions;
 	size_t count;
 };

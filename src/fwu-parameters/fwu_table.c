@@ -231,6 +231,7 @@ static const struct kfsw_param_definition fwu_param_definitions[] = {
 const struct kfsw_param_definition_set kfsw_fwu_param_definitions = {
 	.table = KFSW_FWU_PARAM_TABLE_ID,
 	.name = KFSW_FWU_PARAM_TABLE_NAME,
+	.description = "Firmware update state and checks",
 	.definitions = fwu_param_definitions,
 	.count = ARRAY_SIZE(fwu_param_definitions),
 };

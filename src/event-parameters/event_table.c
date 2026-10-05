@@ -105,6 +105,7 @@ static const struct kfsw_param_definition event_param_definitions[] = {
 const struct kfsw_param_definition_set kfsw_event_param_definitions = {
 	.table = KFSW_EVENT_PARAM_TABLE_ID,
 	.name = KFSW_EVENT_PARAM_TABLE_NAME,
+	.description = "Event record counters",
 	.definitions = event_param_definitions,
 	.count = ARRAY_SIZE(event_param_definitions),
 };

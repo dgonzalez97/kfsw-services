@@ -184,11 +184,13 @@ config KFSW_PARAM_TIMEOUT_MS
 config KFSW_PARAM_LIST_TIMEOUT_MS
 	int "Total remote descriptor refresh budget in milliseconds"
 	range 100 120000
-	default 10000
+	default 3000
 	help
-	  Time limit for downloading a remote node's descriptors. About a
-	  hundred descriptors take under a second over CAN at 500 kbit/s and
-	  35 seconds over a 57600 baud radio, so raise it for radio links.
+	  Time limit for downloading a remote node's descriptors, and so how
+	  long an operator waits for a node that does not answer. About a
+	  hundred descriptors take under a second over CAN at 500 kbit/s or
+	  KISS at 115200 baud, but 35 seconds over a 57600 baud radio, so
+	  radio compositions raise it.
 
 config KFSW_PARAM_LIST_RDP
 	bool "Allow legacy parameter-list clients using RDP"
@@ -381,7 +383,9 @@ config KFSW_COMMAND_CSP_PORT
 config KFSW_COMMAND_TIMEOUT_MS
 	int "Command receive timeout in milliseconds"
 	range 1000 120000
-	default 10000
+	default 3000
+	help
+	  How long a remote command waits for its reply.
 
 config KFSW_COMMAND_SERVER_STACK_SIZE
 	int "Command server thread stack size"

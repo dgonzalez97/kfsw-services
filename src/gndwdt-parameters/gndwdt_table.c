@@ -193,6 +193,7 @@ static const struct kfsw_param_definition gndwdt_param_definitions[] = {
 const struct kfsw_param_definition_set kfsw_gndwdt_param_definitions = {
 	.table = KFSW_GNDWDT_PARAM_TABLE_ID,
 	.name = KFSW_GNDWDT_PARAM_TABLE_NAME,
+	.description = "Ground watchdog countdown",
 	.definitions = gndwdt_param_definitions,
 	.count = ARRAY_SIZE(gndwdt_param_definitions),
 };
