@@ -242,6 +242,7 @@ static void kfsw_log_vwrite(uint8_t module, uint8_t severity, const char *level,
 			    va_list args)
 {
 	char message[KFSW_LOG_MESSAGE_SIZE];
+	va_list copy;
 	int length;
 	size_t i;
 
@@ -257,7 +258,9 @@ static void kfsw_log_vwrite(uint8_t module, uint8_t severity, const char *level,
 	}
 	(void)atomic_inc(&kfsw_log_emitted);
 
-	length = vsnprintk(message, sizeof(message), format, args);
+	va_copy(copy, args);
+	length = vsnprintk(message, sizeof(message), format, copy);
+	va_end(copy);
 
 	for (i = 0U; message[i] != '\0'; i++) {
 		if ((message[i] == '\n') || (message[i] == '\r')) {
@@ -266,7 +269,7 @@ static void kfsw_log_vwrite(uint8_t module, uint8_t severity, const char *level,
 	}
 
 #if CONFIG_KFSW_LOG_HISTORY
-	kfsw_log_history_append(module, severity, message,
+	kfsw_log_history_append(module, severity, format, args, message,
 				(length < 0) || ((size_t)length >= sizeof(message)));
 #else
 	ARG_UNUSED(length);
@@ -292,8 +295,10 @@ void kfsw_log_write_marker(uint8_t module, const char *format, ...)
 
 	(void)atomic_inc(&kfsw_log_emitted);
 #if CONFIG_KFSW_LOG_HISTORY
-	kfsw_log_history_append(module, 1U, message,
+	va_start(args, format);
+	kfsw_log_history_append(module, 1U, format, args, message,
 				(length < 0) || ((size_t)length >= sizeof(message)));
+	va_end(args);
 #else
 	ARG_UNUSED(module);
 	ARG_UNUSED(length);
