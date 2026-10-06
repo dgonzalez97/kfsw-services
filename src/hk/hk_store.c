@@ -85,6 +85,7 @@ static int create_file(uint8_t report, uint16_t record_size)
 		return result;
 	}
 
+	/* codechecker_intentional [bugprone-not-null-terminated-result] a binary magic */
 	memcpy(header, KFSW_HK_STORE_MAGIC, KFSW_HK_STORE_MAGIC_SIZE);
 	header[4] = KFSW_HK_STORE_VERSION;
 	header[5] = report;
