@@ -64,7 +64,13 @@ uint8_t kfsw_log_get_module_level(enum kfsw_log_module module);
  */
 int kfsw_log_set_module_level(enum kfsw_log_module module, uint8_t level);
 
-/** Write one message. Called through the kfsw_log_* macros, not directly. */
+/**
+ * Write one message. Called through the kfsw_log_* macros, not directly.
+ *
+ * A %s argument must be NUL-terminated even with a precision, as in %.*s: the
+ * history keeps a copy of each string from RAM, and that copy reads to the
+ * terminator.
+ */
 void kfsw_log_write(uint8_t module, uint8_t severity, const char *format, ...)
 	KFSW_LOG_PRINTF_LIKE(3, 4);
 
