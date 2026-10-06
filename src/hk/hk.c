@@ -780,14 +780,14 @@ int64_t kfsw_hk_schedule_wait(int64_t now)
 	int64_t wait = 200;
 
 	kfsw_hk_lock();
-	for (uint8_t index = 0; index < ARRAY_SIZE(reports); index++) {
+	for (size_t index = 0; index < ARRAY_SIZE(reports); index++) {
 		struct kfsw_hk_report *report = &reports[index];
 
 		if (report->defined && report->period_ms != 0U) {
 			wait = MIN(wait, MAX(0, report->next_uptime_ms - now));
 		}
 #if CONFIG_KFSW_HK_BEACON
-		wait = MIN(wait, kfsw_hk_beacon_wait(index, now));
+		wait = MIN(wait, kfsw_hk_beacon_wait((uint8_t)index, now));
 #endif
 	}
 	kfsw_hk_unlock();
