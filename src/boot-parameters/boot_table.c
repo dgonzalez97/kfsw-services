@@ -12,8 +12,11 @@
 #endif
 
 #define KFSW_BOOT_IMAGE_SIZE 40U
-/* Five repositories at a ten character revision, plus labels and separators. */
-#define KFSW_BOOT_REVISIONS_SIZE 96U
+/* Seven repositories, each a label, eight hex digits and a dirty mark. */
+#define KFSW_BOOT_REVISIONS_SIZE KFSW_PARAM_STRING_MAX
+
+BUILD_ASSERT(sizeof(KFSW_BUILD_REVISIONS) <= KFSW_BOOT_REVISIONS_SIZE,
+	     "the revisions of every repository must fit the parameter");
 
 static char boot_image[KFSW_BOOT_IMAGE_SIZE];
 static char boot_revisions[KFSW_BOOT_REVISIONS_SIZE];

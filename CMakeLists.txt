@@ -281,7 +281,9 @@ foreach(kfsw_repo "app=${CMAKE_CURRENT_LIST_DIR}/../k-fsw"
                   "plat=${CMAKE_CURRENT_LIST_DIR}/../kfsw-platform"
                   "svc=${CMAKE_CURRENT_LIST_DIR}"
                   "comms=${CMAKE_CURRENT_LIST_DIR}/../kfsw-comms"
-                  "mod=${CMAKE_CURRENT_LIST_DIR}/../kfsw-modules")
+                  "mod=${CMAKE_CURRENT_LIST_DIR}/../kfsw-modules"
+                  "csp=${CMAKE_CURRENT_LIST_DIR}/../kfsw-comms/third_party/libcsp"
+                  "param=${CMAKE_CURRENT_LIST_DIR}/third_party/libparam")
     string(REPLACE "=" ";" kfsw_repo_parts "${kfsw_repo}")
     list(GET kfsw_repo_parts 0 kfsw_repo_label)
     list(GET kfsw_repo_parts 1 kfsw_repo_path)
@@ -289,7 +291,7 @@ foreach(kfsw_repo "app=${CMAKE_CURRENT_LIST_DIR}/../k-fsw"
 
     if(GIT_FOUND AND EXISTS "${kfsw_repo_path}/.git")
         execute_process(
-            COMMAND ${GIT_EXECUTABLE} rev-parse --short=10 HEAD
+            COMMAND ${GIT_EXECUTABLE} rev-parse --short=8 HEAD
             WORKING_DIRECTORY "${kfsw_repo_path}"
             OUTPUT_VARIABLE kfsw_repo_head
             OUTPUT_STRIP_TRAILING_WHITESPACE
@@ -311,8 +313,9 @@ foreach(kfsw_repo "app=${CMAKE_CURRENT_LIST_DIR}/../k-fsw"
             endif()
         endif()
 
-        # Reconfigure when this repository moves.
-        if(EXISTS "${kfsw_repo_path}/.git/HEAD")
+        # Reconfigure when this repository moves. kfsw-comms already watches
+        # libcsp, for csp info, and a second rule for one file breaks ninja.
+        if(EXISTS "${kfsw_repo_path}/.git/HEAD" AND NOT kfsw_repo_label STREQUAL "csp")
             set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
                 "${kfsw_repo_path}/.git/HEAD")
         endif()
