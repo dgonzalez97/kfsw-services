@@ -1070,6 +1070,9 @@ static int decode_reply(uint16_t node, csp_packet_t *packet, const param_t *cons
 			if (params[index]->id != id) {
 				continue;
 			}
+			/* codechecker_false_positive [bugprone-suspicious-memory-comparison]
+			 * decode_value() zeroes the whole value first.
+			 */
 			if (seen[index] && memcmp(&values[index], &value, sizeof(value)) != 0) {
 				return -EBADMSG;
 			}

@@ -123,6 +123,7 @@ static int build_snapshot(size_t *snapshot_size)
 		return result;
 	}
 
+	/* codechecker_intentional [bugprone-not-null-terminated-result] a binary magic */
 	memcpy(snapshot, KFSW_PARAM_PERSIST_MAGIC, KFSW_PARAM_PERSIST_MAGIC_SIZE);
 	sys_put_be16(KFSW_PARAM_PERSIST_VERSION, &snapshot[4]);
 	sys_put_be16(KFSW_PARAM_PERSIST_HEADER_SIZE, &snapshot[6]);

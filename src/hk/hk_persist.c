@@ -301,13 +301,13 @@ static int load_snapshot(void)
 	}
 #endif
 	kfsw_hk_lock();
-	for (uint8_t index = 0; index < ARRAY_SIZE(restored); index++) {
+	for (size_t index = 0; index < ARRAY_SIZE(restored); index++) {
 		const struct restored_report *item = &restored[index];
 
-		kfsw_hk_restore_report(index, item->present ? &item->definition : NULL,
+		kfsw_hk_restore_report((uint8_t)index, item->present ? &item->definition : NULL,
 				       item->period_ms);
 #if CONFIG_KFSW_HK_BEACON
-		kfsw_hk_beacon_restore(index, item->beacon_node, item->beacon_ms);
+		kfsw_hk_beacon_restore((uint8_t)index, item->beacon_node, item->beacon_ms);
 #endif
 	}
 #if CONFIG_KFSW_HK_STORE
