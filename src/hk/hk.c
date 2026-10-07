@@ -181,6 +181,10 @@ static int entry_declared_width(const struct kfsw_hk_entry *entry, size_t *width
 		result = kfsw_param_visit(match_width, &search);
 	} else {
 #if CONFIG_KFSW_PARAM_CSP
+		/* Refused when the report is defined, not at the first sample. */
+		if (entry->node >= KFSW_CSP_BROADCAST_ADDRESS) {
+			return -EINVAL;
+		}
 		result = kfsw_param_remote_visit_until(entry->node, match_width, &search,
 						       k_uptime_get() +
 							       CONFIG_KFSW_PARAM_LIST_TIMEOUT_MS);

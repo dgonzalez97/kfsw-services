@@ -182,7 +182,7 @@ int kfsw_hk_set_store(uint8_t report, uint32_t interval_ms);
  * @param node Destination address.
  * @param interval_ms Milliseconds between beacons, or 0 to stop.
  * @retval 0 Configured.
- * @retval -EINVAL Unknown report, or an address outside 1..16383.
+ * @retval -EINVAL Unknown report, or an address outside 1..KFSW_CSP_BROADCAST_ADDRESS - 1.
  * @retval -ERANGE The interval is below CONFIG_KFSW_HK_BEACON_FLOOR_MS.
  */
 int kfsw_hk_set_beacon(uint8_t report, uint16_t node, uint32_t interval_ms);

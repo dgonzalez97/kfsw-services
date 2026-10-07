@@ -426,7 +426,8 @@ int kfsw_log_remote_read(uint16_t node, enum kfsw_log_remote_stream stream, uint
 	bool answered = false;
 	int result = 0;
 
-	if ((visitor == NULL) || (stream > KFSW_LOG_REMOTE_JOURNAL) || (count == 0U) ||
+	if ((visitor == NULL) || (node == 0U) || (node >= KFSW_CSP_BROADCAST_ADDRESS) ||
+	    (stream > KFSW_LOG_REMOTE_JOURNAL) || (count == 0U) ||
 	    (count > KFSW_LOG_HISTORY_MAX_READ) || (min_level > 3U)) {
 		return -EINVAL;
 	}
