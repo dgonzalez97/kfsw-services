@@ -2,6 +2,7 @@
 #define KFSW_SERVICES_BOOT_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #if CONFIG_KFSW_PARAM
 #include <kfsw/services/parameter.h>
@@ -10,6 +11,44 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/** SHA256 identity of the signed running image. */
+#define KFSW_BOOT_IMAGE_ID_SIZE 32U
+
+/** Cause established by the service, not a bootloader verdict. */
+enum kfsw_boot_revert_reason {
+	KFSW_BOOT_REVERT_NONE = 0,
+	/** An unconfirmed image with revert pending was replaced. */
+	KFSW_BOOT_REVERT_UNCONFIRMED_REPLACED = 1,
+	/** An unconfirmed image was replaced without an observed pending revert. */
+	KFSW_BOOT_REVERT_REPLACED_UNKNOWN = 2,
+};
+
+/** Persistent trial diagnostics. Invalid values are UINT32_MAX / UINT8_MAX. */
+struct kfsw_boot_diagnostics {
+	uint32_t attempts;
+	uint8_t revert_reason;
+	bool valid;
+};
+
+/** Copy the diagnostics, including their validity indication. */
+void kfsw_boot_get_diagnostics(struct kfsw_boot_diagnostics *value);
+
+/** Record one startup after storage mount, before starting other services. */
+int kfsw_boot_diagnostics_start(void);
+
+/**
+ * Record an observed image boot in the existing persistent filesystem.
+ * @param image SHA256 image identity.
+ * @param confirmed Whether the running image is confirmed.
+ * @param revert_pending Whether MCUboot currently schedules a revert.
+ * @return 0 after an atomic save; negative errno on failure, diagnostics invalid.
+ */
+int kfsw_boot_record_image(const uint8_t image[KFSW_BOOT_IMAGE_ID_SIZE], bool confirmed,
+			   bool revert_pending);
+
+/** Confirm the running image and persist the reset attempt count. */
+int kfsw_boot_confirm_image(void);
 
 /**
  * Event IDs of the boot service. IDs are never reused.

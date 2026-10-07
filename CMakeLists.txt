@@ -1,5 +1,6 @@
 set(kfsw_services_sources
     src/boot.c
+    src/boot_diagnostics.c
     src/log.c
 )
 
@@ -11,7 +12,7 @@ if(CONFIG_KFSW_LOG_REMOTE)
 endif()
 
 # Atomic snapshot writes, shared by parameters, housekeeping and table dumps.
-if(CONFIG_KFSW_PARAM_PERSISTENCE OR CONFIG_KFSW_HK_PERSISTENCE OR CONFIG_KFSW_TABLE)
+if(CONFIG_KFSW_STORAGE OR CONFIG_KFSW_PARAM_PERSISTENCE OR CONFIG_KFSW_HK_PERSISTENCE OR CONFIG_KFSW_TABLE)
     list(APPEND kfsw_services_sources src/snapshot_file.c)
 endif()
 
@@ -265,7 +266,7 @@ add_library(kfsw_services STATIC ${kfsw_services_sources})
 
 add_library(kfsw::services ALIAS kfsw_services)
 
-if(CONFIG_KFSW_FWU_FILES)
+if(CONFIG_KFSW_FWU_FILES OR (CONFIG_BOOTLOADER_MCUBOOT AND CONFIG_MCUBOOT_IMG_MANAGER))
     target_link_libraries(kfsw_services PRIVATE MCUBOOT_BOOTUTIL)
 endif()
 

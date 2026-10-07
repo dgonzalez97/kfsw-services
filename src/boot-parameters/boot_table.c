@@ -7,7 +7,7 @@
 #include <kfsw/services/boot.h>
 #include <kfsw/services/parameter.h>
 
-#if CONFIG_KFSW_FWU_MCUBOOT
+#if CONFIG_BOOTLOADER_MCUBOOT && CONFIG_MCUBOOT_IMG_MANAGER
 #include <zephyr/dfu/mcuboot.h>
 #endif
 
@@ -75,7 +75,7 @@ static void sample_reset_cause(void *value)
 
 static void sample_confirmed(void *value)
 {
-#if CONFIG_KFSW_FWU_MCUBOOT
+#if CONFIG_BOOTLOADER_MCUBOOT && CONFIG_MCUBOOT_IMG_MANAGER
 	*(uint8_t *)value = boot_is_img_confirmed() ? 1U : 0U;
 #else
 	*(uint8_t *)value = 0U;
@@ -91,7 +91,7 @@ static int validate_confirmed(const union kfsw_param_scalar *value)
 	if (value->u8 > 1U) {
 		return -EINVAL;
 	}
-#if CONFIG_KFSW_FWU_MCUBOOT
+#if CONFIG_BOOTLOADER_MCUBOOT && CONFIG_MCUBOOT_IMG_MANAGER
 	return 0;
 #else
 	/* Without a bootloader there is nothing to confirm, so a write of 1 is refused. */
@@ -101,16 +101,72 @@ static int validate_confirmed(const union kfsw_param_scalar *value)
 
 static void apply_confirmed(const union kfsw_param_scalar *value)
 {
-#if CONFIG_KFSW_FWU_MCUBOOT
+#if CONFIG_BOOTLOADER_MCUBOOT && CONFIG_MCUBOOT_IMG_MANAGER
 	if (value->u8 == 1U) {
-		(void)boot_write_img_confirmed();
+		(void)kfsw_boot_confirm_image();
 	}
 #else
 	ARG_UNUSED(value);
 #endif
 }
 
+static uint32_t boot_attempts;
+static uint8_t boot_revert_reason;
+static uint8_t boot_trial_valid;
+
+static void sample_attempts(void *value)
+{
+	struct kfsw_boot_diagnostics diagnostic;
+
+	kfsw_boot_get_diagnostics(&diagnostic);
+	*(uint32_t *)value = diagnostic.attempts;
+}
+
+static void sample_revert_reason(void *value)
+{
+	struct kfsw_boot_diagnostics diagnostic;
+
+	kfsw_boot_get_diagnostics(&diagnostic);
+	*(uint8_t *)value = diagnostic.revert_reason;
+}
+
+static void sample_trial_valid(void *value)
+{
+	struct kfsw_boot_diagnostics diagnostic;
+
+	kfsw_boot_get_diagnostics(&diagnostic);
+	*(uint8_t *)value = diagnostic.valid ? 1U : 0U;
+}
+
 static const struct kfsw_param_definition boot_param_definitions[] = {
+	{
+		.offset = 0x2cU,
+		.type = KFSW_PARAM_U32,
+		.flags = KFSW_PARAM_FLAG_READ_ONLY,
+		.name = "boot_attempts",
+		.description = "Persisted unconfirmed boots of this image; UINT32_MAX invalid",
+		.value = &boot_attempts,
+		.sample = sample_attempts,
+	},
+	{
+		.offset = 0x29U,
+		.type = KFSW_PARAM_U8,
+		.flags = KFSW_PARAM_FLAG_READ_ONLY,
+		.name = "boot_revert_reason",
+		.description = "Service evidence: 0 none, 1 missed confirmation, 2 replaced "
+			       "unknown, 255 invalid",
+		.value = &boot_revert_reason,
+		.sample = sample_revert_reason,
+	},
+	{
+		.offset = 0x2aU,
+		.type = KFSW_PARAM_U8,
+		.flags = KFSW_PARAM_FLAG_READ_ONLY,
+		.name = "boot_trial_valid",
+		.description = "Trial diagnostics were recovered and saved successfully",
+		.value = &boot_trial_valid,
+		.sample = sample_trial_valid,
+	},
 	{
 		.offset = 0x00U,
 		.type = KFSW_PARAM_STRING,
