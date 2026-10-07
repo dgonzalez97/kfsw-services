@@ -460,6 +460,7 @@ int kfsw_hk_store_extract(const struct kfsw_hk_store_filter *filter, const char 
 		return -ENOENT;
 	}
 
+	/* codechecker_intentional [bugprone-not-null-terminated-result] a binary magic */
 	memcpy(header, KFSW_HK_DATASET_MAGIC, KFSW_HK_DATASET_MAGIC_SIZE);
 	header[4] = KFSW_HK_DATASET_VERSION;
 	header[5] = filter->report;
