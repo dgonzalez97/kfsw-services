@@ -148,6 +148,7 @@ static const struct kfsw_param_definition table_param_definitions[] = {
 const struct kfsw_param_definition_set kfsw_table_param_definitions = {
 	.table = KFSW_TABLE_PARAM_TABLE_ID,
 	.name = KFSW_TABLE_PARAM_TABLE_NAME,
+	.description = "Uploaded table files, adoptions and reverts",
 	.definitions = table_param_definitions,
 	.count = ARRAY_SIZE(table_param_definitions),
 };
