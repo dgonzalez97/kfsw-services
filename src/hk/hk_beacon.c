@@ -3,6 +3,7 @@
 #include <string.h>
 
 #include <csp/csp.h>
+#include <kfsw/comms/csp.h>
 
 #include <kfsw/services/hk.h>
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_HK
@@ -31,7 +32,7 @@ static int set_beacon_impl(uint8_t report, uint16_t node, uint32_t interval_ms)
 	if (interval_ms != 0U && interval_ms < CONFIG_KFSW_HK_BEACON_FLOOR_MS) {
 		return -ERANGE;
 	}
-	if (interval_ms != 0U && (node == 0U || node > 16383U)) {
+	if (interval_ms != 0U && (node == 0U || node >= KFSW_CSP_BROADCAST_ADDRESS)) {
 		return -EINVAL;
 	}
 	kfsw_hk_lock();

@@ -72,7 +72,7 @@ int kfsw_log_remote_set_format(uint8_t format);
  * @param min_level Lowest severity sent for log messages, 0 to 3.
  *
  * @retval 0 Every record arrived, or a callback stopped the read.
- * @retval -EINVAL A bad argument.
+ * @retval -EINVAL A bad argument, or @p node is 0 or broadcast or above.
  * @retval -ENOTCONN No connection to the node.
  * @retval -ETIMEDOUT The node did not answer.
  * @retval -ENOTSUP The node does not serve that stream.

@@ -14,6 +14,10 @@
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_HK
 #include <kfsw/services/log.h>
 
+#if CONFIG_KFSW_HK_BEACON
+#include <kfsw/comms/csp.h>
+#endif
+
 #include "../snapshot_file.h"
 #include "hk_internal.h"
 
@@ -263,7 +267,7 @@ static int load_snapshot(void)
 #if CONFIG_KFSW_HK_BEACON
 		if (item->beacon_ms != 0U &&
 		    (item->beacon_ms < CONFIG_KFSW_HK_BEACON_FLOOR_MS || item->beacon_node == 0U ||
-		     item->beacon_node > 16383U)) {
+		     item->beacon_node >= KFSW_CSP_BROADCAST_ADDRESS)) {
 			return -ERANGE;
 		}
 #endif

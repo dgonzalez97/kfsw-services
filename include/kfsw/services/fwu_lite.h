@@ -170,7 +170,7 @@ int kfsw_fwu_lite_set_retries(uint8_t retries);
  * @param[out] blocks_resent Blocks that needed repeating; may be NULL.
  *
  * @retval 0 The node accepted and verified the whole image.
- * @retval -EINVAL @p path is NULL.
+ * @retval -EINVAL @p path is NULL, or @p node is 0 or broadcast or above.
  * @retval -ENOTCONN The node did not accept a connection.
  * @retval -EILSEQ The node received the image but it did not match.
  * @return A negative errno value on failure.
@@ -183,6 +183,7 @@ int kfsw_fwu_lite_send_file(uint16_t node, const char *path, uint32_t *blocks_re
  * @param node Destination CSP address.
  *
  * @retval 0 The node scheduled a swap.
+ * @retval -EINVAL @p node is 0 or broadcast or above.
  * @return A negative errno value on failure.
  */
 int kfsw_fwu_lite_start_flashing(uint16_t node);

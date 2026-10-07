@@ -5,6 +5,7 @@
 #include <string.h>
 
 #include <csp/csp.h>
+#include <kfsw/comms/csp.h>
 #include <zephyr/fs/fs.h>
 #include <zephyr/kernel.h>
 #include <zephyr/sys/crc.h>
@@ -337,7 +338,7 @@ int kfsw_fwu_lite_send_file(uint16_t node, const char *path, uint32_t *blocks_re
 	uint32_t sent = 0U;
 	int result;
 
-	if (path == NULL) {
+	if ((path == NULL) || (node == 0U) || (node >= KFSW_CSP_BROADCAST_ADDRESS)) {
 		return -EINVAL;
 	}
 
@@ -481,6 +482,9 @@ int kfsw_fwu_lite_start_flashing(uint16_t node)
 	csp_conn_t *connection;
 	int result;
 
+	if ((node == 0U) || (node >= KFSW_CSP_BROADCAST_ADDRESS)) {
+		return -EINVAL;
+	}
 	connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_FWU_LITE_CSP_PORT,
 				 kfsw_fwu_lite_get_timeout_ms(), CONNECTION_OPTIONS);
 	if (connection == NULL) {
