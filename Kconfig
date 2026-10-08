@@ -15,6 +15,16 @@ config KFSW_LOG_COLOR
 	  Colour log lines by level: errors red, warnings yellow, info white and
 	  debug dim. Turn it off for consoles that don't support VT100 escapes.
 
+config KFSW_LOG_SHELL
+	bool "Mirror K-FSW logs to active shells"
+	depends on SHELL
+	default n
+	help
+	  Send log messages to active shell sessions as well as the existing
+	  console backend. Table 25 log_shell can disable or enable mirroring
+	  immediately when PARAM is built. Messages from interrupt context and
+	  before a shell is ready stay on the existing backend only.
+
 config KFSW_LOG_HISTORY
 	bool "Keep recent K-FSW text logs in RAM"
 	depends on KFSW_LOG_MIN_LEVEL < 4

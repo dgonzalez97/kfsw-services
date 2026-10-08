@@ -5,6 +5,9 @@
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/util.h>
+#if CONFIG_KFSW_LOG_SHELL
+#include <zephyr/shell/shell.h>
+#endif
 
 #include <kfsw/services/log.h>
 #if CONFIG_KFSW_LOG_HISTORY
@@ -65,6 +68,29 @@ int kfsw_log_set_module_level(enum kfsw_log_module module, uint8_t level)
 
 /* Used by the write path, so not behind the parameter guard. */
 static uint8_t kfsw_log_color_value = IS_ENABLED(CONFIG_KFSW_LOG_COLOR);
+#if CONFIG_KFSW_LOG_SHELL
+static uint8_t kfsw_log_shell_value = 1U;
+
+static void mirror_to_shell(const char *level, const char *message)
+{
+	/* Shell output is a thread API; the console still covers early boot/ISRs. */
+	if (kfsw_log_shell_value == 0U || k_is_in_isr()) {
+		return;
+	}
+	STRUCT_SECTION_FOREACH(shell, sh)
+	{
+		if (!shell_ready(sh)) {
+			continue;
+		}
+		if (level != NULL) {
+			shell_print(sh, "[%s] %s", level, message);
+		} else {
+			shell_print(sh, "%s", message);
+		}
+	}
+}
+#endif
+
 static atomic_t kfsw_log_emitted;
 static atomic_t kfsw_log_dropped;
 
@@ -122,7 +148,7 @@ static void sample_dropped(void *value)
 static uint32_t kfsw_log_emitted_value;
 static uint32_t kfsw_log_dropped_value;
 
-static int validate_log_color(const union kfsw_param_scalar *value)
+static int validate_log_bool(const union kfsw_param_scalar *value)
 {
 	return (value->u8 > 1U) ? -ERANGE : 0;
 }
@@ -215,8 +241,20 @@ static const struct kfsw_param_definition log_param_definitions[] = {
 		.description = "Colour log lines by severity; read every line",
 		.value = &kfsw_log_color_value,
 		.default_value = {.u8 = IS_ENABLED(CONFIG_KFSW_LOG_COLOR)},
-		.validate = validate_log_color,
+		.validate = validate_log_bool,
 	},
+#if CONFIG_KFSW_LOG_SHELL
+	{
+		.offset = 0x0dU,
+		.type = KFSW_PARAM_U8,
+		.flags = KFSW_PARAM_FLAG_CONFIGURATION | KFSW_PARAM_FLAG_LIVE,
+		.name = "log_shell",
+		.description = "Mirror logs to active shells; 0 off, 1 on",
+		.value = &kfsw_log_shell_value,
+		.default_value = {.u8 = 1U},
+		.validate = validate_log_bool,
+	},
+#endif
 #if CONFIG_KFSW_LOG_REMOTE
 	{
 		.offset = 0x20U,
@@ -322,6 +360,9 @@ static void kfsw_log_vwrite(uint8_t module, uint8_t severity, const char *level,
 	       (IS_ENABLED(CONFIG_KFSW_LOG_COLOR) && (kfsw_log_color_value != 0U))
 		       ? KFSW_LOG_COLOR_RESET
 		       : "");
+#if CONFIG_KFSW_LOG_SHELL
+	mirror_to_shell(level, message);
+#endif
 }
 #endif
 
@@ -346,6 +387,9 @@ void kfsw_log_write_marker(uint8_t module, const char *format, ...)
 	ARG_UNUSED(length);
 #endif
 	printk("%s\n", message);
+#if CONFIG_KFSW_LOG_SHELL
+	mirror_to_shell(NULL, message);
+#endif
 }
 
 #if CONFIG_KFSW_LOG_MIN_LEVEL < 4
