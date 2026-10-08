@@ -283,6 +283,8 @@ int kfsw_ftp_wire_status_to_errno(uint8_t status)
 		return -ECONNREFUSED;
 	case KFSW_FTP_STATUS_NOT_DIRECTORY:
 		return -ENOTDIR;
+	case KFSW_FTP_STATUS_READ_ONLY:
+		return -EROFS;
 	case KFSW_FTP_STATUS_IO_ERROR:
 	default:
 		return -EIO;
@@ -303,6 +305,8 @@ uint8_t kfsw_ftp_errno_to_wire_status(int error)
 		return KFSW_FTP_STATUS_NOT_FOUND;
 	case EEXIST:
 		return KFSW_FTP_STATUS_ALREADY_EXISTS;
+	case EROFS:
+		return KFSW_FTP_STATUS_READ_ONLY;
 	case ENOSPC:
 		return KFSW_FTP_STATUS_NO_SPACE;
 	case EILSEQ:
