@@ -231,6 +231,17 @@ if(CONFIG_KFSW_RESMON)
     endif()
 endif()
 
+if(CONFIG_KFSW_REMEXEC)
+    list(APPEND kfsw_services_sources
+        src/remexec/remexec.c
+        src/remexec/remexec_csp.c
+        src/remexec/remexec_protocol.c
+    )
+    if(CONFIG_KFSW_PARAM)
+        list(APPEND kfsw_services_sources src/remexec-parameters/remexec_table.c)
+    endif()
+endif()
+
 if(CONFIG_KFSW_GNDWDT)
     list(APPEND kfsw_services_sources src/gndwdt/gndwdt.c)
     if(CONFIG_KFSW_PARAM)

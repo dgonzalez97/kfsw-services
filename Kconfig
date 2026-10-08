@@ -941,4 +941,75 @@ config KFSW_HK_PERSISTENCE
 
 endif # KFSW_HK
 
+config KFSW_REMEXEC
+	bool "K-FSW remote shell execution"
+	depends on KFSW_CSP
+	depends on SHELL
+	help
+	  Serve a list of the shell commands this node offers for remote
+	  execution, and run one of them on request, returning its output over
+	  CSP. A command is offered only when the composition marks it in the
+	  allowlist handed to kfsw_remexec_init(); there is no other way to
+	  reach a command, and a node with no marked commands refuses every
+	  request. Capturing output costs a second shell instance, so this
+	  adds one thread of CONFIG_SHELL_STACK_SIZE.
+
+if KFSW_REMEXEC
+
+config KFSW_REMEXEC_CSP_PORT
+	int "CSP port for remote execution requests"
+	range 1 CSP_PORT_MAX_BIND
+	default 8
+	help
+	  Ports in use: 9 file transfer, 10 parameter transactions, 11
+	  commands, 12 parameter list, 13 firmware upload, 14 housekeeping,
+	  15 housekeeping beacons, 16 remote log. libcsp keeps 0 to 6 for its
+	  own services and CSP_PORT_MAX_BIND is 16, so 8 is the free port
+	  below the block rather than one past the top of it.
+
+config KFSW_REMEXEC_OUTPUT_MAX
+	int "Largest output carried back, in bytes"
+	range 64 1024
+	default 200
+	help
+	  Output past this is dropped and the reply says how many bytes went
+	  with it. The default keeps one reply inside a single CSP buffer on
+	  the narrowest link, so a chatty command cannot fragment or exhaust
+	  the buffer pool. A composition that raises it must check the build
+	  assertion in remexec_csp.c against CONFIG_CSP_BUFFER_SIZE.
+
+config KFSW_REMEXEC_MAX_ENTRIES
+	int "Largest allowlist accepted"
+	range 1 64
+	default 16
+	help
+	  kfsw_remexec_init() refuses a longer allowlist rather than serving
+	  part of it. A long allowlist can outgrow the output cap, in which
+	  case the bare listing comes back truncated; asking for a prefix
+	  narrows it.
+
+config KFSW_REMEXEC_TIMEOUT_MS
+	int "Execution budget and reply timeout, in milliseconds"
+	range 1000 120000
+	default 5000
+	help
+	  How long a client waits for its reply, and the budget the serving
+	  node measures an execution against. A shell handler runs to
+	  completion and cannot be aborted, so a command that overruns is
+	  reported as timed out after it returns.
+
+config KFSW_REMEXEC_SERVER_STACK_SIZE
+	int "Remote execution server thread stack size"
+	default 3072
+	range 1024 16384
+	help
+	  The served command runs on this thread, so it needs room for the
+	  deepest handler the allowlist offers.
+
+config KFSW_REMEXEC_SERVER_PRIORITY
+	int "Remote execution server thread priority"
+	default 3
+
+endif # KFSW_REMEXEC
+
 endmenu
