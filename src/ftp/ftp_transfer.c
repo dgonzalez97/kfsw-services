@@ -5,8 +5,8 @@
 #include <string.h>
 
 #include <zephyr/fs/fs.h>
-#include <zephyr/sys/util.h>
 #include <zephyr/sys/crc.h>
+#include <zephyr/sys/util.h>
 
 #if CONFIG_KFSW_FWU
 #include <kfsw/services/fwu.h>
@@ -98,12 +98,29 @@ int kfsw_ftp_transfer_send(struct kfsw_ftp_transfer *transfer)
 
 int kfsw_ftp_transfer_open_sink(struct kfsw_ftp_transfer *transfer, const char *temporary_path)
 {
+	int result;
+
 	if ((transfer == NULL) || (temporary_path == NULL)) {
 		return -EINVAL;
 	}
-	(void)fs_unlink(temporary_path);
+	if (transfer->offset == 0U) {
+		(void)fs_unlink(temporary_path);
+		fs_file_t_init(&transfer->file);
+		return fs_open(&transfer->file, temporary_path,
+			       FS_O_CREATE | FS_O_WRITE | FS_O_TRUNC);
+	}
+
+	/* Continuing a partial: keep what is there and write past it. */
 	fs_file_t_init(&transfer->file);
-	return fs_open(&transfer->file, temporary_path, FS_O_CREATE | FS_O_WRITE | FS_O_TRUNC);
+	result = fs_open(&transfer->file, temporary_path, FS_O_WRITE);
+	if (result != 0) {
+		return result;
+	}
+	result = fs_seek(&transfer->file, (off_t)transfer->offset, FS_SEEK_SET);
+	if (result != 0) {
+		(void)fs_close(&transfer->file);
+	}
+	return result;
 }
 
 #if CONFIG_KFSW_FWU
@@ -189,6 +206,7 @@ int kfsw_ftp_transfer_finish(struct kfsw_ftp_transfer *transfer, const char *tar
 			     const char *temporary_path, int result)
 {
 	int close_result;
+	int sync_result;
 
 	if ((transfer == NULL) || (target_path == NULL) || (temporary_path == NULL)) {
 		return -EINVAL;
@@ -211,20 +229,22 @@ int kfsw_ftp_transfer_finish(struct kfsw_ftp_transfer *transfer, const char *tar
 	}
 #endif
 
+	/* Synced even after a failure, so an interrupted upload leaves on disk
+	 * exactly what the next attempt can continue from.
+	 */
+	sync_result = fs_sync(&transfer->file);
 	if (result == 0) {
-		result = fs_sync(&transfer->file);
+		result = sync_result;
 	}
 	close_result = fs_close(&transfer->file);
 	if (result == 0) {
 		result = close_result;
 	}
 	if (result == 0) {
+		/* Removes the partial itself when the content does not match. */
 		result = kfsw_ftp_commit_temporary(target_path, temporary_path, transfer->offset,
 						   transfer->actual_crc32, transfer->total_size,
 						   transfer->crc32);
-	}
-	if (result != 0) {
-		(void)fs_unlink(temporary_path);
 	}
 	return result;
 }

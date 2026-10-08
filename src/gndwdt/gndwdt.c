@@ -6,8 +6,10 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/sys/byteorder.h>
-#if CONFIG_REBOOT
 #include <zephyr/sys/reboot.h>
+
+#if CONFIG_KFSW_COMMAND_CSP
+#include <csp/csp_iflist.h>
 #endif
 
 #include <kfsw/platform/time.h>
@@ -17,6 +19,14 @@
 #if CONFIG_KFSW_EVENT
 #include <kfsw/services/event.h>
 #endif
+
+/* A composition that cannot be fed, or cannot reset, would arm a timer that
+ * runs out once and then does nothing useful for the rest of the mission.
+ * Tests call the handler directly and supply the source themselves.
+ */
+BUILD_ASSERT(IS_ENABLED(CONFIG_KFSW_COMMAND_CSP) || IS_ENABLED(CONFIG_ZTEST),
+	     "KFSW_GNDWDT needs KFSW_COMMAND_CSP: only a feed over CSP counts");
+BUILD_ASSERT(IS_ENABLED(CONFIG_REBOOT), "KFSW_GNDWDT needs REBOOT to act on an expiry");
 
 /* The command worker and timeout worker share this state. */
 static uint64_t last_contact_ms;
@@ -65,8 +75,13 @@ int kfsw_gndwdt_stop(void)
 		return -EALREADY;
 	}
 	running = false;
+	/* Taking the service out of service is the one thing that calls off a
+	 * reset already decided. A late feed does not.
+	 */
+	resetting = false;
 	k_mutex_unlock(&gndwdt_lock);
 
+	(void)k_work_cancel_delayable(&gndwdt_reset_work);
 	(void)k_work_cancel_delayable(&gndwdt_work);
 	kfsw_log_info("Ground watchdog stopped");
 	return 0;
@@ -94,7 +109,7 @@ static int ground_wtd(const struct kfsw_command_arg *args, size_t arg_count,
 		return 0;
 	}
 
-	if (!source->via_csp || strcmp(args[0].value.text, "KFSWWSFK") != 0) {
+	if (!source->via_csp || strcmp(args[0].value.text, KFSW_GNDWDT_FEED_WORD) != 0) {
 		result->status = KFSW_COMMAND_DENIED;
 		return -EACCES;
 	}
@@ -111,12 +126,7 @@ static int ground_wtd(const struct kfsw_command_arg *args, size_t arg_count,
 		contacts++;
 	}
 	k_mutex_unlock(&gndwdt_lock);
-#if CONFIG_KFSW_PARAM
 	ground_wtd_reply(result);
-#else
-	result->status = KFSW_COMMAND_OK;
-	(void)snprintf(result->detail, sizeof(result->detail), "ground_wtd restarted");
-#endif
 	return 0;
 }
 
@@ -138,13 +148,29 @@ const struct kfsw_command_definition_set kfsw_gndwdt_command_definitions = {
 	.count = ARRAY_SIZE(ground_wtd_commands),
 };
 
+#if CONFIG_KFSW_COMMAND_CSP
+int kfsw_gndwdt_remote(uint16_t node, bool feed, struct kfsw_command_result *result)
+{
+	struct kfsw_command_arg arg = {
+		.type = KFSW_COMMAND_TYPE_TEXT,
+		.value.text = feed ? KFSW_GNDWDT_FEED_WORD : "get",
+	};
+
+	if ((node == 0U) || (result == NULL) || (csp_iflist_get_by_addr(node) != NULL)) {
+		return -EINVAL;
+	}
+	return kfsw_command_invoke_remote(node, "ground_wtd", &arg, 1U, result);
+}
+#endif
+
 int kfsw_gndwdt_evaluate(void)
 {
 	uint64_t elapsed_ms;
 	uint32_t allowed_s;
 
 	k_mutex_lock(&gndwdt_lock, K_FOREVER);
-	if (!running || !enabled) {
+	/* A decided reset is reported once, not again on every later check. */
+	if (!running || !enabled || resetting) {
 		k_mutex_unlock(&gndwdt_lock);
 		return 0;
 	}
@@ -159,7 +185,7 @@ int kfsw_gndwdt_evaluate(void)
 	if (expiries < UINT32_MAX) {
 		expiries++;
 	}
-	/* Without reboot support, report expiry once per timeout. */
+	/* So a disarm and re-arm starts from now rather than from the expiry. */
 	restart_countdown();
 	k_mutex_unlock(&gndwdt_lock);
 
@@ -223,11 +249,7 @@ static void gndwdt_reset_handler(struct k_work *work)
 {
 	ARG_UNUSED(work);
 
-#if CONFIG_REBOOT
 	sys_reboot(SYS_REBOOT_COLD);
-#else
-	kfsw_log_error("Ground watchdog: this build cannot reset the node");
-#endif
 }
 
 static void gndwdt_work_handler(struct k_work *work)

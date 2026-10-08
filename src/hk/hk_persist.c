@@ -14,6 +14,10 @@
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_HK
 #include <kfsw/services/log.h>
 
+#if CONFIG_KFSW_HK_BEACON
+#include <kfsw/comms/csp.h>
+#endif
+
 #include "../snapshot_file.h"
 #include "hk_internal.h"
 
@@ -263,7 +267,7 @@ static int load_snapshot(void)
 #if CONFIG_KFSW_HK_BEACON
 		if (item->beacon_ms != 0U &&
 		    (item->beacon_ms < CONFIG_KFSW_HK_BEACON_FLOOR_MS || item->beacon_node == 0U ||
-		     item->beacon_node > 16383U)) {
+		     item->beacon_node >= KFSW_CSP_BROADCAST_ADDRESS)) {
 			return -ERANGE;
 		}
 #endif
@@ -301,13 +305,13 @@ static int load_snapshot(void)
 	}
 #endif
 	kfsw_hk_lock();
-	for (uint8_t index = 0; index < ARRAY_SIZE(restored); index++) {
+	for (size_t index = 0; index < ARRAY_SIZE(restored); index++) {
 		const struct restored_report *item = &restored[index];
 
-		kfsw_hk_restore_report(index, item->present ? &item->definition : NULL,
+		kfsw_hk_restore_report((uint8_t)index, item->present ? &item->definition : NULL,
 				       item->period_ms);
 #if CONFIG_KFSW_HK_BEACON
-		kfsw_hk_beacon_restore(index, item->beacon_node, item->beacon_ms);
+		kfsw_hk_beacon_restore((uint8_t)index, item->beacon_node, item->beacon_ms);
 #endif
 	}
 #if CONFIG_KFSW_HK_STORE

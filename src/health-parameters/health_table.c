@@ -144,6 +144,7 @@ static const struct kfsw_param_definition health_param_definitions[] = {
 const struct kfsw_param_definition_set kfsw_health_param_definitions = {
 	.table = KFSW_HEALTH_PARAM_TABLE_ID,
 	.name = KFSW_HEALTH_PARAM_TABLE_NAME,
+	.description = "Health monitor and watchdog feeds",
 	.definitions = health_param_definitions,
 	.count = ARRAY_SIZE(health_param_definitions),
 };

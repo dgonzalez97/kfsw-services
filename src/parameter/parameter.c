@@ -394,6 +394,7 @@ static int add_table(const struct kfsw_param_definition_set *set)
 	parameter_tables[insert_at] = (struct kfsw_param_table_info){
 		.id = set->table,
 		.name = set->name,
+		.description = set->description,
 		.count = 0U,
 	};
 	table_count++;
@@ -432,6 +433,13 @@ static int add_definition(const struct kfsw_param_definition_set *set,
 		}
 		size = definition->capacity;
 	} else {
+#if !CONFIG_KFSW_PARAM_FLOAT
+		if ((definition->type == KFSW_PARAM_FLOAT) ||
+		    (definition->type == KFSW_PARAM_DOUBLE)) {
+			kfsw_log_error("PARAM: %s needs KFSW_PARAM_FLOAT", definition->name);
+			return -ENOTSUP;
+		}
+#endif
 		size = scalar_size(definition->type);
 		if (size == 0U) {
 			return -EINVAL;

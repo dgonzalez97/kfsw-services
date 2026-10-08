@@ -240,6 +240,7 @@ static const struct kfsw_param_definition hk_param_definitions[] = {
 const struct kfsw_param_definition_set kfsw_hk_param_definitions = {
 	.table = KFSW_HK_PARAM_TABLE_ID,
 	.name = KFSW_HK_PARAM_TABLE_NAME,
+	.description = "Housekeeping reports and counters",
 	.definitions = hk_param_definitions,
 	.count = ARRAY_SIZE(hk_param_definitions),
 };

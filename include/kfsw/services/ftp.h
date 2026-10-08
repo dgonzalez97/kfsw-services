@@ -21,6 +21,17 @@ extern "C" {
  * deletes and mkdir under it are refused.
  */
 #define KFSW_FTP_READONLY_ROOT "/kfsw/hk"
+
+/*
+ * Virtual first components that select a root other than KFSW_FTP_STORAGE_ROOT.
+ * A listing of "/" shows each one that exists as a directory.
+ */
+/** Housekeeping sample files, read-only. */
+#define KFSW_FTP_HK_PATH "hk"
+/** Firmware slots, read-only, with CONFIG_KFSW_FWU_FILES. */
+#define KFSW_FTP_BOOT_PATH "boot"
+/** RAM scratch volume, writable and empty after every boot, with CONFIG_KFSW_STORAGE_TMP. */
+#define KFSW_FTP_TMP_PATH "tmp"
 /* Matches the Kconfig range, so a value accepted at runtime is one the
  * composition could have been built with. */
 #define KFSW_FTP_TIMEOUT_MIN_MS 1000U

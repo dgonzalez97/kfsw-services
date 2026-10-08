@@ -19,6 +19,9 @@ struct kfsw_param_definition_set;
 /** Longest procedure name, including the terminator. */
 #define KFSW_FBO_NAME_MAX 32U
 
+/** Procedures live in this directory of the FTP root. */
+#define KFSW_FBO_FTP_PATH "procedures"
+
 /** @defgroup kfsw_services_fbo File based operations
  *  @ingroup kfsw_services
  *  Run a list of commands from a file. Every line is a normal command, and

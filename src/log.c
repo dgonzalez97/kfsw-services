@@ -5,13 +5,22 @@
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/util.h>
+#if CONFIG_KFSW_LOG_SHELL
+#include <zephyr/shell/shell.h>
+#endif
 
 #include <kfsw/services/log.h>
 #if CONFIG_KFSW_LOG_HISTORY
 #include "log_history_internal.h"
 #endif
+#if CONFIG_KFSW_LOG_REMOTE
+#include <kfsw/services/log_remote.h>
+#endif
 #if CONFIG_KFSW_PARAM
 #include <kfsw/services/parameter.h>
+#endif
+#if CONFIG_KFSW_CSP
+#include <csp/csp_debug.h>
 #endif
 
 #define KFSW_LOG_MESSAGE_SIZE 192U
@@ -59,8 +68,50 @@ int kfsw_log_set_module_level(enum kfsw_log_module module, uint8_t level)
 
 /* Used by the write path, so not behind the parameter guard. */
 static uint8_t kfsw_log_color_value = IS_ENABLED(CONFIG_KFSW_LOG_COLOR);
+#if CONFIG_KFSW_LOG_SHELL
+static uint8_t kfsw_log_shell_value = 1U;
+
+static void mirror_to_shell(const char *level, const char *message)
+{
+	/* Shell output is a thread API; the console still covers early boot/ISRs. */
+	if (kfsw_log_shell_value == 0U || k_is_in_isr()) {
+		return;
+	}
+	STRUCT_SECTION_FOREACH(shell, sh)
+	{
+		if (!shell_ready(sh)) {
+			continue;
+		}
+		if (level != NULL) {
+			shell_print(sh, "[%s] %s", level, message);
+		} else {
+			shell_print(sh, "%s", message);
+		}
+	}
+}
+#endif
+
 static atomic_t kfsw_log_emitted;
 static atomic_t kfsw_log_dropped;
+
+#if CONFIG_KFSW_LOG_REMOTE
+/* Read by the remote log server for each read; a parameter when PARAM is built. */
+static uint8_t kfsw_log_remote_format_value = KFSW_LOG_REMOTE_TEXT;
+
+uint8_t kfsw_log_remote_format(void)
+{
+	return kfsw_log_remote_format_value;
+}
+
+int kfsw_log_remote_set_format(uint8_t format)
+{
+	if (format > KFSW_LOG_REMOTE_DICTIONARY) {
+		return -ERANGE;
+	}
+	kfsw_log_remote_format_value = format;
+	return 0;
+}
+#endif
 
 #if CONFIG_KFSW_PARAM
 static uint8_t kfsw_log_param_value = CONFIG_KFSW_LOG_MIN_LEVEL;
@@ -97,10 +148,17 @@ static void sample_dropped(void *value)
 static uint32_t kfsw_log_emitted_value;
 static uint32_t kfsw_log_dropped_value;
 
-static int validate_log_color(const union kfsw_param_scalar *value)
+static int validate_log_bool(const union kfsw_param_scalar *value)
 {
 	return (value->u8 > 1U) ? -ERANGE : 0;
 }
+
+#if CONFIG_KFSW_LOG_REMOTE
+static int validate_remote_format(const union kfsw_param_scalar *value)
+{
+	return (value->u8 > KFSW_LOG_REMOTE_DICTIONARY) ? -ERANGE : 0;
+}
+#endif
 
 static uint8_t kfsw_log_levels_value[KFSW_LOG_MODULE_COUNT];
 
@@ -183,13 +241,39 @@ static const struct kfsw_param_definition log_param_definitions[] = {
 		.description = "Colour log lines by severity; read every line",
 		.value = &kfsw_log_color_value,
 		.default_value = {.u8 = IS_ENABLED(CONFIG_KFSW_LOG_COLOR)},
-		.validate = validate_log_color,
+		.validate = validate_log_bool,
 	},
+#if CONFIG_KFSW_LOG_SHELL
+	{
+		.offset = 0x0dU,
+		.type = KFSW_PARAM_U8,
+		.flags = KFSW_PARAM_FLAG_CONFIGURATION | KFSW_PARAM_FLAG_LIVE,
+		.name = "log_shell",
+		.description = "Mirror logs to active shells; 0 off, 1 on",
+		.value = &kfsw_log_shell_value,
+		.default_value = {.u8 = 1U},
+		.validate = validate_log_bool,
+	},
+#endif
+#if CONFIG_KFSW_LOG_REMOTE
+	{
+		.offset = 0x20U,
+		.type = KFSW_PARAM_U8,
+		.flags = KFSW_PARAM_FLAG_CONFIGURATION | KFSW_PARAM_FLAG_PERSISTENT |
+			 KFSW_PARAM_FLAG_LIVE,
+		.name = "log_remote_format",
+		.description = "How log remote sends messages: 0 text, 1 dictionary",
+		.value = &kfsw_log_remote_format_value,
+		.default_value = {.u8 = KFSW_LOG_REMOTE_TEXT},
+		.validate = validate_remote_format,
+	},
+#endif
 };
 
 const struct kfsw_param_definition_set kfsw_log_param_definitions = {
 	.table = KFSW_LOG_PARAM_TABLE_ID,
 	.name = KFSW_LOG_PARAM_TABLE_NAME,
+	.description = "Log levels, colour and counters",
 	.definitions = log_param_definitions,
 	.count = ARRAY_SIZE(log_param_definitions),
 };
@@ -238,6 +322,7 @@ static void kfsw_log_vwrite(uint8_t module, uint8_t severity, const char *level,
 			    va_list args)
 {
 	char message[KFSW_LOG_MESSAGE_SIZE];
+	va_list copy;
 	int length;
 	size_t i;
 
@@ -253,7 +338,9 @@ static void kfsw_log_vwrite(uint8_t module, uint8_t severity, const char *level,
 	}
 	(void)atomic_inc(&kfsw_log_emitted);
 
-	length = vsnprintk(message, sizeof(message), format, args);
+	va_copy(copy, args);
+	length = vsnprintk(message, sizeof(message), format, copy);
+	va_end(copy);
 
 	for (i = 0U; message[i] != '\0'; i++) {
 		if ((message[i] == '\n') || (message[i] == '\r')) {
@@ -262,7 +349,7 @@ static void kfsw_log_vwrite(uint8_t module, uint8_t severity, const char *level,
 	}
 
 #if CONFIG_KFSW_LOG_HISTORY
-	kfsw_log_history_append(module, severity, message,
+	kfsw_log_history_append(module, severity, format, args, message,
 				(length < 0) || ((size_t)length >= sizeof(message)));
 #else
 	ARG_UNUSED(length);
@@ -273,8 +360,37 @@ static void kfsw_log_vwrite(uint8_t module, uint8_t severity, const char *level,
 	       (IS_ENABLED(CONFIG_KFSW_LOG_COLOR) && (kfsw_log_color_value != 0U))
 		       ? KFSW_LOG_COLOR_RESET
 		       : "");
+#if CONFIG_KFSW_LOG_SHELL
+	mirror_to_shell(level, message);
+#endif
 }
 #endif
+
+void kfsw_log_write_marker(uint8_t module, const char *format, ...)
+{
+	char message[KFSW_LOG_MESSAGE_SIZE];
+	va_list args;
+	int length;
+
+	va_start(args, format);
+	length = vsnprintk(message, sizeof(message), format, args);
+	va_end(args);
+
+	(void)atomic_inc(&kfsw_log_emitted);
+#if CONFIG_KFSW_LOG_HISTORY
+	va_start(args, format);
+	kfsw_log_history_append(module, 1U, format, args, message,
+				(length < 0) || ((size_t)length >= sizeof(message)));
+	va_end(args);
+#else
+	ARG_UNUSED(module);
+	ARG_UNUSED(length);
+#endif
+	printk("%s\n", message);
+#if CONFIG_KFSW_LOG_SHELL
+	mirror_to_shell(NULL, message);
+#endif
+}
 
 #if CONFIG_KFSW_LOG_MIN_LEVEL < 4
 /*
@@ -291,5 +407,48 @@ void kfsw_log_write(uint8_t module, uint8_t severity, const char *format, ...)
 	va_start(args, format);
 	kfsw_log_vwrite(module, severity, names[severity], format, args);
 	va_end(args);
+}
+#endif
+
+#if CONFIG_KFSW_CSP && (CONFIG_KFSW_LOG_MIN_LEVEL <= 1)
+/* libcsp ends each line itself and colours it; the log does both its own way. */
+static void strip_line_formatting(char *text)
+{
+	size_t read = 0U;
+	size_t write = 0U;
+
+	while (text[read] != '\0') {
+		if ((text[read] == '\n') || (text[read] == '\r')) {
+			read++;
+			continue;
+		}
+		if (text[read] != '\033') {
+			text[write++] = text[read++];
+			continue;
+		}
+		while ((text[read] != '\0') && (text[read] != 'm')) {
+			read++;
+		}
+		if (text[read] == 'm') {
+			read++;
+		}
+	}
+	text[write] = '\0';
+}
+
+/* libcsp prints its packet trace (csp debug on) through this hook. */
+void csp_print_func(const char *fmt, ...)
+{
+	char line[KFSW_LOG_MESSAGE_SIZE];
+	va_list args;
+
+	va_start(args, fmt);
+	(void)vsnprintk(line, sizeof(line), fmt, args);
+	va_end(args);
+
+	strip_line_formatting(line);
+	if (line[0] != '\0') {
+		kfsw_log_write(KFSW_LOG_MODULE_CSP, 1U, "%s", line);
+	}
 }
 #endif

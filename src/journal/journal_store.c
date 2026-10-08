@@ -33,6 +33,7 @@ static int write_all(struct fs_file_t *file, const uint8_t *bytes, size_t size)
 static void encode(const struct kfsw_journal_record *record, uint8_t *bytes)
 {
 	memset(bytes, 0, KFSW_JOURNAL_RECORD_SIZE);
+	/* codechecker_intentional [bugprone-not-null-terminated-result] a binary magic */
 	memcpy(bytes, "KFE1", 4);
 	bytes[4] = 1;
 	bytes[5] = record->utc_valid;

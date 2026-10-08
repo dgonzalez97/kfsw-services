@@ -2,7 +2,6 @@
 #include <stdint.h>
 
 #include <zephyr/sys/byteorder.h>
-#include <zephyr/sys/printk.h>
 
 #include <kfsw/platform/hardware.h>
 #include <kfsw/platform/reset.h>
@@ -73,11 +72,11 @@ void kfsw_boot_service_start(void)
 	/* CI and HIL tests parse these markers. The raw mask is kept because several
 	 * causes can be latched at once.
 	 */
-	printk("@BOOT sw=%s board=%s unit=%s reset=0x%08x reset_rc=%d reset_cause=%s\n",
-	       KFSW_IMAGE_VERSION, CONFIG_BOARD_TARGET,
-	       (boot_hardware_id[0] != '\0') ? boot_hardware_id : "unknown",
-	       (unsigned int)reset_cause, reset_rc,
-	       kfsw_platform_reset_cause_name(reset_cause));
+	kfsw_log_marker("@BOOT sw=%s board=%s unit=%s reset=0x%08x reset_rc=%d reset_cause=%s",
+			KFSW_IMAGE_VERSION, CONFIG_BOARD_TARGET,
+			(boot_hardware_id[0] != '\0') ? boot_hardware_id : "unknown",
+			(unsigned int)reset_cause, reset_rc,
+			kfsw_platform_reset_cause_name(reset_cause));
 
 	if (kfsw_platform_reset_cause_is_watchdog(reset_cause)) {
 		kfsw_log_warning("Previous run was ended by the watchdog");
@@ -124,8 +123,8 @@ void kfsw_boot_service_start(void)
 	}
 #endif
 
-	printk("@SOURCE %s\n", KFSW_SOURCE_REVISION);
-	printk("@READY uptime_ms=%lld\n", (long long)kfsw_time_monotonic_ms());
+	kfsw_log_marker("@SOURCE %s", KFSW_SOURCE_REVISION);
+	kfsw_log_marker("@READY uptime_ms=%lld", (long long)kfsw_time_monotonic_ms());
 }
 
 #if CONFIG_KFSW_LASTWORDS

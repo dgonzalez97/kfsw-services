@@ -245,7 +245,8 @@ bool kfsw_command_server_is_started(void);
  *
  * The name is resolved against this node's registry to obtain the wire
  * identifier, so both nodes must agree on identifiers. A node that does not
- * implement the identifier answers with KFSW_COMMAND_UNKNOWN.
+ * implement the identifier answers with KFSW_COMMAND_UNKNOWN. Node 0, and the
+ * broadcast address or above, return -EINVAL.
  */
 int kfsw_command_invoke_remote(uint16_t node, const char *name, const struct kfsw_command_arg *args,
 			       size_t arg_count, struct kfsw_command_result *result);

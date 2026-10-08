@@ -1,17 +1,18 @@
 set(kfsw_services_sources
     src/boot.c
+    src/boot_diagnostics.c
     src/log.c
 )
 
 if(CONFIG_KFSW_LOG_HISTORY)
     list(APPEND kfsw_services_sources src/log_history.c)
 endif()
-if(CONFIG_KFSW_LOG_HISTORY_CSP)
-    list(APPEND kfsw_services_sources src/log_history_csp.c)
+if(CONFIG_KFSW_LOG_REMOTE)
+    list(APPEND kfsw_services_sources src/log_remote.c)
 endif()
 
-# Atomic snapshot writes, shared by parameters and housekeeping.
-if(CONFIG_KFSW_PARAM_PERSISTENCE OR CONFIG_KFSW_HK_PERSISTENCE)
+# Atomic snapshot writes, shared by parameters, housekeeping and table dumps.
+if(CONFIG_KFSW_STORAGE OR CONFIG_KFSW_PARAM_PERSISTENCE OR CONFIG_KFSW_HK_PERSISTENCE OR CONFIG_KFSW_TABLE)
     list(APPEND kfsw_services_sources src/snapshot_file.c)
 endif()
 
@@ -65,8 +66,15 @@ message(STATUS "K-FSW image version: ${KFSW_IMAGE_VERSION}")
 if(CONFIG_KFSW_PARAM)
     list(APPEND kfsw_services_sources src/parameter/parameter.c)
     list(APPEND kfsw_services_sources src/param-parameters/param_table.c)
+    if(CONFIG_KFSW_PARAM_PERSISTENCE OR CONFIG_KFSW_TABLE)
+        list(APPEND kfsw_services_sources src/parameter/param_wire.c)
+    endif()
     if(CONFIG_KFSW_PARAM_PERSISTENCE)
         list(APPEND kfsw_services_sources src/parameter/parameter_persistence.c)
+    endif()
+    if(CONFIG_KFSW_TABLE)
+        list(APPEND kfsw_services_sources src/table/table.c)
+        list(APPEND kfsw_services_sources src/table-parameters/table_parameters.c)
     endif()
 endif()
 
@@ -250,6 +258,7 @@ if(CONFIG_KFSW_HK)
     endif()
     if(CONFIG_KFSW_HK_STORE)
         list(APPEND kfsw_services_sources src/hk/hk_store.c)
+        list(APPEND kfsw_services_sources src/hk/hk_reader.c)
     endif()
 endif()
 
@@ -257,7 +266,7 @@ add_library(kfsw_services STATIC ${kfsw_services_sources})
 
 add_library(kfsw::services ALIAS kfsw_services)
 
-if(CONFIG_KFSW_FWU_FILES)
+if(CONFIG_KFSW_FWU_FILES OR (CONFIG_BOOTLOADER_MCUBOOT AND CONFIG_MCUBOOT_IMG_MANAGER))
     target_link_libraries(kfsw_services PRIVATE MCUBOOT_BOOTUTIL)
 endif()
 
@@ -273,7 +282,9 @@ foreach(kfsw_repo "app=${CMAKE_CURRENT_LIST_DIR}/../k-fsw"
                   "plat=${CMAKE_CURRENT_LIST_DIR}/../kfsw-platform"
                   "svc=${CMAKE_CURRENT_LIST_DIR}"
                   "comms=${CMAKE_CURRENT_LIST_DIR}/../kfsw-comms"
-                  "mod=${CMAKE_CURRENT_LIST_DIR}/../kfsw-modules")
+                  "mod=${CMAKE_CURRENT_LIST_DIR}/../kfsw-modules"
+                  "csp=${CMAKE_CURRENT_LIST_DIR}/../kfsw-comms/third_party/libcsp"
+                  "param=${CMAKE_CURRENT_LIST_DIR}/third_party/libparam")
     string(REPLACE "=" ";" kfsw_repo_parts "${kfsw_repo}")
     list(GET kfsw_repo_parts 0 kfsw_repo_label)
     list(GET kfsw_repo_parts 1 kfsw_repo_path)
@@ -281,7 +292,7 @@ foreach(kfsw_repo "app=${CMAKE_CURRENT_LIST_DIR}/../k-fsw"
 
     if(GIT_FOUND AND EXISTS "${kfsw_repo_path}/.git")
         execute_process(
-            COMMAND ${GIT_EXECUTABLE} rev-parse --short=10 HEAD
+            COMMAND ${GIT_EXECUTABLE} rev-parse --short=8 HEAD
             WORKING_DIRECTORY "${kfsw_repo_path}"
             OUTPUT_VARIABLE kfsw_repo_head
             OUTPUT_STRIP_TRAILING_WHITESPACE
@@ -303,8 +314,9 @@ foreach(kfsw_repo "app=${CMAKE_CURRENT_LIST_DIR}/../k-fsw"
             endif()
         endif()
 
-        # Reconfigure when this repository moves.
-        if(EXISTS "${kfsw_repo_path}/.git/HEAD")
+        # Reconfigure when this repository moves. kfsw-comms already watches
+        # libcsp, for csp info, and a second rule for one file breaks ninja.
+        if(EXISTS "${kfsw_repo_path}/.git/HEAD" AND NOT kfsw_repo_label STREQUAL "csp")
             set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
                 "${kfsw_repo_path}/.git/HEAD")
         endif()
@@ -333,8 +345,7 @@ target_link_libraries(kfsw_services
         kernel
 )
 
-if(CONFIG_KFSW_LOG_HISTORY_CSP OR CONFIG_KFSW_PARAM_CSP OR CONFIG_KFSW_FTP OR CONFIG_KFSW_COMMAND_CSP
-   OR CONFIG_KFSW_FWU_LITE_CSP OR CONFIG_KFSW_HK_CSP OR ((CONFIG_KFSW_FBO OR CONFIG_KFSW_JOURNAL) AND CONFIG_KFSW_CSP))
+if(CONFIG_KFSW_CSP)
     target_link_libraries(kfsw_services
         PRIVATE
             kfsw::comms

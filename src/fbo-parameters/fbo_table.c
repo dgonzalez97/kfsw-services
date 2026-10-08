@@ -135,6 +135,7 @@ static const struct kfsw_param_definition fbo_param_definitions[] = {
 const struct kfsw_param_definition_set kfsw_fbo_param_definitions = {
 	.table = KFSW_FBO_PARAM_TABLE_ID,
 	.name = KFSW_FBO_PARAM_TABLE_NAME,
+	.description = "Procedure runs and progress",
 	.definitions = fbo_param_definitions,
 	.count = ARRAY_SIZE(fbo_param_definitions),
 };

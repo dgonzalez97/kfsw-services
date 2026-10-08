@@ -275,7 +275,8 @@ static int invoke_remote(uint16_t node, const char *name, const struct kfsw_comm
 	size_t encoded_size;
 	int outcome;
 
-	if ((name == NULL) || (result == NULL) || (node >= 16383U)) {
+	if ((name == NULL) || (result == NULL) || (node == 0U) ||
+	    (node >= KFSW_CSP_BROADCAST_ADDRESS)) {
 		return -EINVAL;
 	}
 	kfsw_csp_get_info(&csp_info);

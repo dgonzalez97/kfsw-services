@@ -182,7 +182,7 @@ int kfsw_hk_set_store(uint8_t report, uint32_t interval_ms);
  * @param node Destination address.
  * @param interval_ms Milliseconds between beacons, or 0 to stop.
  * @retval 0 Configured.
- * @retval -EINVAL Unknown report, or an address outside 1..16383.
+ * @retval -EINVAL Unknown report, or an address outside 1..KFSW_CSP_BROADCAST_ADDRESS - 1.
  * @retval -ERANGE The interval is below CONFIG_KFSW_HK_BEACON_FLOOR_MS.
  */
 int kfsw_hk_set_beacon(uint8_t report, uint16_t node, uint32_t interval_ms);
@@ -225,6 +225,109 @@ int kfsw_hk_get_store(uint8_t report, uint32_t *interval_ms);
  * @return True when reports with a period are being collected.
  */
 bool kfsw_hk_enabled(void);
+
+/**
+ * Where stored samples are kept. File transfer already serves this directory
+ * read-only, so an extract written here is downloadable without anything else.
+ */
+#define KFSW_HK_STORE_PATH "/kfsw/hk"
+
+/** What a report's stored history holds right now. */
+struct kfsw_hk_store_info {
+	/** Bytes per stored record, fixed when the file was created. */
+	uint16_t record_size;
+	/** Slots the file has. */
+	uint32_t capacity;
+	/** Slots that hold a record. */
+	uint16_t records;
+	/** Sequence of the oldest readable record. */
+	uint16_t oldest;
+	/** Sequence of the newest. */
+	uint16_t newest;
+	/** Milliseconds between writes, 0 when the report is RAM only. */
+	uint32_t interval_ms;
+};
+
+/**
+ * Which stored records to read. A zeroed filter, apart from the report, selects
+ * everything the file holds.
+ *
+ * Sequence numbers wrap at 16 bits, so a window is compared as a signed
+ * difference: a range that straddles the wrap still selects what it should.
+ */
+struct kfsw_hk_store_filter {
+	/** Report to read. */
+	uint8_t report;
+	/** Read from this sequence on; 0 means from the oldest kept. */
+	uint16_t from_sequence;
+	/** Stop after this sequence; 0 means up to the newest. */
+	uint16_t to_sequence;
+	/** Only records collected at or after this time; 0 means no bound. */
+	uint32_t from_seconds;
+	/** Only records collected at or before this time; 0 means no bound. */
+	uint32_t to_seconds;
+	/** Skip records carrying any of these flags, such as KFSW_HK_FLAG_INCOMPLETE. */
+	uint8_t without_flags;
+};
+
+/**
+ * @brief Read what a report's stored history holds.
+ *
+ * @param report Report index.
+ * @param[out] info Destination.
+ * @retval 0 Written.
+ * @retval -EINVAL Unknown report or a NULL destination.
+ * @retval -ENODEV There is no storage.
+ * @retval -ENOENT The report has no file.
+ * @retval -EBADMSG The file is not this report's store.
+ */
+int kfsw_hk_store_query(uint8_t report, struct kfsw_hk_store_info *info);
+
+/**
+ * @brief Count the stored records a filter selects.
+ *
+ * @param filter What to select.
+ * @param[out] records How many match.
+ * @return The codes of @ref kfsw_hk_store_query.
+ */
+int kfsw_hk_store_count(const struct kfsw_hk_store_filter *filter, uint16_t *records);
+
+/**
+ * @brief Read one stored record a filter selects, oldest first.
+ *
+ * The sample is the one @ref kfsw_hk_get would have returned when it was
+ * collected, so the same printer and the same remote reply serve both.
+ *
+ * @param filter What to select.
+ * @param index Position among the matching records, 0 being the oldest.
+ * @param[out] sample Destination.
+ * @retval 0 Written.
+ * @retval -ENOENT Fewer records match than @p index asks for.
+ * @return Otherwise the codes of @ref kfsw_hk_store_query.
+ */
+int kfsw_hk_store_read(const struct kfsw_hk_store_filter *filter, uint16_t index,
+		       struct kfsw_hk_sample *sample);
+
+/**
+ * @brief Write the stored records a filter selects to a file, for downlink.
+ *
+ * The file is a 20-byte header (magic `KHKD`, version, report, record size,
+ * record count, the first and last sequence, and a CRC32) followed by the
+ * matching records unchanged, so the ground decodes them with the report
+ * definition it already has. It is written beside the target and renamed over
+ * it, so an interrupted extract leaves the previous file.
+ *
+ * @param filter What to select.
+ * @param path File to write.
+ * @param[out] records How many were written. May be NULL.
+ * @retval 0 The file holds the selected records.
+ * @retval -EINVAL A NULL argument, or a path that is empty or too long.
+ * @retval -ENOENT Nothing matched, and no file was written.
+ * @retval <0 An errno from the filesystem; any previous file is unchanged.
+ * @return Otherwise the codes of @ref kfsw_hk_store_query.
+ */
+int kfsw_hk_store_extract(const struct kfsw_hk_store_filter *filter, const char *path,
+			  uint16_t *records);
 
 /** Definitions this service publishes as parameter table 33. */
 extern const struct kfsw_param_definition_set kfsw_hk_param_definitions;

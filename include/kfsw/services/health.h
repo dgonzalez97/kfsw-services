@@ -14,7 +14,7 @@ extern "C" {
 #endif
 
 /**
- * @defgroup kfsw_services_health K-FSW health monitoring
+ * @defgroup kfsw_services_health Health monitoring
  * @ingroup kfsw_services
  *
  * Components report periodically, and the watchdog is fed only while all of

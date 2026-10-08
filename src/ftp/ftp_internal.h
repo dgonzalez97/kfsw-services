@@ -1,8 +1,8 @@
 #ifndef KFSW_SERVICES_FTP_INTERNAL_H
 #define KFSW_SERVICES_FTP_INTERNAL_H
 
-#include <stddef.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 #include <zephyr/fs/fs.h>
@@ -12,6 +12,12 @@
 #define KFSW_FTP_ROOT_PATH KFSW_FTP_STORAGE_ROOT
 #define KFSW_FTP_EXCHANGE_PATH KFSW_FTP_ROOT_PATH "/build"
 #define KFSW_FTP_PROTOCOL_VERSION 1U
+/*
+ * Set on a PUT request by a client that understands a non-zero start offset in
+ * the PUT_READY reply. A client without it gets the original behaviour: any
+ * partial is discarded and the upload starts from zero.
+ */
+#define KFSW_FTP_FLAG_RESUME 0x01U
 #define KFSW_FTP_PROTOCOL_HEADER_SIZE 24U
 #define KFSW_FTP_FULL_PATH_SIZE 128U
 
@@ -98,7 +104,8 @@ struct kfsw_ftp_transfer {
 	uint32_t offset;
 	uint32_t actual_crc32;
 	uint8_t data_opcode;
-	/* True when this upload goes to the firmware update slot instead of a file. */
+	/* True when this upload goes to the firmware update slot instead of a file.
+	 */
 	bool firmware;
 };
 
@@ -106,10 +113,13 @@ struct kfsw_ftp_transfer {
 int kfsw_ftp_protocol_encode(uint8_t *buffer, size_t capacity,
 			     const struct kfsw_ftp_message *message, size_t *encoded_size);
 int kfsw_ftp_protocol_decode(const uint8_t *buffer, size_t size, struct kfsw_ftp_message *message);
-/** The virtual first component that selects the read-only root. */
-#define KFSW_FTP_READONLY_PREFIX "hk"
-
 bool kfsw_ftp_path_is_read_only(const char *virtual_path);
+
+/**
+ * Visit each extra root that exists as a directory, so a listing of the FTP
+ * root shows them. Returns false when the visitor stopped.
+ */
+bool kfsw_ftp_list_roots(kfsw_ftp_list_visitor_t visitor, void *context);
 
 /** Resolve a path a caller intends to write, refusing the read-only root. */
 int kfsw_ftp_resolve_write_path(const char *virtual_path, char *resolved, size_t resolved_size);
@@ -122,10 +132,38 @@ int kfsw_ftp_copy_message_path(const struct kfsw_ftp_message *message, char *pat
 			       size_t path_size);
 
 /* Local storage below the FTP root. */
+/** -ENOSPC unless the volume holding path has bytes plus the margin free. */
+int kfsw_ftp_check_space(const char *path, uint32_t bytes);
 int kfsw_ftp_file_crc(const char *path, struct kfsw_ftp_workspace *workspace, uint32_t *file_size,
 		      uint32_t *crc32);
 int kfsw_ftp_make_temporary_path(const char *path, char *temporary_path,
 				 size_t temporary_path_size);
+
+/**
+ * @brief Where an interrupted upload left off, if it can be continued.
+ *
+ * Reads the note beside the partial file and accepts it only when it describes
+ * this same transfer. The offset comes from the partial's own size rather than
+ * the note, because a power cut can leave the note ahead of what reached flash.
+ *
+ * @param path Resolved target path.
+ * @param workspace Scratch buffer for the CRC pass.
+ * @param total_size Size the caller intends to write.
+ * @param crc32 CRC32 the caller intends to write.
+ * @param offset Bytes already committed; zero when there is nothing to resume.
+ * @param partial_crc32 CRC32 of those bytes.
+ *
+ * @retval 0 Always; a partial that does not match reports a zero offset.
+ */
+int kfsw_ftp_partial_resume_point(const char *path, struct kfsw_ftp_workspace *workspace,
+				  uint32_t total_size, uint32_t crc32, uint32_t *offset,
+				  uint32_t *partial_crc32);
+
+/** Record what a fresh partial is going to become, so it can be continued. */
+int kfsw_ftp_partial_note_write(const char *path, uint32_t total_size, uint32_t crc32);
+
+/** Forget the note. Safe when there is none. */
+void kfsw_ftp_partial_note_remove(const char *path);
 int kfsw_ftp_commit_temporary(const char *path, const char *temporary_path, uint32_t actual_size,
 			      uint32_t actual_crc32, uint32_t expected_size,
 			      uint32_t expected_crc32);

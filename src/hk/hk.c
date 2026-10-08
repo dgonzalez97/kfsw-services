@@ -8,6 +8,7 @@
 #include <zephyr/sys/util.h>
 
 #if CONFIG_KFSW_CSP
+#include <csp/csp_iflist.h>
 #include <kfsw/comms/csp.h>
 #endif
 #include <kfsw/services/hk.h>
@@ -180,6 +181,10 @@ static int entry_declared_width(const struct kfsw_hk_entry *entry, size_t *width
 		result = kfsw_param_visit(match_width, &search);
 	} else {
 #if CONFIG_KFSW_PARAM_CSP
+		/* Refused when the report is defined, not at the first sample. */
+		if (entry->node >= KFSW_CSP_BROADCAST_ADDRESS) {
+			return -EINVAL;
+		}
 		result = kfsw_param_remote_visit_until(entry->node, match_width, &search,
 						       k_uptime_get() +
 							       CONFIG_KFSW_PARAM_LIST_TIMEOUT_MS);
@@ -242,13 +247,28 @@ int kfsw_hk_prepare_definition(uint8_t report, const struct kfsw_hk_entry *entri
 
 static int clear_impl(uint8_t report);
 
-static int define_impl(uint8_t report, const struct kfsw_hk_entry *entries, size_t count)
+/* An entry may name this node by its address; it is read locally all the same. */
+static void name_local_entries(const struct kfsw_hk_entry *entries, size_t count,
+			       struct kfsw_hk_entry *named)
+{
+	for (size_t index = 0U; index < count; index++) {
+		named[index] = entries[index];
+#if CONFIG_KFSW_CSP
+		if (csp_iflist_get_by_addr(named[index].node) != NULL) {
+			named[index].node = KFSW_HK_NODE_LOCAL;
+		}
+#endif
+	}
+}
+
+static int define_impl(uint8_t report, const struct kfsw_hk_entry *requested, size_t count)
 {
 	struct kfsw_hk_report *target = kfsw_hk_report_at(report);
+	struct kfsw_hk_entry entries[CONFIG_KFSW_HK_ENTRIES];
 	struct kfsw_hk_definition definition;
 	int result;
 
-	if (target == NULL || entries == NULL) {
+	if (target == NULL || requested == NULL) {
 		return -EINVAL;
 	}
 	if (count == 0U) {
@@ -257,6 +277,7 @@ static int define_impl(uint8_t report, const struct kfsw_hk_entry *entries, size
 	if (count > CONFIG_KFSW_HK_ENTRIES) {
 		return -E2BIG;
 	}
+	name_local_entries(requested, count, entries);
 	result = kfsw_hk_prepare_definition(report, entries, count, &definition);
 	if (result != 0) {
 		return result;
@@ -763,14 +784,14 @@ int64_t kfsw_hk_schedule_wait(int64_t now)
 	int64_t wait = 200;
 
 	kfsw_hk_lock();
-	for (uint8_t index = 0; index < ARRAY_SIZE(reports); index++) {
+	for (size_t index = 0; index < ARRAY_SIZE(reports); index++) {
 		struct kfsw_hk_report *report = &reports[index];
 
 		if (report->defined && report->period_ms != 0U) {
 			wait = MIN(wait, MAX(0, report->next_uptime_ms - now));
 		}
 #if CONFIG_KFSW_HK_BEACON
-		wait = MIN(wait, kfsw_hk_beacon_wait(index, now));
+		wait = MIN(wait, kfsw_hk_beacon_wait((uint8_t)index, now));
 #endif
 	}
 	kfsw_hk_unlock();

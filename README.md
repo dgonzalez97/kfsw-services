@@ -7,7 +7,7 @@ events, commands, health, firmware update and housekeeping.
 | --- | --- | --- |
 | Boot | always | Startup markers, reset cause, image version and the note from the previous run |
 | Log | always | Console output, with a level per module |
-| Log history | `KFSW_LOG_HISTORY` | Recent text messages in RAM, with optional remote reads |
+| Log history | `KFSW_LOG_HISTORY` | Recent text messages in RAM, kept across a reset, with optional remote reads |
 | Parameters | `KFSW_PARAM` | Named settings in tables, local or from the ground |
 | Persistence | `KFSW_PARAM_PERSISTENCE` | A saved snapshot of the persistent settings |
 | Files | `KFSW_FTP` | File transfer in both directions, checked before commit |
@@ -47,6 +47,11 @@ The wire ID uses the table as its high byte and the offset as its low byte.
 Scalars, strings and byte arrays are supported. An array is always written and
 validated as a whole.
 
+Float and double parameters need `CONFIG_KFSW_PARAM_FLOAT`, on by default.
+Their formatting costs about 3.2 KB of flash, and 6.7 KB once the shell's own
+conversions go with it, so a composition with no float parameter can turn it
+off. Registering one with the option off is refused with `-ENOTSUP`.
+
 ### From the ground
 
 `CONFIG_KFSW_PARAM_CSP` adds remote access with the MIT-licensed
@@ -85,6 +90,12 @@ One console stream with a global level and a level per module, so raising one
 module to debug doesn't flood the console. A file sets its module with a define
 before the include.
 
+`CONFIG_KFSW_LOG_SHELL` mirrors messages and markers to active shell sessions
+as well as the console. It defaults off. With PARAM composed, table 25 offset
+`0x0d` (`log_shell`, u8, live, not persistent) controls mirroring: 0 off, 1 on.
+A build with mirroring enabled starts with `log_shell = 1`. Early boot and
+interrupt-context messages go to the console only.
+
 ## Events
 
 A RAM ring of numeric records: ID, timestamp, sequence number, severity and a
@@ -107,7 +118,7 @@ run to completion, and commands that change something are marked as mutating.
 Legacy calls send one request and wait for one result. Resending is a new
 operation, so inspect the node after a timeout before trying again.
 
-`KFSW_COMMAND_RETRY` adds ticket reservations and cached results. `cmd retry`
+`KFSW_COMMAND_RETRY` adds ticket reservations and cached results. A ticketed call
 reuses one ticket within an invocation; a new invocation is a new operation.
 Tickets expire and are lost on reset. A lost reply can still leave the outcome
 unknown.
@@ -173,13 +184,16 @@ expose sample files and firmware slots when enabled. Path traversal, empty
 components, backslashes, control characters and embedded NULs are rejected.
 
 A receiver writes a `.part` file, syncs it, checks it and then renames it over
-the final name. A failed transfer removes the partial file and leaves any
-existing file alone. The server handles one request at a time and answers
-`busy` to the rest.
+the final name. An existing file is left alone until the rename. The server
+handles one request at a time and answers `busy` to the rest.
 
-Version 1 has no resume, recursion, globbing, compression or encryption. The
-protocol is K-FSW's own and is not compatible with other FTP or TFTP
-implementations.
+An interrupted upload resumes by itself: the server keeps the partial, records
+the intended size and CRC32 in `<path>.part.map`, and tells the next upload of
+the same path where to start. A note that does not match the new request is
+ignored. The final check still covers the whole file.
+
+Version 1 has no recursion, globbing, compression or encryption. The protocol is
+K-FSW's own and is not compatible with other FTP or TFTP implementations.
 
 ## Housekeeping
 
