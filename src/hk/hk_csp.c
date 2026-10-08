@@ -19,6 +19,7 @@
 #if CONFIG_KFSW_HK_CSP
 
 /* Request: version, report, count, then the age to start from.
+ * Report 255 adds an eight-bit class mask and selects across RAM reports.
  * Reply: one packet per sample, each a complete frame.
  */
 #define KFSW_HK_REQUEST_SIZE 5U
@@ -39,6 +40,7 @@ void kfsw_hk_serve_request(csp_conn_t *connection, csp_packet_t *request)
 	static struct kfsw_hk_sample sample;
 	uint8_t report;
 	uint8_t wanted;
+	uint8_t class_mask = KFSW_HK_CLASS_MASK_ALL;
 	uint16_t first_age;
 	uint16_t depth = 0U;
 	uint16_t sent = 0U;
@@ -57,16 +59,29 @@ void kfsw_hk_serve_request(csp_conn_t *connection, csp_packet_t *request)
 	report = request->data[1];
 	wanted = request->data[2];
 	first_age = sys_get_be16(&request->data[3]);
+	if (report == KFSW_HK_REPORT_ALL) {
+		if (request->length != KFSW_HK_REQUEST_SIZE + 1U) {
+			csp_buffer_free(request);
+			return;
+		}
+		class_mask = request->data[5];
+	}
 	csp_buffer_free(request);
 
-	if (kfsw_hk_depth(report, &depth) != 0) {
+	if (report == KFSW_HK_REPORT_ALL) {
+		depth = CONFIG_KFSW_HK_REPORTS * CONFIG_KFSW_HK_HISTORY;
+	} else if (kfsw_hk_depth(report, &depth) != 0) {
 		return;
 	}
 
 	for (uint16_t offset = 0U; (offset < wanted) && ((first_age + offset) < depth); offset++) {
 		csp_packet_t *reply;
 
-		if (kfsw_hk_get(report, (uint16_t)(first_age + offset), &sample) != 0) {
+		int result = report == KFSW_HK_REPORT_ALL
+				     ? kfsw_hk_get_selected(class_mask,
+							    (uint16_t)(first_age + offset), &sample)
+				     : kfsw_hk_get(report, (uint16_t)(first_age + offset), &sample);
+		if (result != 0) {
 			break;
 		}
 
@@ -96,7 +111,7 @@ static void hk_server(void *arg1, void *arg2, void *arg3)
 		if (connection == NULL) {
 			continue;
 		}
-		request = csp_read(connection, 0);
+		request = csp_read(connection, KFSW_HK_POLL_MS);
 		if (request != NULL) {
 			kfsw_hk_serve_request(connection, request);
 		}

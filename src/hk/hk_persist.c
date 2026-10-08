@@ -32,19 +32,20 @@
 #define KFSW_HK_PERSIST_TEMP_PATH KFSW_HK_PERSIST_DIRECTORY "/reports.tmp"
 #define KFSW_HK_PERSIST_MAGIC "KHKR"
 #define KFSW_HK_PERSIST_MAGIC_SIZE 4U
-#define KFSW_HK_PERSIST_VERSION 2U
+#define KFSW_HK_PERSIST_VERSION 3U
 #define KFSW_HK_PERSIST_HEADER_SIZE 12U
 #define KFSW_HK_PERSIST_CRC_OFFSET 8U
 
 /* magic 4, version 1, reserved 1, count 2, crc 4, then per report:
  * id 1, entry count 1, period 4, store interval 4, beacon node 2,
- * beacon interval 4, then entries of node 2 and id 2.
+ * beacon interval 4, class 1 (three-bit value), then entries of node 2 and id 2.
  *
  * Version 2 added the store interval and the beacon fields. Version 1 files
- * are still read.
+ * are still read. Version 3 adds class; older definitions default to class 4.
  */
 #define KFSW_HK_PERSIST_REPORT_HEADER_V1 6U
-#define KFSW_HK_PERSIST_REPORT_HEADER 16U
+#define KFSW_HK_PERSIST_REPORT_HEADER_V2 16U
+#define KFSW_HK_PERSIST_REPORT_HEADER 17U
 #define KFSW_HK_PERSIST_ENTRY_SIZE 4U
 #define KFSW_HK_PERSIST_MAX_SIZE                                                                   \
 	(KFSW_HK_PERSIST_HEADER_SIZE +                                                             \
@@ -141,6 +142,7 @@ static int save_snapshot(uint64_t *revision)
 		offset += 2U;
 		sys_put_be32(beacon_interval_of(index), &blob[offset]);
 		offset += 4U;
+		blob[offset++] = report->retrieval_class;
 		for (uint8_t entry = 0U; entry < report->entry_count; entry++) {
 			sys_put_be16(report->entries[entry].node, &blob[offset]);
 			sys_put_be16(report->entries[entry].param_id, &blob[offset + 2U]);
@@ -212,13 +214,14 @@ static int load_snapshot(void)
 	}
 	/* Older versions are read; newer ones are refused. */
 	version = blob[4];
-	if ((version != KFSW_HK_PERSIST_VERSION) && (version != 1U)) {
+	if ((version != KFSW_HK_PERSIST_VERSION) && (version != 1U) && (version != 2U)) {
 		kfsw_log_warning("HK: saved definitions are version %u, not %u", version,
 				 KFSW_HK_PERSIST_VERSION);
 		return -EPROTONOSUPPORT;
 	}
-	report_header =
-		(version == 1U) ? KFSW_HK_PERSIST_REPORT_HEADER_V1 : KFSW_HK_PERSIST_REPORT_HEADER;
+	report_header = (version == 1U)   ? KFSW_HK_PERSIST_REPORT_HEADER_V1
+			: (version == 2U) ? KFSW_HK_PERSIST_REPORT_HEADER_V2
+					  : KFSW_HK_PERSIST_REPORT_HEADER;
 
 	stored_crc = sys_get_be32(&blob[KFSW_HK_PERSIST_CRC_OFFSET]);
 	sys_put_be32(0U, &blob[KFSW_HK_PERSIST_CRC_OFFSET]);
@@ -251,7 +254,7 @@ static int load_snapshot(void)
 
 		item->present = true;
 		item->period_ms = sys_get_be32(&blob[offset + 2]);
-		if (version == 2U) {
+		if (version >= 2U) {
 			item->store_ms = sys_get_be32(&blob[offset + 6]);
 			item->beacon_node = sys_get_be16(&blob[offset + 10]);
 			item->beacon_ms = sys_get_be32(&blob[offset + 12]);
@@ -271,6 +274,11 @@ static int load_snapshot(void)
 			return -ERANGE;
 		}
 #endif
+		uint8_t retrieval_class =
+			version >= 3U ? blob[offset + 16U] : KFSW_HK_CLASS_DEFAULT;
+		if (retrieval_class > KFSW_HK_CLASS_MAX) {
+			return -ERANGE;
+		}
 		offset += report_header;
 		if (offset + count * KFSW_HK_PERSIST_ENTRY_SIZE > info.size) {
 			return -EBADMSG;
@@ -284,6 +292,7 @@ static int load_snapshot(void)
 		if (result != 0) {
 			return result;
 		}
+		item->definition.retrieval_class = retrieval_class;
 	}
 	if (offset != info.size) {
 		return -EBADMSG;

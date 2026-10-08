@@ -241,6 +241,7 @@ endif()
 if(CONFIG_KFSW_HK)
     list(APPEND kfsw_services_sources
         src/hk/hk.c
+        src/hk/hk_selection.c
         src/hk/hk_thread.c
     )
     list(APPEND kfsw_services_sources src/hk-parameters/hk_table.c)

@@ -18,6 +18,14 @@ extern "C" {
 /** Wire format version; other versions are rejected. */
 #define KFSW_HK_PROTOCOL_VERSION 1U
 
+/** K-FSW retrieval classes: a three-bit value, lower classes retrieved first. */
+#define KFSW_HK_CLASS_MAX 7U
+#define KFSW_HK_CLASS_DEFAULT 4U
+/** All eight retrieval classes selected. */
+#define KFSW_HK_CLASS_MASK_ALL 0xFFU
+/** Report selector for class-based retrieval across reports. */
+#define KFSW_HK_REPORT_ALL 0xFFU
+
 /** Bytes before the first value in a serialised sample. */
 #define KFSW_HK_HEADER_SIZE 10U
 
@@ -106,9 +114,27 @@ int kfsw_hk_server_start(void);
  * @brief Set the values a report collects, replacing the old definition.
  *
  * Every parameter must exist and the values must fit one sample. If not, the
- * definition is refused and the previous one stays.
+ * definition is refused and the previous one stays. Uses class 4 by default.
  */
 int kfsw_hk_define(uint8_t report, const struct kfsw_hk_entry *entries, size_t count);
+
+/**
+ * Define a report with a retrieval class (0..7). Refuses larger values with
+ * -ERANGE before changing anything. Replacing a definition discards its history.
+ * Class affects retrieval only, never collection or scheduling.
+ */
+int kfsw_hk_define_class(uint8_t report, const struct kfsw_hk_entry *entries, size_t count,
+			 uint8_t retrieval_class);
+
+/** Read the class carried by a report definition; -ENOENT when undefined. */
+int kfsw_hk_get_class(uint8_t report, uint8_t *retrieval_class);
+
+/**
+ * Read selected RAM samples across reports: lower class first, newest collection
+ * first within each class. Bit n of class_mask selects class n; zero selects
+ * nothing. Index counts from zero. Returns -ENOENT past selected history.
+ */
+int kfsw_hk_get_selected(uint8_t class_mask, uint16_t index, struct kfsw_hk_sample *sample);
 
 /** Delete a report definition and its samples. */
 int kfsw_hk_clear(uint8_t report);
