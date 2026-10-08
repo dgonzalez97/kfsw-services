@@ -43,7 +43,6 @@ K_MUTEX_DEFINE(remexec_executor);
 static struct {
 	/** Bytes the running command printed, whether or not they were kept. */
 	size_t written;
-	/** Bytes kept in buf. */
 	size_t held;
 	char buf[KFSW_REMEXEC_OUTPUT_MAX + 1U];
 } capture;
@@ -193,19 +192,18 @@ static bool printable(const char *text)
 	return true;
 }
 
-/** Whether @p line is @p command or @p command followed by arguments. */
-static bool line_uses(const char *line, const char *command)
+static bool matches_or_extends(const char *text, const char *prefix)
 {
-	size_t length = strlen(command);
+	size_t length = strlen(prefix);
 
-	return (strncmp(line, command, length) == 0) &&
-	       ((line[length] == '\0') || (line[length] == ' '));
+	return (strncmp(text, prefix, length) == 0) &&
+	       ((text[length] == '\0') || (text[length] == ' '));
 }
 
 static const struct kfsw_remexec_entry *offered(const char *line)
 {
 	for (size_t index = 0U; index < service.count; index++) {
-		if (line_uses(line, service.entries[index].command)) {
+		if (matches_or_extends(line, service.entries[index].command)) {
 			return &service.entries[index];
 		}
 	}
@@ -334,15 +332,6 @@ const char *kfsw_remexec_status_name(enum kfsw_remexec_status status)
 	}
 }
 
-/** Whether @p entry is @p prefix itself or one of its subcommands. */
-static bool under_prefix(const struct kfsw_remexec_entry *entry, const char *prefix)
-{
-	size_t length = strlen(prefix);
-
-	return (strncmp(entry->command, prefix, length) == 0) &&
-	       ((entry->command[length] == '\0') || (entry->command[length] == ' '));
-}
-
 void kfsw_remexec_list_local(const char *prefix, struct kfsw_remexec_reply *reply)
 {
 	bool narrowed = (prefix != NULL) && (prefix[0] != '\0');
@@ -364,7 +353,7 @@ void kfsw_remexec_list_local(const char *prefix, struct kfsw_remexec_reply *repl
 		const struct kfsw_remexec_entry *entry = &service.entries[index];
 		char line[KFSW_REMEXEC_COMMAND_MAX + KFSW_REMEXEC_REFUSAL_MAX];
 
-		if (narrowed && !under_prefix(entry, prefix)) {
+		if (narrowed && !matches_or_extends(entry->command, prefix)) {
 			continue;
 		}
 		matches++;

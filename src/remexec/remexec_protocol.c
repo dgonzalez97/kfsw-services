@@ -9,7 +9,7 @@
 
 #include "remexec_internal.h"
 
-/* Fixed-width big-endian fields; narrowing conversions are explicit. */
+/* Layout: version, opcode, be16 length, text. */
 
 static bool known_opcode(uint8_t opcode)
 {

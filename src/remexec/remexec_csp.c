@@ -149,7 +149,6 @@ bool kfsw_remexec_server_is_started(void)
 	return atomic_get(&server_started) != 0;
 }
 
-/* Serializes the single client workspace. */
 K_MUTEX_DEFINE(remexec_client_lock);
 
 static int exchange(uint16_t node, enum kfsw_remexec_opcode opcode, const char *text,
