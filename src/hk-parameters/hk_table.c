@@ -5,6 +5,19 @@
 #include <kfsw/services/hk.h>
 #include <kfsw/services/parameter.h>
 
+/* Definition metadata, indexed by report; 255 marks an undefined report. */
+static uint8_t hk_classes[CONFIG_KFSW_HK_REPORTS];
+
+static void sample_classes(void *value)
+{
+	uint8_t *classes = value;
+
+	for (uint8_t report = 0; report < CONFIG_KFSW_HK_REPORTS; report++) {
+		classes[report] = UINT8_MAX;
+		(void)kfsw_hk_get_class(report, &classes[report]);
+	}
+}
+
 /* Housekeeping counters and settings. */
 static uint8_t hk_reports;
 static uint8_t hk_enabled = 1U;
@@ -109,6 +122,16 @@ static void sample_beacons_skipped(void *value)
 #endif
 
 static const struct kfsw_param_definition hk_param_definitions[] = {
+	{
+		.offset = 0x30,
+		.type = KFSW_PARAM_DATA,
+		.capacity = CONFIG_KFSW_HK_REPORTS,
+		.flags = KFSW_PARAM_FLAG_READ_ONLY,
+		.name = "hk_classes",
+		.description = "Definition classes by report; 255 undefined; define to change",
+		.value = hk_classes,
+		.sample = sample_classes,
+	},
 	{
 		.offset = 0x00,
 		.type = KFSW_PARAM_U8,

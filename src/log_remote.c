@@ -3,6 +3,7 @@
 
 #include <zephyr/kernel.h>
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/crc.h>
 #include <zephyr/sys/util.h>
 #include <csp/csp.h>
 
@@ -23,7 +24,9 @@
  *   end      header, status, records sent u16
  *
  * Integers are big-endian. A message carries text, or with FLAG_PACKAGE the
- * record's cbprintf package as it is held.
+ * record's cbprintf package followed by an IEEE CRC32 of the node-rendered
+ * text (without NUL). FLAG_TEXT_CRC marks the four-byte trailer; length still
+ * counts only package bytes, so older readers reject it rather than misdecode.
  */
 #define WIRE_VERSION 2U
 #define TYPE_START 0U
@@ -39,6 +42,8 @@
 #define END_SIZE (HEADER_SIZE + 3U)
 #define FLAG_TRUNCATED BIT(0)
 #define FLAG_PACKAGE BIT(1)
+#define FLAG_TEXT_CRC BIT(2)
+#define TEXT_CRC_SIZE 4U
 /* A round number under what the encrypted link takes, leaving some margin. */
 #define WIRE_DATA_MAX 190U
 
@@ -49,7 +54,7 @@
 
 BUILD_ASSERT(MESSAGE_HEADER_SIZE + WIRE_DATA_MAX <= KFSW_CSP_PAYLOAD_MAX,
 	     "a log record must fit the tightest transport, not just a CSP buffer");
-BUILD_ASSERT(KFSW_LOG_ENCODED_SIZE <= WIRE_DATA_MAX, "a package travels whole");
+BUILD_ASSERT(KFSW_LOG_ENCODED_SIZE + TEXT_CRC_SIZE <= WIRE_DATA_MAX, "a package travels whole");
 BUILD_ASSERT(EVENT_HEADER_SIZE + KFSW_EVENT_MAX_PAYLOAD_SIZE <= KFSW_CSP_PAYLOAD_MAX,
 	     "a journal record must fit the tightest transport");
 
@@ -107,7 +112,8 @@ static bool send_message(csp_conn_t *connection, const uint8_t *nonce, uint8_t f
 	csp_packet_t *reply;
 
 	if ((format == KFSW_LOG_REMOTE_DICTIONARY) && encoded->package) {
-		flags |= FLAG_PACKAGE;
+		kfsw_log_history_format(encoded, &record);
+		flags = (record.truncated ? FLAG_TRUNCATED : 0U) | FLAG_PACKAGE | FLAG_TEXT_CRC;
 	} else {
 		kfsw_log_history_format(encoded, &record);
 		length = strlen(record.text);
@@ -118,7 +124,9 @@ static bool send_message(csp_conn_t *connection, const uint8_t *nonce, uint8_t f
 		flags = record.truncated ? FLAG_TRUNCATED : 0U;
 		data = (const uint8_t *)record.text;
 	}
-	reply = new_reply(TYPE_MESSAGE, nonce, MESSAGE_HEADER_SIZE + length);
+	reply = new_reply(TYPE_MESSAGE, nonce,
+			  MESSAGE_HEADER_SIZE + length +
+				  ((flags & FLAG_TEXT_CRC) ? TEXT_CRC_SIZE : 0U));
 	if (reply == NULL) {
 		return false;
 	}
@@ -129,6 +137,10 @@ static bool send_message(csp_conn_t *connection, const uint8_t *nonce, uint8_t f
 	reply->data[28] = flags;
 	reply->data[29] = (uint8_t)length;
 	memcpy(&reply->data[30], data, length);
+	if ((flags & FLAG_TEXT_CRC) != 0U) {
+		sys_put_be32(crc32_ieee((const uint8_t *)record.text, strlen(record.text)),
+			     &reply->data[MESSAGE_HEADER_SIZE + length]);
+	}
 	csp_send(connection, reply);
 	return true;
 }
@@ -326,10 +338,14 @@ static bool parse_start(const csp_packet_t *packet, struct kfsw_log_remote_start
 
 static bool parse_message(const csp_packet_t *packet, struct kfsw_log_remote_message *message)
 {
-	const size_t length = (packet->length > MESSAGE_HEADER_SIZE) ? packet->data[29] : 0U;
+	const size_t length = (packet->length >= MESSAGE_HEADER_SIZE) ? packet->data[29] : 0U;
+	const bool text_crc = (packet->length >= MESSAGE_HEADER_SIZE) &&
+			      ((packet->data[28] & FLAG_TEXT_CRC) != 0U);
 
 	if ((packet->length < MESSAGE_HEADER_SIZE) ||
-	    (packet->length != MESSAGE_HEADER_SIZE + length) || (length > WIRE_DATA_MAX)) {
+	    (packet->length != MESSAGE_HEADER_SIZE + length + (text_crc ? TEXT_CRC_SIZE : 0U)) ||
+	    (length + (text_crc ? TEXT_CRC_SIZE : 0U) > WIRE_DATA_MAX) ||
+	    (text_crc && ((packet->data[28] & FLAG_PACKAGE) == 0U))) {
 		return false;
 	}
 	*message = (struct kfsw_log_remote_message){
@@ -340,8 +356,12 @@ static bool parse_message(const csp_packet_t *packet, struct kfsw_log_remote_mes
 		.truncated = (packet->data[28] & FLAG_TRUNCATED) != 0U,
 		.package = (packet->data[28] & FLAG_PACKAGE) != 0U,
 		.size = (uint8_t)length,
+		.text_crc_present = text_crc,
 	};
 	memcpy(message->data, &packet->data[30], length);
+	if (text_crc) {
+		message->text_crc = sys_get_be32(&packet->data[MESSAGE_HEADER_SIZE + length]);
+	}
 	/* Text is terminated for the caller; a package is used by its size. */
 	if (!message->package) {
 		message->data[length] = '\0';

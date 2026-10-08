@@ -20,6 +20,7 @@
 
 static struct kfsw_hk_report reports[CONFIG_KFSW_HK_REPORTS];
 static struct kfsw_hk_stats stats;
+static uint64_t collected_order;
 static bool initialized;
 static bool enabled = true;
 static bool restoring;
@@ -240,6 +241,7 @@ int kfsw_hk_prepare_definition(uint8_t report, const struct kfsw_hk_entry *entri
 	}
 
 	memcpy(definition->entries, entries, count * sizeof(entries[0]));
+	definition->retrieval_class = KFSW_HK_CLASS_DEFAULT;
 	definition->entry_count = count;
 	definition->payload_bytes = payload;
 	return 0;
@@ -261,13 +263,17 @@ static void name_local_entries(const struct kfsw_hk_entry *entries, size_t count
 	}
 }
 
-static int define_impl(uint8_t report, const struct kfsw_hk_entry *requested, size_t count)
+static int define_impl(uint8_t report, const struct kfsw_hk_entry *requested, size_t count,
+		       uint8_t retrieval_class)
 {
 	struct kfsw_hk_report *target = kfsw_hk_report_at(report);
 	struct kfsw_hk_entry entries[CONFIG_KFSW_HK_ENTRIES];
 	struct kfsw_hk_definition definition;
 	int result;
 
+	if (retrieval_class > KFSW_HK_CLASS_MAX) {
+		return -ERANGE;
+	}
 	if (target == NULL || requested == NULL) {
 		return -EINVAL;
 	}
@@ -290,6 +296,7 @@ static int define_impl(uint8_t report, const struct kfsw_hk_entry *requested, si
 	memcpy(target->entries, entries, count * sizeof(entries[0]));
 	memcpy(target->widths, definition.widths, count * sizeof(definition.widths[0]));
 	memcpy(target->offsets, definition.offsets, count * sizeof(definition.offsets[0]));
+	target->retrieval_class = retrieval_class;
 	target->entry_count = (uint8_t)count;
 	target->payload_bytes = definition.payload_bytes;
 	target->defined = true;
@@ -532,6 +539,7 @@ int kfsw_hk_collect(uint8_t report)
 	memcpy(definition.entries, target->entries, sizeof(definition.entries));
 	memcpy(definition.widths, target->widths, sizeof(definition.widths));
 	memcpy(definition.offsets, target->offsets, sizeof(definition.offsets));
+	definition.retrieval_class = target->retrieval_class;
 	definition.entry_count = target->entry_count;
 	definition.payload_bytes = target->payload_bytes;
 	definition.sequence = target->sequence;
@@ -557,6 +565,7 @@ int kfsw_hk_collect(uint8_t report)
 	} else {
 		target->held++;
 	}
+	target->collected_order[target->next_slot] = ++collected_order;
 	target->ring[target->next_slot] = scratch;
 	target->next_slot = (uint16_t)((target->next_slot + 1U) % ARRAY_SIZE(target->ring));
 	target->sequence++;
@@ -843,9 +852,17 @@ int kfsw_hk_config_end(int result)
 
 int kfsw_hk_define(uint8_t report, const struct kfsw_hk_entry *entries, size_t count)
 {
+	return kfsw_hk_define_class(report, entries, count, KFSW_HK_CLASS_DEFAULT);
+}
+
+int kfsw_hk_define_class(uint8_t report, const struct kfsw_hk_entry *entries, size_t count,
+			 uint8_t retrieval_class)
+{
 	int result = kfsw_hk_config_begin();
 
-	return result != 0 ? result : kfsw_hk_config_end(define_impl(report, entries, count));
+	return result != 0
+		       ? result
+		       : kfsw_hk_config_end(define_impl(report, entries, count, retrieval_class));
 }
 
 int kfsw_hk_clear(uint8_t report)
@@ -949,6 +966,7 @@ void kfsw_hk_restore_report(uint8_t index, const struct kfsw_hk_definition *defi
 		memcpy(report->entries, definition->entries, sizeof(report->entries));
 		memcpy(report->widths, definition->widths, sizeof(report->widths));
 		memcpy(report->offsets, definition->offsets, sizeof(report->offsets));
+		report->retrieval_class = definition->retrieval_class;
 		report->entry_count = definition->entry_count;
 		report->payload_bytes = definition->payload_bytes;
 		report->defined = true;

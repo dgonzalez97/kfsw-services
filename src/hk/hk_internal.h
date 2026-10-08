@@ -15,6 +15,7 @@ struct kfsw_hk_definition {
 	uint16_t payload_bytes;
 	uint16_t sequence;
 	uint8_t entry_count;
+	uint8_t retrieval_class;
 };
 
 /** Report definition, schedule and sample ring. */
@@ -24,12 +25,14 @@ struct kfsw_hk_report {
 	uint16_t widths[CONFIG_KFSW_HK_ENTRIES];
 	uint16_t offsets[CONFIG_KFSW_HK_ENTRIES];
 	uint8_t entry_count;
+	uint8_t retrieval_class;
 	bool defined;
 	uint16_t payload_bytes;
 	uint32_t period_ms;
 	int64_t next_uptime_ms;
 
 	struct kfsw_hk_sample ring[CONFIG_KFSW_HK_HISTORY];
+	uint64_t collected_order[CONFIG_KFSW_HK_HISTORY];
 	uint16_t held;
 	uint16_t next_slot;
 	uint16_t sequence;
