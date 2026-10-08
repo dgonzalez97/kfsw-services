@@ -90,6 +90,12 @@ One console stream with a global level and a level per module, so raising one
 module to debug doesn't flood the console. A file sets its module with a define
 before the include.
 
+`CONFIG_KFSW_LOG_SHELL` mirrors messages and markers to active shell sessions
+as well as the console. It defaults off. With PARAM composed, table 25 offset
+`0x0d` (`log_shell`, u8, live, not persistent) controls mirroring: 0 off, 1 on.
+A build with mirroring enabled starts with `log_shell = 1`. Early boot and
+interrupt-context messages go to the console only.
+
 ## Events
 
 A RAM ring of numeric records: ID, timestamp, sequence number, severity and a
