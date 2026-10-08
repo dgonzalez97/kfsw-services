@@ -43,6 +43,9 @@ struct kfsw_log_remote_message {
 	uint8_t severity;
 	bool truncated;
 	bool package;
+	/** IEEE CRC32 over node-rendered text, without NUL; absent on older nodes. */
+	bool text_crc_present;
+	uint32_t text_crc;
 	uint8_t size;
 	uint8_t data[KFSW_LOG_TEXT_SIZE];
 };
