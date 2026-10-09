@@ -20,3 +20,8 @@ int kfsw_fbo_clock_seconds(int64_t *seconds)
 	return kfsw_wallclock_get(seconds);
 #endif
 }
+
+int kfsw_fbo_schedule_clock_seconds(int64_t *seconds)
+{
+	return kfsw_fbo_clock_seconds(seconds);
+}

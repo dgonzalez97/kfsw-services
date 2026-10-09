@@ -24,11 +24,6 @@
 
 #define KFSW_FBO_DIRECTORY KFSW_FTP_STORAGE_ROOT "/" KFSW_FBO_FTP_PATH
 
-/* Events recorded by this service. */
-#define KFSW_FBO_EVENT_STARTED 1U
-#define KFSW_FBO_EVENT_LINE_FAILED 2U
-#define KFSW_FBO_EVENT_FINISHED 3U
-
 struct line {
 	char text[CONFIG_KFSW_FBO_LINE_MAX];
 	size_t length;
@@ -47,13 +42,37 @@ static char requested[KFSW_FBO_NAME_MAX];
 static struct line current;
 static char argument_text[KFSW_COMMAND_MAX_ARGS][KFSW_COMMAND_MAX_TEXT_SIZE + 1U];
 
-static void note(uint16_t id, enum kfsw_event_severity severity, uint16_t line)
+void kfsw_fbo_note(uint16_t id, enum kfsw_event_severity severity, uint16_t detail)
 {
 	uint8_t payload[2];
 
-	payload[0] = (uint8_t)(line >> 8);
-	payload[1] = (uint8_t)(line & 0xFFU);
+	payload[0] = (uint8_t)(detail >> 8);
+	payload[1] = (uint8_t)(detail & 0xFFU);
 	kfsw_event_emit(KFSW_EVENT_SOURCE_FBO, id, severity, payload, sizeof(payload));
+}
+
+/*
+ * The claim counters move when something outside the procedure reaches the
+ * command path. Sampling them per line is what lets an operator see afterwards
+ * that a direct command and a step interleaved.
+ */
+static void account_for_others(uint16_t line, uint32_t *intrusions, uint32_t *refusals)
+{
+	struct kfsw_command_claim_state claim;
+
+	if (kfsw_command_claim_get(&claim) != 0) {
+		return;
+	}
+	k_mutex_lock(&lock, K_FOREVER);
+	if (claim.intrusions > *intrusions) {
+		status.lines_interleaved++;
+		kfsw_log_warning("FBO: a command ran underneath line %u", line);
+		kfsw_fbo_note(KFSW_FBO_EVENT_INTERLEAVED, KFSW_EVENT_WARNING, line);
+	}
+	status.refused_direct += claim.refusals - *refusals;
+	k_mutex_unlock(&lock);
+	*intrusions = claim.intrusions;
+	*refusals = claim.refusals;
 }
 
 /*
@@ -135,6 +154,25 @@ static int run_command_line(char **tokens, size_t count)
 	return (result.status == KFSW_COMMAND_OK) ? 0 : -EIO;
 }
 
+/*
+ * Claim the command path for this run. Shared for the whole procedure, so a
+ * command from elsewhere is served and counted; exclusive while a part of the
+ * procedure cannot survive one, and then it is refused instead.
+ */
+static int claim(bool exclusive)
+{
+	int result = kfsw_command_claim_acquire(
+		exclusive ? KFSW_COMMAND_CLAIM_EXCLUSIVE : KFSW_COMMAND_CLAIM_SHARED, status.name);
+
+	if (result != 0) {
+		return result;
+	}
+	k_mutex_lock(&lock, K_FOREVER);
+	status.exclusive = exclusive;
+	k_mutex_unlock(&lock);
+	return 0;
+}
+
 static int wait_until(uint32_t target, uint32_t tolerance)
 {
 	uint64_t deadline = kfsw_time_monotonic_ms() + (uint64_t)CONFIG_KFSW_FBO_WAIT_MAX_S * 1000U;
@@ -188,6 +226,14 @@ static int run_line(char *text, bool *skip_next, bool *stop_on_error)
 		}
 		*stop_on_error = (strcmp(tokens[1], "stop") == 0);
 		return 0;
+	}
+
+	if (strcmp(tokens[0], "concurrency") == 0) {
+		if ((count != 2U) ||
+		    ((strcmp(tokens[1], "exclusive") != 0) && (strcmp(tokens[1], "shared") != 0))) {
+			return -EINVAL;
+		}
+		return claim(strcmp(tokens[1], "exclusive") == 0);
 	}
 
 	if (strcmp(tokens[0], "wait-until") == 0) {
@@ -286,6 +332,8 @@ static int run_procedure(const char *name)
 	bool skip_next = false;
 	bool at_end = false;
 	uint16_t line_number = 0U;
+	uint32_t intrusions = 0U;
+	uint32_t refusals = 0U;
 	size_t bytes = 0U;
 	int outcome = 0;
 	int result;
@@ -297,8 +345,12 @@ static int run_procedure(const char *name)
 		return result;
 	}
 
+	/* Shared: a command from elsewhere is served, not made to wait for the
+	 * rest of the procedure. A `concurrency exclusive` line changes that.
+	 */
+	(void)claim(false);
 	kfsw_log_info("FBO: %s started", name);
-	note(KFSW_FBO_EVENT_STARTED, KFSW_EVENT_INFO, 0U);
+	kfsw_fbo_note(KFSW_FBO_EVENT_STARTED, KFSW_EVENT_INFO, 0U);
 	while (!at_end) {
 		size_t index = 0U;
 
@@ -328,9 +380,10 @@ static int run_procedure(const char *name)
 			result = run_line(&current.text[index], &skip_next, &stop_on_error);
 		}
 		kfsw_fbo_count_line(line_number, result);
+		account_for_others(line_number, &intrusions, &refusals);
 		if (result != 0) {
 			kfsw_log_error("FBO: %s line %u failed (%d)", name, line_number, result);
-			note(KFSW_FBO_EVENT_LINE_FAILED, KFSW_EVENT_ERROR, line_number);
+			kfsw_fbo_note(KFSW_FBO_EVENT_LINE_FAILED, KFSW_EVENT_ERROR, line_number);
 			if ((outcome == 0) || (result == -ECANCELED)) {
 				outcome = result;
 			}
@@ -343,8 +396,14 @@ static int run_procedure(const char *name)
 	if (outcome == 0) {
 		outcome = result;
 	}
+	account_for_others(line_number, &intrusions, &refusals);
+	(void)kfsw_command_claim_release();
+	k_mutex_lock(&lock, K_FOREVER);
+	status.exclusive = false;
+	k_mutex_unlock(&lock);
 	kfsw_log_info("FBO: %s finished at line %u (%d)", name, line_number, outcome);
-	note(KFSW_FBO_EVENT_FINISHED, outcome ? KFSW_EVENT_ERROR : KFSW_EVENT_INFO, line_number);
+	kfsw_fbo_note(KFSW_FBO_EVENT_FINISHED, outcome ? KFSW_EVENT_ERROR : KFSW_EVENT_INFO,
+		      line_number);
 	return outcome;
 }
 
@@ -395,6 +454,7 @@ int kfsw_fbo_init(void)
 	if (!initialized) {
 		initialized = true;
 		k_thread_start(kfsw_fbo_thread);
+		kfsw_fbo_schedule_init();
 	}
 	k_mutex_unlock(&lock);
 	kfsw_log_info("FBO: ready, up to %u lines a procedure", CONFIG_KFSW_FBO_LINES_MAX);
