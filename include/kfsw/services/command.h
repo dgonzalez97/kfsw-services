@@ -78,6 +78,36 @@ enum kfsw_event_command_id {
 /** Command flags. */
 #define KFSW_COMMAND_FLAG_MUTATING BIT(0)
 
+/** Longest claim owner name, including the terminator. */
+#define KFSW_COMMAND_CLAIM_NAME_MAX 32U
+
+/**
+ * How a claim holder shares the command path with everything else.
+ *
+ * A claim does not serialize anything by itself: handlers already run one at a
+ * time. It decides what happens to an invocation from another thread while the
+ * holder is part way through a sequence of them.
+ */
+enum kfsw_command_claim_mode {
+	/** Another thread's invocation is served, and counted as an intrusion. */
+	KFSW_COMMAND_CLAIM_SHARED = 0,
+	/** Another thread's invocation is refused, naming the holder. */
+	KFSW_COMMAND_CLAIM_EXCLUSIVE = 1,
+};
+
+/** The claim as a reader sees it. */
+struct kfsw_command_claim_state {
+	/** Whether a claim is held now. */
+	bool held;
+	enum kfsw_command_claim_mode mode;
+	/** Who holds it, for the operator and for a refusal detail. */
+	char owner[KFSW_COMMAND_CLAIM_NAME_MAX];
+	/** Invocations from another thread since the claim was taken. */
+	uint32_t intrusions;
+	/** Invocations refused because the claim was exclusive. */
+	uint32_t refusals;
+};
+
 /** One validated argument handed to a handler. */
 struct kfsw_command_arg {
 	enum kfsw_command_type type;
@@ -195,6 +225,36 @@ int kfsw_command_invoke(const char *name, const struct kfsw_command_arg *args, s
 int kfsw_command_invoke_id(uint16_t id, const struct kfsw_command_arg *args, size_t arg_count,
 			   const struct kfsw_command_source *source,
 			   struct kfsw_command_result *result);
+
+/**
+ * @brief Claim the command path for a sequence of invocations.
+ *
+ * The calling thread becomes the holder. Its own invocations are unaffected;
+ * an invocation from any other thread is served and counted in @ref
+ * kfsw_command_claim_state::intrusions when the mode is shared, and refused
+ * with KFSW_COMMAND_BUSY naming @p owner when it is exclusive.
+ *
+ * Calling it again from the holder changes the mode and keeps the counters, so
+ * a sequence can protect one part of itself.
+ *
+ * @param mode How to treat another thread's invocation.
+ * @param owner Short name of the holder, shown in a refusal and in status.
+ * @retval 0 Claimed.
+ * @retval -EINVAL @p owner is NULL, empty or longer than the limit.
+ * @retval -EBUSY Another thread holds the claim.
+ */
+int kfsw_command_claim_acquire(enum kfsw_command_claim_mode mode, const char *owner);
+
+/**
+ * @brief Release a claim held by the calling thread.
+ *
+ * @retval 0 Released, or nothing was held.
+ * @retval -EPERM Another thread holds the claim.
+ */
+int kfsw_command_claim_release(void);
+
+/** Read the claim. Returns -EINVAL for a NULL destination. */
+int kfsw_command_claim_get(struct kfsw_command_claim_state *state);
 
 /** Human-readable name for a status, for shell output and logs. */
 const char *kfsw_command_status_name(enum kfsw_command_status status);

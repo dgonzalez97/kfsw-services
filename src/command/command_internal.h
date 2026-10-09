@@ -68,7 +68,10 @@ int kfsw_command_decode_args(const struct kfsw_command_message *message,
 int kfsw_command_encode_args(const struct kfsw_command_arg *args, size_t arg_count,
 			     uint8_t *payload, size_t capacity, uint16_t *payload_size);
 
-/** Resolve a registered command name to its wire identifier. */
+/**
+ * Resolve a registered command name to its wire identifier, for a request that
+ * leaves this node.
+ */
 int kfsw_command_lookup_id(const char *name, uint16_t *id);
 
 #endif
