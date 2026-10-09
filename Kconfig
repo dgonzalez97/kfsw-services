@@ -100,7 +100,7 @@ config KFSW_PARAM_FLOAT
 
 config KFSW_PARAM_MAX_DEFINITIONS
 	int "Parameters the local table can hold"
-	default 160
+	default 176
 	range 1 512
 	help
 	  Total parameters across all tables. Registration is refused once this
@@ -519,7 +519,7 @@ config KFSW_FWU_LITE
 config KFSW_FWU_LITE_BLOCK_SIZE
 	int "Image block size in bytes"
 	depends on KFSW_FWU_LITE
-	default 192
+	default 160
 	range 16 512
 	help
 	  Payload of one block, the same as the file transfer chunk so a block
@@ -867,7 +867,7 @@ config KFSW_HK_HISTORY
 
 config KFSW_HK_SAMPLE_BYTES
 	int "Bytes one sample may occupy, header included"
-	default 192
+	default 160
 	range 32 240
 	help
 	  Largest sample, which is one CSP packet. 192 matches file transfer,
