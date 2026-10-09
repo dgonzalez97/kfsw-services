@@ -100,7 +100,7 @@ config KFSW_PARAM_FLOAT
 
 config KFSW_PARAM_MAX_DEFINITIONS
 	int "Parameters the local table can hold"
-	default 160
+	default 176
 	range 1 512
 	help
 	  Total parameters across all tables. Registration is refused once this
@@ -519,7 +519,7 @@ config KFSW_FWU_LITE
 config KFSW_FWU_LITE_BLOCK_SIZE
 	int "Image block size in bytes"
 	depends on KFSW_FWU_LITE
-	default 192
+	default 160
 	range 16 512
 	help
 	  Payload of one block, the same as the file transfer chunk so a block
@@ -608,6 +608,7 @@ config KFSW_FBO
 	bool "File based operations"
 	depends on KFSW_COMMAND && KFSW_STORAGE
 	select KFSW_EVENT
+	select CRC
 	help
 	  Run a list of commands from a file. Every line is a normal command,
 	  and there are no loops or jumps.
@@ -654,6 +655,71 @@ config KFSW_FBO_EVENT_LOOKBACK
 	help
 	  How many recent events an if-event guard checks. Keep it below the
 	  ring depth.
+
+config KFSW_FBO_SCHEDULE_ENTRIES
+	int "Time-tagged entries the queue holds"
+	depends on KFSW_FBO
+	range 1 32
+	default 8
+	help
+	  Fixed array, so this is RAM spent whether entries exist or not. The
+	  queue is volatile: a reset clears it.
+
+config KFSW_FBO_SCHEDULE_LATENCY_S
+	int "Latency buffer in seconds"
+	depends on KFSW_FBO
+	range 1 3600
+	default 60
+	help
+	  An entry due less than this long ago still runs; anything later
+	  reports overdue instead of firing at the wrong time. Keep it above the
+	  command reply timeout, or a release waiting its turn looks overdue.
+
+config KFSW_FBO_SCHEDULE_TICK_MS
+	int "How often the queue is examined, in milliseconds"
+	depends on KFSW_FBO
+	range 100 10000
+	default 1000
+	help
+	  The scheduler never sleeps to a deadline computed once, because an
+	  absolute deadline lives in a clock that moves.
+
+config KFSW_FBO_SCHEDULE_BURST
+	int "Releases allowed in one tick"
+	depends on KFSW_FBO
+	range 1 8
+	default 1
+	help
+	  Bounds what a forward clock step can set off at once. Entries that
+	  fall past the latency buffer meanwhile report overdue.
+
+config KFSW_FBO_SCHEDULE_STEP_MS
+	int "Wall clock movement counted as a step, in milliseconds"
+	depends on KFSW_FBO
+	range 100 60000
+	default 2000
+	help
+	  Wall clock movement that disagrees with the monotonic clock by more
+	  than this is recorded as a step. Relative entries are unaffected by
+	  one: they never consult the wall clock.
+
+config KFSW_FBO_SCHEDULE_STACK_SIZE
+	int "Scheduler thread stack size"
+	depends on KFSW_FBO
+	range 1024 8192
+	default 3072
+	help
+	  The release runs a command handler, so it cannot share the procedure
+	  thread, which may be inside one already.
+
+config KFSW_FBO_SCHEDULE_PRIORITY
+	int "Scheduler thread priority"
+	depends on KFSW_FBO
+	range 0 15
+	default 6
+	help
+	  Below the procedure thread: a release is never more urgent than the
+	  procedure already running.
 
 config KFSW_FBO_STACK_SIZE
 	int "Procedure thread stack size"
@@ -801,7 +867,7 @@ config KFSW_HK_HISTORY
 
 config KFSW_HK_SAMPLE_BYTES
 	int "Bytes one sample may occupy, header included"
-	default 192
+	default 160
 	range 32 240
 	help
 	  Largest sample, which is one CSP packet. 192 matches file transfer,

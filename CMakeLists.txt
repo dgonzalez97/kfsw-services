@@ -218,7 +218,8 @@ if(CONFIG_KFSW_COMMAND)
 endif()
 
 if(CONFIG_KFSW_FBO)
-    list(APPEND kfsw_services_sources src/fbo/fbo.c src/fbo/fbo_clock.c)
+    list(APPEND kfsw_services_sources src/fbo/fbo.c src/fbo/fbo_clock.c
+         src/fbo/fbo_schedule.c src/fbo/fbo_commands.c)
     if(CONFIG_KFSW_PARAM)
         list(APPEND kfsw_services_sources src/fbo-parameters/fbo_table.c)
     endif()
