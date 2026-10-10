@@ -301,12 +301,12 @@ static int load_snapshot(void)
 	/* Prepare every store without replacing an existing sample file. */
 	kfsw_hk_storage_lock();
 #if CONFIG_KFSW_HK_STORE
-	for (uint8_t index = 0; index < ARRAY_SIZE(restored); index++) {
+	for (size_t index = 0; index < ARRAY_SIZE(restored); index++) {
 		const struct restored_report *item = &restored[index];
 
-		result = kfsw_hk_store_restore_prepare(index, item->store_ms, item->period_ms,
-						       KFSW_HK_HEADER_SIZE +
-							       item->definition.payload_bytes);
+		result = kfsw_hk_store_restore_prepare(
+			(uint8_t)index, item->store_ms, item->period_ms,
+			KFSW_HK_HEADER_SIZE + item->definition.payload_bytes);
 		if (result != 0) {
 			kfsw_hk_storage_unlock();
 			return result;
