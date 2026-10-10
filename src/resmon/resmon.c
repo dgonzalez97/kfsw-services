@@ -19,13 +19,19 @@
  */
 #define KFSW_RESMON_PERCENT_MIN 1U
 
-/* The busiest thread of one walk of the thread list. */
+/* What one walk of the thread list found. */
 struct sweep {
+	/* The busiest thread, by percentage used. */
 	const struct k_thread *thread;
 	uint32_t used_percent;
 	uint32_t unused_bytes;
 	uint32_t stack_bytes;
+	/* The thread with the least room left, which is rarely the same one. */
+	const struct k_thread *tightest;
+	uint32_t tightest_unused_bytes;
+	uint32_t tightest_stack_bytes;
 	uint16_t threads;
+	uint16_t unmeasured;
 };
 
 static K_MUTEX_DEFINE(resmon_lock);
@@ -46,8 +52,12 @@ static void visit_thread(const struct k_thread *thread, void *user_data)
 	size_t unused = 0U;
 	uint32_t used_percent;
 
-	/* A thread whose stack cannot be measured is skipped, not counted. */
+	/* A stack that cannot be read is counted as unmeasured rather than
+	 * dropped, so a margin is never published for part of the system as if
+	 * it were all of it.
+	 */
 	if ((stack_bytes == 0U) || (k_thread_stack_space_get(thread, &unused) != 0)) {
+		sweep->unmeasured++;
 		return;
 	}
 
@@ -58,6 +68,11 @@ static void visit_thread(const struct k_thread *thread, void *user_data)
 		sweep->unused_bytes = (uint32_t)MIN(unused, (size_t)UINT32_MAX);
 		sweep->stack_bytes = (uint32_t)MIN(stack_bytes, (size_t)UINT32_MAX);
 		sweep->thread = thread;
+	}
+	if ((sweep->threads == 0U) || (unused < sweep->tightest_unused_bytes)) {
+		sweep->tightest_unused_bytes = (uint32_t)MIN(unused, (size_t)UINT32_MAX);
+		sweep->tightest_stack_bytes = (uint32_t)MIN(stack_bytes, (size_t)UINT32_MAX);
+		sweep->tightest = thread;
 	}
 	sweep->threads++;
 }
@@ -96,7 +111,15 @@ int kfsw_resmon_sample(void)
 		resmon_state.sweeps++;
 	}
 	resmon_state.threads = sweep.threads;
+	resmon_state.unmeasured = sweep.unmeasured;
 	resmon_state.last_used_percent = sweep.used_percent;
+
+	if ((resmon_state.sweeps == 1U) ||
+	    (sweep.tightest_unused_bytes < resmon_state.tightest_unused_bytes)) {
+		resmon_state.tightest_unused_bytes = sweep.tightest_unused_bytes;
+		resmon_state.tightest_stack_bytes = sweep.tightest_stack_bytes;
+		copy_thread_name(resmon_state.tightest_thread, sweep.tightest);
+	}
 
 	if (sweep.used_percent >= resmon_state.worst_used_percent) {
 		resmon_state.worst_used_percent = sweep.used_percent;
