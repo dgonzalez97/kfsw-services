@@ -757,6 +757,19 @@ config KFSW_RESMON_PERIOD_MS
 	  A sweep walks every thread, so a short period costs time on a node
 	  with many of them.
 
+config KFSW_RESMON_MIN_STACK_BYTES
+	int "Smallest stack the monitor will believe, in bytes"
+	depends on KFSW_RESMON
+	range 0 4096
+	default 128
+	help
+	  A thread whose reported stack is smaller than this is counted as
+	  unmeasured instead of measured. Nothing runs in a few dozen bytes, so
+	  such a figure describes the reporting and not the thread: the host
+	  layer under native_sim hands out one for each thread it creates
+	  itself, and reading it as a full stack raises an alert that is always
+	  true and therefore never read. Zero believes every figure.
+
 config KFSW_RESMON_ALERT_PERCENT
 	int "Stack use that raises an event, as a percentage"
 	default 90
