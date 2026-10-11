@@ -54,9 +54,12 @@ static void visit_thread(const struct k_thread *thread, void *user_data)
 
 	/* A stack that cannot be read is counted as unmeasured rather than
 	 * dropped, so a margin is never published for part of the system as if
-	 * it were all of it.
+	 * it were all of it. A stack too small to hold a call frame is the same
+	 * case wearing a number: nothing runs in a few dozen bytes, so the
+	 * figure describes whoever reported it and not the thread.
 	 */
-	if ((stack_bytes == 0U) || (k_thread_stack_space_get(thread, &unused) != 0)) {
+	if ((stack_bytes < (size_t)CONFIG_KFSW_RESMON_MIN_STACK_BYTES) ||
+	    (k_thread_stack_space_get(thread, &unused) != 0)) {
 		sweep->unmeasured++;
 		return;
 	}
