@@ -56,6 +56,8 @@ static uint8_t boot_confirmed;
 #warning "KFSW_GOLDEN without KFSW_PARAM_PERSISTENCE: boot_retries cannot be saved, \
 so the retry budget restarts at every boot and recovery never triggers"
 #endif
+BUILD_ASSERT(CONFIG_KFSW_GOLDEN_RETRIES <= KFSW_BOOT_RETRIES_MAX,
+	     "the compiled retry budget must be one an operator could also set");
 static uint8_t boot_retries = CONFIG_KFSW_GOLDEN_RETRIES;
 
 uint8_t kfsw_boot_get_retry_budget(void)
