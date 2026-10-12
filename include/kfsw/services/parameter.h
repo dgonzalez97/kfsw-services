@@ -47,6 +47,32 @@ union kfsw_param_scalar {
 /** Longest string parameter, including the terminator. */
 #define KFSW_PARAM_STRING_MAX CONFIG_KFSW_PARAM_STRING_MAX
 
+/**
+ * @brief Bytes one descriptor takes on the link.
+ *
+ * The record without the help text, which is not sent: the ground reads it
+ * from the interface document.
+ */
+#define KFSW_PARAM_WIRE_BYTES 58U
+
+/**
+ * @brief Largest a table may be on the link.
+ *
+ * 4800 baud is the slowest link this has to work on, and carries 480 bytes a
+ * second, so 2 KB is 4.2 seconds: inside the refresh budget with room for a
+ * retry. A table that outgrows this is split, not carried.
+ */
+#define KFSW_PARAM_TABLE_WIRE_MAX 2048U
+
+/**
+ * @brief Refuse at build time a table too large for the slowest link.
+ *
+ * Place it next to the definition set it guards.
+ */
+#define KFSW_PARAM_TABLE_FITS_THE_LINK(definitions)                                                \
+	BUILD_ASSERT(ARRAY_SIZE(definitions) * KFSW_PARAM_WIRE_BYTES <= KFSW_PARAM_TABLE_WIRE_MAX, \
+		     "a parameter table must fit 2 KB on a 4800 baud link")
+
 /** One typed value, with shared storage for text and bytes. */
 struct kfsw_param_value {
 	enum kfsw_param_type type;

@@ -512,10 +512,8 @@ static size_t encode_descriptor(const param_t *param, uint8_t *data)
 	if (param->unit != NULL) {
 		strncpy(wire->unit, param->unit, sizeof(wire->unit) - 1U);
 	}
-	if (param->docstr != NULL) {
-		strncpy(wire->help, param->docstr, sizeof(wire->help) - 1U);
-	}
-	return offsetof(param_transfer3_t, help) + strlen(wire->help) + 1U;
+	/* The help text stays on the node. */
+	return offsetof(param_transfer3_t, help) + 1U;
 }
 
 static uint32_t list_fingerprint(void)

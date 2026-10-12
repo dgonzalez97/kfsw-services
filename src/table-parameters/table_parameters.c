@@ -145,6 +145,8 @@ static const struct kfsw_param_definition table_param_definitions[] = {
 	},
 };
 
+KFSW_PARAM_TABLE_FITS_THE_LINK(table_param_definitions);
+
 const struct kfsw_param_definition_set kfsw_table_param_definitions = {
 	.table = KFSW_TABLE_PARAM_TABLE_ID,
 	.name = KFSW_TABLE_PARAM_TABLE_NAME,
