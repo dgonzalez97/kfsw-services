@@ -297,9 +297,6 @@ void kfsw_command_set_echo(bool enabled);
 /** Bind the command port and start serving remote requests. */
 int kfsw_command_server_start(void);
 
-/** Return whether the remote front end is accepting requests. */
-bool kfsw_command_server_is_started(void);
-
 /**
  * Invoke a command on a remote node by name.
  *
