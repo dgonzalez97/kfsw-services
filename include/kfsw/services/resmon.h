@@ -60,10 +60,26 @@ struct kfsw_resmon_status {
 	uint32_t last_used_percent;
 	/** A thread at or above this percentage raises an event. */
 	uint32_t alert_percent;
+	/**
+	 * Smallest free stack seen on any thread since start, in bytes. A
+	 * percentage alone hides which thread is nearest the edge: a 512 byte
+	 * stack at 70% has less room left than a 4096 byte one at 90%.
+	 */
+	uint32_t tightest_unused_bytes;
+	/** Stack size of the thread holding tightest_unused_bytes. */
+	uint32_t tightest_stack_bytes;
 	/** Threads the last sweep could read. */
 	uint16_t threads;
+	/**
+	 * Threads the last sweep could not measure. A stack that cannot be read
+	 * is not a stack with room: leaving it out of the count without saying
+	 * so publishes a margin for part of the system as if it were all of it.
+	 */
+	uint16_t unmeasured;
 	/** Name of the thread holding worst_used_percent. */
 	char worst_thread[KFSW_RESMON_NAME_SIZE];
+	/** Name of the thread holding tightest_unused_bytes. */
+	char tightest_thread[KFSW_RESMON_NAME_SIZE];
 	/** The periodic sweep is running. */
 	bool running;
 };

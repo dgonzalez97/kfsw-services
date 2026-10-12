@@ -100,7 +100,7 @@ config KFSW_PARAM_FLOAT
 
 config KFSW_PARAM_MAX_DEFINITIONS
 	int "Parameters the local table can hold"
-	default 160
+	default 176
 	range 1 512
 	help
 	  Total parameters across all tables. Registration is refused once this
@@ -444,6 +444,34 @@ config KFSW_FWU
 	  the bootloader. The image is written straight to flash because it
 	  doesn't fit in the filesystem partition.
 
+config KFSW_GOLDEN
+	bool "Install the recovery image when an image will not stay up"
+	depends on KFSW_FWU_MCUBOOT
+	help
+	  Count how many times an image has booted without being confirmed and,
+	  once that passes the retry budget, copy the image held in the golden
+	  partition into the secondary slot and ask the bootloader to swap it
+	  in. The budget is the boot_retries parameter, which must be persisted
+	  or it restarts at every boot and the node never reaches it.
+
+config KFSW_BOOT_CONFIRM_AT_START
+	bool "Confirm the running image once it has started"
+	depends on BOOTLOADER_MCUBOOT && MCUBOOT_IMG_MANAGER
+	help
+	  For an image that has nobody to confirm it, such as the recovery image:
+	  reaching the end of startup is the evidence that it runs, so it keeps
+	  itself instead of being reverted at the next reset. An image an operator
+	  confirms should leave this off.
+
+config KFSW_GOLDEN_RETRIES
+	int "Unconfirmed boots allowed before the recovery image is installed"
+	depends on KFSW_GOLDEN
+	range 1 10
+	default 3
+	help
+	  Compiled default for boot_retries. Ten is the ceiling: a node that
+	  cannot stay up for ten attempts will not manage it on the eleventh.
+
 config KFSW_FWU_MCUBOOT
 	bool "Offer completed images to MCUboot"
 	depends on KFSW_FWU
@@ -519,7 +547,7 @@ config KFSW_FWU_LITE
 config KFSW_FWU_LITE_BLOCK_SIZE
 	int "Image block size in bytes"
 	depends on KFSW_FWU_LITE
-	default 192
+	default 160
 	range 16 512
 	help
 	  Payload of one block, the same as the file transfer chunk so a block
@@ -608,6 +636,7 @@ config KFSW_FBO
 	bool "File based operations"
 	depends on KFSW_COMMAND && KFSW_STORAGE
 	select KFSW_EVENT
+	select CRC
 	help
 	  Run a list of commands from a file. Every line is a normal command,
 	  and there are no loops or jumps.
@@ -655,6 +684,71 @@ config KFSW_FBO_EVENT_LOOKBACK
 	  How many recent events an if-event guard checks. Keep it below the
 	  ring depth.
 
+config KFSW_FBO_SCHEDULE_ENTRIES
+	int "Time-tagged entries the queue holds"
+	depends on KFSW_FBO
+	range 1 32
+	default 8
+	help
+	  Fixed array, so this is RAM spent whether entries exist or not. The
+	  queue is volatile: a reset clears it.
+
+config KFSW_FBO_SCHEDULE_LATENCY_S
+	int "Latency buffer in seconds"
+	depends on KFSW_FBO
+	range 1 3600
+	default 60
+	help
+	  An entry due less than this long ago still runs; anything later
+	  reports overdue instead of firing at the wrong time. Keep it above the
+	  command reply timeout, or a release waiting its turn looks overdue.
+
+config KFSW_FBO_SCHEDULE_TICK_MS
+	int "How often the queue is examined, in milliseconds"
+	depends on KFSW_FBO
+	range 100 10000
+	default 1000
+	help
+	  The scheduler never sleeps to a deadline computed once, because an
+	  absolute deadline lives in a clock that moves.
+
+config KFSW_FBO_SCHEDULE_BURST
+	int "Releases allowed in one tick"
+	depends on KFSW_FBO
+	range 1 8
+	default 1
+	help
+	  Bounds what a forward clock step can set off at once. Entries that
+	  fall past the latency buffer meanwhile report overdue.
+
+config KFSW_FBO_SCHEDULE_STEP_MS
+	int "Wall clock movement counted as a step, in milliseconds"
+	depends on KFSW_FBO
+	range 100 60000
+	default 2000
+	help
+	  Wall clock movement that disagrees with the monotonic clock by more
+	  than this is recorded as a step. Relative entries are unaffected by
+	  one: they never consult the wall clock.
+
+config KFSW_FBO_SCHEDULE_STACK_SIZE
+	int "Scheduler thread stack size"
+	depends on KFSW_FBO
+	range 1024 8192
+	default 3072
+	help
+	  The release runs a command handler, so it cannot share the procedure
+	  thread, which may be inside one already.
+
+config KFSW_FBO_SCHEDULE_PRIORITY
+	int "Scheduler thread priority"
+	depends on KFSW_FBO
+	range 0 15
+	default 6
+	help
+	  Below the procedure thread: a release is never more urgent than the
+	  procedure already running.
+
 config KFSW_FBO_STACK_SIZE
 	int "Procedure thread stack size"
 	depends on KFSW_FBO
@@ -690,6 +784,19 @@ config KFSW_RESMON_PERIOD_MS
 	help
 	  A sweep walks every thread, so a short period costs time on a node
 	  with many of them.
+
+config KFSW_RESMON_MIN_STACK_BYTES
+	int "Smallest stack the monitor will believe, in bytes"
+	depends on KFSW_RESMON
+	range 0 4096
+	default 128
+	help
+	  A thread whose reported stack is smaller than this is counted as
+	  unmeasured instead of measured. Nothing runs in a few dozen bytes, so
+	  such a figure describes the reporting and not the thread: the host
+	  layer under native_sim hands out one for each thread it creates
+	  itself, and reading it as a full stack raises an alert that is always
+	  true and therefore never read. Zero believes every figure.
 
 config KFSW_RESMON_ALERT_PERCENT
 	int "Stack use that raises an event, as a percentage"
@@ -801,7 +908,7 @@ config KFSW_HK_HISTORY
 
 config KFSW_HK_SAMPLE_BYTES
 	int "Bytes one sample may occupy, header included"
-	default 192
+	default 160
 	range 32 240
 	help
 	  Largest sample, which is one CSP packet. 192 matches file transfer,
@@ -940,5 +1047,76 @@ config KFSW_HK_PERSISTENCE
 	  file. Without this, definitions are lost at reset.
 
 endif # KFSW_HK
+
+config KFSW_REMEXEC
+	bool "K-FSW remote shell execution"
+	depends on KFSW_CSP
+	depends on SHELL
+	help
+	  Serve a list of the shell commands this node offers for remote
+	  execution, and run one of them on request, returning its output over
+	  CSP. A command is offered only when the composition marks it in the
+	  allowlist handed to kfsw_remexec_init(); there is no other way to
+	  reach a command, and a node with no marked commands refuses every
+	  request. Capturing output costs a second shell instance, so this
+	  adds one thread of CONFIG_SHELL_STACK_SIZE.
+
+if KFSW_REMEXEC
+
+config KFSW_REMEXEC_CSP_PORT
+	int "CSP port for remote execution requests"
+	range 1 CSP_PORT_MAX_BIND
+	default 8
+	help
+	  Ports in use: 9 file transfer, 10 parameter transactions, 11
+	  commands, 12 parameter list, 13 firmware upload, 14 housekeeping,
+	  15 housekeeping beacons, 16 remote log. libcsp keeps 0 to 6 for its
+	  own services and CSP_PORT_MAX_BIND is 16, so 8 is the free port
+	  below the block rather than one past the top of it.
+
+config KFSW_REMEXEC_OUTPUT_MAX
+	int "Largest output carried back, in bytes"
+	range 64 1024
+	default 200
+	help
+	  Output past this is dropped and the reply says how many bytes went
+	  with it. The default keeps one reply inside a single CSP buffer on
+	  the narrowest link, so a chatty command cannot fragment or exhaust
+	  the buffer pool. A composition that raises it must check the build
+	  assertion in remexec_csp.c against CONFIG_CSP_BUFFER_SIZE.
+
+config KFSW_REMEXEC_MAX_ENTRIES
+	int "Largest allowlist accepted"
+	range 1 64
+	default 16
+	help
+	  kfsw_remexec_init() refuses a longer allowlist rather than serving
+	  part of it. A long allowlist can outgrow the output cap, in which
+	  case the bare listing comes back truncated; asking for a prefix
+	  narrows it.
+
+config KFSW_REMEXEC_TIMEOUT_MS
+	int "Execution budget and reply timeout, in milliseconds"
+	range 1000 120000
+	default 5000
+	help
+	  How long a client waits for its reply, and the budget the serving
+	  node measures an execution against. A shell handler runs to
+	  completion and cannot be aborted, so a command that overruns is
+	  reported as timed out after it returns.
+
+config KFSW_REMEXEC_SERVER_STACK_SIZE
+	int "Remote execution server thread stack size"
+	default 3072
+	range 1024 16384
+	help
+	  The served command runs on this thread, so it needs room for the
+	  deepest handler the allowlist offers.
+
+config KFSW_REMEXEC_SERVER_PRIORITY
+	int "Remote execution server thread priority"
+	default 3
+
+endif # KFSW_REMEXEC
 
 endmenu

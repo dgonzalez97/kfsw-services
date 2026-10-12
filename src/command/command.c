@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -26,6 +27,22 @@ static bool registry_ready;
 
 /* Serializes invocation so a handler never runs concurrently with itself. */
 K_MUTEX_DEFINE(command_lock);
+
+/*
+ * The claim. Held by one thread across a sequence of invocations, and read on
+ * every dispatch, so it has its own mutex: it must never be held while a
+ * handler runs, or an exclusive claim would block the very invocation it is
+ * meant to refuse.
+ */
+static K_MUTEX_DEFINE(claim_lock);
+static struct {
+	k_tid_t owner;
+	enum kfsw_command_claim_mode mode;
+	char name[KFSW_COMMAND_CLAIM_NAME_MAX];
+	uint32_t intrusions;
+	uint32_t refusals;
+	bool held;
+} claim;
 
 /* Lifetime totals. */
 static atomic_t command_invoked;
@@ -280,6 +297,88 @@ static void record_outcome(uint16_t event_id, uint16_t command_id,
 #endif
 }
 
+/*
+ * An invocation from outside the claim holder takes precedence over the
+ * holder's sequence: it is served as soon as the handler in flight returns,
+ * never after the whole sequence. A holder that cannot survive that claims
+ * exclusively and the invocation is refused instead.
+ */
+static int check_claim(const struct kfsw_command_definition *definition,
+		       struct kfsw_command_result *result)
+{
+	int outcome = 0;
+
+	k_mutex_lock(&claim_lock, K_FOREVER);
+	if (claim.held && (claim.owner != k_current_get())) {
+		if (claim.mode == KFSW_COMMAND_CLAIM_EXCLUSIVE) {
+			if (claim.refusals < UINT32_MAX) {
+				claim.refusals++;
+			}
+			result->status = KFSW_COMMAND_BUSY;
+			(void)snprintf(result->detail, sizeof(result->detail),
+				       "%s refused while %s runs", definition->name, claim.name);
+			outcome = -EBUSY;
+		} else if (claim.intrusions < UINT32_MAX) {
+			claim.intrusions++;
+		}
+	}
+	k_mutex_unlock(&claim_lock);
+	return outcome;
+}
+
+int kfsw_command_claim_acquire(enum kfsw_command_claim_mode mode, const char *owner)
+{
+	if ((owner == NULL) || (owner[0] == '\0') ||
+	    (memchr(owner, '\0', KFSW_COMMAND_CLAIM_NAME_MAX) == NULL)) {
+		return -EINVAL;
+	}
+	k_mutex_lock(&claim_lock, K_FOREVER);
+	if (claim.held && (claim.owner != k_current_get())) {
+		k_mutex_unlock(&claim_lock);
+		return -EBUSY;
+	}
+	if (!claim.held) {
+		claim.intrusions = 0U;
+		claim.refusals = 0U;
+	}
+	claim.owner = k_current_get();
+	claim.mode = mode;
+	strcpy(claim.name, owner);
+	claim.held = true;
+	k_mutex_unlock(&claim_lock);
+	return 0;
+}
+
+int kfsw_command_claim_release(void)
+{
+	int outcome = 0;
+
+	k_mutex_lock(&claim_lock, K_FOREVER);
+	if (claim.held && (claim.owner != k_current_get())) {
+		outcome = -EPERM;
+	} else {
+		claim.held = false;
+		claim.owner = NULL;
+	}
+	k_mutex_unlock(&claim_lock);
+	return outcome;
+}
+
+int kfsw_command_claim_get(struct kfsw_command_claim_state *state)
+{
+	if (state == NULL) {
+		return -EINVAL;
+	}
+	k_mutex_lock(&claim_lock, K_FOREVER);
+	state->held = claim.held;
+	state->mode = claim.mode;
+	state->intrusions = claim.intrusions;
+	state->refusals = claim.refusals;
+	strcpy(state->owner, claim.held ? claim.name : "");
+	k_mutex_unlock(&claim_lock);
+	return 0;
+}
+
 static int dispatch(const struct kfsw_command_definition *definition,
 		    const struct kfsw_command_arg *args, size_t arg_count,
 		    const struct kfsw_command_source *source, struct kfsw_command_result *result)
@@ -300,6 +399,10 @@ static int dispatch(const struct kfsw_command_definition *definition,
 	if (result->status != KFSW_COMMAND_OK) {
 		record_outcome(KFSW_EVENT_COMMAND_REJECTED, definition->id, source, result->status);
 		return -EINVAL;
+	}
+	if (check_claim(definition, result) != 0) {
+		record_outcome(KFSW_EVENT_COMMAND_REJECTED, definition->id, source, result->status);
+		return -EBUSY;
 	}
 
 	k_mutex_lock(&command_lock, K_FOREVER);

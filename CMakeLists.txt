@@ -185,6 +185,10 @@ if(CONFIG_KFSW_HEALTH)
     endif()
 endif()
 
+if(CONFIG_KFSW_GOLDEN)
+    list(APPEND kfsw_services_sources src/golden/golden.c)
+endif()
+
 if(CONFIG_KFSW_FWU)
     list(APPEND kfsw_services_sources src/fwu/fwu.c)
     if(CONFIG_KFSW_FWU_FILES)
@@ -218,7 +222,8 @@ if(CONFIG_KFSW_COMMAND)
 endif()
 
 if(CONFIG_KFSW_FBO)
-    list(APPEND kfsw_services_sources src/fbo/fbo.c src/fbo/fbo_clock.c)
+    list(APPEND kfsw_services_sources src/fbo/fbo.c src/fbo/fbo_clock.c
+         src/fbo/fbo_schedule.c src/fbo/fbo_commands.c)
     if(CONFIG_KFSW_PARAM)
         list(APPEND kfsw_services_sources src/fbo-parameters/fbo_table.c)
     endif()
@@ -228,6 +233,17 @@ if(CONFIG_KFSW_RESMON)
     list(APPEND kfsw_services_sources src/resmon/resmon.c)
     if(CONFIG_KFSW_PARAM)
         list(APPEND kfsw_services_sources src/resmon-parameters/resmon_table.c)
+    endif()
+endif()
+
+if(CONFIG_KFSW_REMEXEC)
+    list(APPEND kfsw_services_sources
+        src/remexec/remexec.c
+        src/remexec/remexec_csp.c
+        src/remexec/remexec_protocol.c
+    )
+    if(CONFIG_KFSW_PARAM)
+        list(APPEND kfsw_services_sources src/remexec-parameters/remexec_table.c)
     endif()
 endif()
 
