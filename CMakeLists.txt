@@ -185,6 +185,10 @@ if(CONFIG_KFSW_HEALTH)
     endif()
 endif()
 
+if(CONFIG_KFSW_GOLDEN)
+    list(APPEND kfsw_services_sources src/golden/golden.c)
+endif()
+
 if(CONFIG_KFSW_FWU)
     list(APPEND kfsw_services_sources src/fwu/fwu.c)
     if(CONFIG_KFSW_FWU_FILES)

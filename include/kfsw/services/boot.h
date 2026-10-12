@@ -127,6 +127,19 @@ void kfsw_boot_count_restart(void);
 uint32_t kfsw_boot_get_count(void);
 #endif
 
+#if CONFIG_KFSW_GOLDEN
+/** The highest retry budget an operator may set. */
+#define KFSW_BOOT_RETRIES_MAX 10U
+
+/**
+ * @brief Unconfirmed boots of one image allowed before recovery.
+ *
+ * The boot_retries parameter, or its compiled default when the parameter
+ * service is absent. Never zero and never above ten.
+ */
+uint8_t kfsw_boot_get_retry_budget(void);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

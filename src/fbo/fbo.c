@@ -8,6 +8,7 @@
 
 #include <zephyr/fs/fs.h>
 #include <zephyr/kernel.h>
+#include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/util.h>
 
@@ -44,10 +45,9 @@ static char argument_text[KFSW_COMMAND_MAX_ARGS][KFSW_COMMAND_MAX_TEXT_SIZE + 1U
 
 void kfsw_fbo_note(uint16_t id, enum kfsw_event_severity severity, uint16_t detail)
 {
-	uint8_t payload[2];
+	uint8_t payload[sizeof(uint16_t)];
 
-	payload[0] = (uint8_t)(detail >> 8);
-	payload[1] = (uint8_t)(detail & 0xFFU);
+	sys_put_be16(detail, payload);
 	kfsw_event_emit(KFSW_EVENT_SOURCE_FBO, id, severity, payload, sizeof(payload));
 }
 
