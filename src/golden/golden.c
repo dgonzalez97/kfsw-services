@@ -1,10 +1,9 @@
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_BOOT
 
 #include <errno.h>
-#include <string.h>
 
 #include <zephyr/devicetree.h>
-#include <zephyr/dfu/mcuboot.h>
+#include <bootutil/image.h>
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/crc.h>
@@ -21,16 +20,8 @@
 #define GOLDEN_ID DT_FIXED_PARTITION_ID(GOLDEN_NODE)
 #define GOLDEN_SIZE DT_REG_SIZE(GOLDEN_NODE)
 
-/* The bootloader's own header magic, little endian at offset zero. */
-#define GOLDEN_IMAGE_MAGIC 0x96f3b83dUL
-
 /* Read in pieces: the partition is larger than anything worth putting on a stack. */
 #define GOLDEN_CHUNK 256U
-
-static int read_at(const struct flash_area *area, uint32_t offset, void *into, size_t size)
-{
-	return flash_area_read(area, offset, into, size);
-}
 #endif
 
 bool kfsw_golden_present(void)
@@ -43,22 +34,13 @@ bool kfsw_golden_present(void)
 	if (flash_area_open(GOLDEN_ID, &area) != 0) {
 		return false;
 	}
-	if (read_at(area, 0U, header, sizeof(header)) == 0) {
-		found = sys_get_le32(header) == GOLDEN_IMAGE_MAGIC;
+	if (flash_area_read(area, 0U, header, sizeof(header)) == 0) {
+		found = sys_get_le32(header) == IMAGE_MAGIC;
 	}
 	flash_area_close(area);
 	return found;
 #else
 	return false;
-#endif
-}
-
-uint32_t kfsw_golden_size(void)
-{
-#if GOLDEN_PRESENT
-	return GOLDEN_SIZE;
-#else
-	return 0U;
 #endif
 }
 
@@ -80,10 +62,10 @@ int kfsw_golden_install(void)
 		return result;
 	}
 
-	/* The checksum comes from the same bytes that will be written, so the
-	   update service checks the copy rather than the intention. */
+	/* From the same bytes that will be written, so the update service checks
+	   the copy and not the intention. */
 	for (offset = 0U; offset < GOLDEN_SIZE; offset += GOLDEN_CHUNK) {
-		result = read_at(area, offset, chunk, GOLDEN_CHUNK);
+		result = flash_area_read(area, offset, chunk, GOLDEN_CHUNK);
 		if (result != 0) {
 			flash_area_close(area);
 			return result;
@@ -98,7 +80,7 @@ int kfsw_golden_install(void)
 	}
 
 	for (offset = 0U; offset < GOLDEN_SIZE; offset += GOLDEN_CHUNK) {
-		result = read_at(area, offset, chunk, GOLDEN_CHUNK);
+		result = flash_area_read(area, offset, chunk, GOLDEN_CHUNK);
 		if (result == 0) {
 			result = kfsw_fwu_write(offset, chunk, GOLDEN_CHUNK);
 		}
@@ -116,15 +98,6 @@ int kfsw_golden_install(void)
 		return result;
 	}
 
-	/* Permanent, not a trial. The update service schedules a trial swap, and
-	   the recovery image has no storage to count its own attempts, so a trial
-	   it never confirms would revert straight back to the image that was
-	   failing. */
-	result = boot_request_upgrade(BOOT_UPGRADE_PERMANENT);
-	if (result != 0) {
-		kfsw_log_error("Recovery: the swap could not be made permanent (%d)", result);
-		return result;
-	}
 
 	kfsw_log_warning("Recovery image installed; it boots at the next restart");
 	return 0;

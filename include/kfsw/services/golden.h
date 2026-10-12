@@ -1,16 +1,3 @@
-/**
- * @file
- * @brief Install the recovery image when an image will not stay up.
- *
- * The golden partition holds a signed image that is known to boot and to be
- * reachable. Nothing boots it from there: MCUboot boots the slots, so recovery
- * means copying it into the secondary slot and asking for a swap.
- *
- * The trigger is the boot attempt count the boot service already keeps against
- * the running image. Once it passes the retry budget, the image has had its
- * chances and the recovery image goes in.
- */
-
 #ifndef KFSW_SERVICES_GOLDEN_H
 #define KFSW_SERVICES_GOLDEN_H
 
@@ -20,6 +7,18 @@
 #ifdef __cplusplus
 extern "C" {
 #endif
+
+/**
+ * @defgroup kfsw_services_golden Recovery image
+ * @ingroup kfsw_services
+ *
+ * Installs the image held in the golden partition once the running one has
+ * booted unconfirmed more times than its retry budget allows. The bootloader
+ * only boots the slots, so installing means copying the image into the
+ * secondary slot and asking for a permanent swap.
+ *
+ * @{
+ */
 
 /** What a recovery decision concluded. */
 enum kfsw_golden_outcome {
@@ -32,20 +31,17 @@ enum kfsw_golden_outcome {
 /**
  * @brief Whether the golden partition holds something that looks like an image.
  *
- * Checks the bootloader's magic at the start of the partition. It does not
- * verify the signature; the bootloader does that when it swaps.
+ * Checks the bootloader's magic. The signature is checked by the bootloader
+ * when it swaps, not here.
  */
 bool kfsw_golden_present(void);
-
-/** Size in bytes of the golden partition, or zero when there is none. */
-uint32_t kfsw_golden_size(void);
 
 /**
  * @brief Copy the recovery image into the secondary slot and schedule a swap.
  *
  * The caller restarts the node. Refused with -EBUSY while the bootloader still
  * needs the secondary slot to revert, because that revert is the cheaper
- * recovery and it should happen first.
+ * recovery and it comes first.
  *
  * @retval 0 on success.
  * @retval -ENOENT when the partition holds no image.
@@ -56,13 +52,12 @@ int kfsw_golden_install(void);
 /**
  * @brief Decide whether the running image has run out of attempts, and act.
  *
- * Reports what it did rather than acting silently, so the composition decides
- * whether to restart.
- *
  * @param outcome Filled with the decision. Must not be NULL.
  * @retval 0 on success, a negative errno when the decision could not be made.
  */
 int kfsw_golden_check(enum kfsw_golden_outcome *outcome);
+
+/** @} */
 
 #ifdef __cplusplus
 }

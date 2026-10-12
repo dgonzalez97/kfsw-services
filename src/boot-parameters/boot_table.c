@@ -46,11 +46,8 @@ static uint32_t boot_reset_cause;
 static uint8_t boot_confirmed;
 #if CONFIG_KFSW_GOLDEN
 /*
- * The retry budget has to outlive the boots it counts, so it is persistent and
- * the build says so when it cannot be. Without a snapshot the value restarts at
- * the compiled default on every boot, the node never reaches the budget, and
- * the recovery image is never installed, which is the one failure this service
- * exists to prevent.
+ * The budget has to outlive the boots it counts. Without a snapshot it restarts
+ * at the compiled default every boot and the node never reaches it.
  */
 #if !CONFIG_KFSW_PARAM_PERSISTENCE
 #warning "KFSW_GOLDEN without KFSW_PARAM_PERSISTENCE: boot_retries cannot be saved, \

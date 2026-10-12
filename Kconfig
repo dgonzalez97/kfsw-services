@@ -454,6 +454,15 @@ config KFSW_GOLDEN
 	  in. The budget is the boot_retries parameter, which must be persisted
 	  or it restarts at every boot and the node never reaches it.
 
+config KFSW_BOOT_CONFIRM_AT_START
+	bool "Confirm the running image once it has started"
+	depends on BOOTLOADER_MCUBOOT && MCUBOOT_IMG_MANAGER
+	help
+	  For an image that has nobody to confirm it, such as the recovery image:
+	  reaching the end of startup is the evidence that it runs, so it keeps
+	  itself instead of being reverted at the next reset. An image an operator
+	  confirms should leave this off.
+
 config KFSW_GOLDEN_RETRIES
 	int "Unconfirmed boots allowed before the recovery image is installed"
 	depends on KFSW_GOLDEN
