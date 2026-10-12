@@ -265,6 +265,19 @@ int kfsw_param_visit(kfsw_param_visitor_t visitor, void *context);
 /** Visit each registered local table once, in ascending identifier order. */
 int kfsw_param_visit_tables(kfsw_param_table_visitor_t visitor, void *context);
 
+/**
+ * @brief Visit the tables another node carries, without its descriptors.
+ *
+ * One exchange instead of one for every parameter in them, and the names come
+ * from the node, so a table this build does not carry is still named. The
+ * description is NULL: it is not carried.
+ *
+ * @retval 0 when every table was visited.
+ * @retval -ENOTSUP when the node does not answer this request.
+ * @retval -EMSGSIZE when the node has more tables than one reply holds.
+ */
+int kfsw_param_remote_tables(uint16_t node, kfsw_param_table_visitor_t visitor, void *context);
+
 /** Registered local tables. */
 size_t kfsw_param_table_count(void);
 
