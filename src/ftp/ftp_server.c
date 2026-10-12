@@ -498,21 +498,6 @@ int kfsw_ftp_start(void)
 	return 0;
 }
 
-int kfsw_ftp_stop(void)
-{
-	if (atomic_get(&server_started) == 0) {
-		return 0;
-	}
-	if (atomic_get(&server_busy) != 0) {
-		return -EBUSY;
-	}
-	atomic_clear(&server_started);
-	/* Let the acceptor leave its accept window before the endpoint goes away. */
-	k_sleep(K_MSEC(KFSW_FTP_SERVER_POLL_MS + 10U));
-	kfsw_ftp_link_listener_close(&server_listener);
-	return 0;
-}
-
 bool kfsw_ftp_is_started(void)
 {
 	return initialized && (atomic_get(&server_started) != 0);

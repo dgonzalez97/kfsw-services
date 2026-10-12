@@ -46,14 +46,6 @@ const char *kfsw_log_module_name(enum kfsw_log_module module)
 	return kfsw_log_module_names[module];
 }
 
-uint8_t kfsw_log_get_module_level(enum kfsw_log_module module)
-{
-	if ((unsigned int)module >= KFSW_LOG_MODULE_COUNT) {
-		return 0U;
-	}
-	return kfsw_log_module_levels[module];
-}
-
 int kfsw_log_set_module_level(enum kfsw_log_module module, uint8_t level)
 {
 	if ((unsigned int)module >= KFSW_LOG_MODULE_COUNT) {
