@@ -175,8 +175,7 @@ static const struct kfsw_param_definition boot_param_definitions[] = {
 		.type = KFSW_PARAM_U8,
 		.flags = KFSW_PARAM_FLAG_PERSISTENT,
 		.name = "boot_retries",
-		.description = "Unconfirmed boots of one image before the recovery image is "
-			       "installed; 1 to 10",
+		.description = "Unconfirmed boots before the recovery image goes in; 1 to 10",
 		.value = &boot_retries,
 		.default_value = {.u8 = CONFIG_KFSW_GOLDEN_RETRIES},
 		.validate = validate_retries,
@@ -196,8 +195,7 @@ static const struct kfsw_param_definition boot_param_definitions[] = {
 		.type = KFSW_PARAM_U8,
 		.flags = KFSW_PARAM_FLAG_READ_ONLY,
 		.name = "boot_revert_reason",
-		.description = "Service evidence: 0 none, 1 missed confirmation, 2 replaced "
-			       "unknown, 255 invalid",
+		.description = "0 none, 1 missed confirmation, 2 replaced unknown, 255 invalid",
 		.value = &boot_revert_reason,
 		.sample = sample_revert_reason,
 	},
@@ -255,8 +253,7 @@ static const struct kfsw_param_definition boot_param_definitions[] = {
 		.type = KFSW_PARAM_U8,
 		.flags = KFSW_PARAM_FLAG_READ_ONLY,
 		.name = "last_reason",
-		.description = "Why the previous run ended: 0 said nothing, 1 commanded, "
-			       "2 brownout, 3 fatal, 4 starved, 5 unknown",
+		.description = "0 quiet, 1 commanded, 2 brownout, 3 fatal, 4 starved, 5 unknown",
 		.value = &boot_last_reason,
 		.sample = sample_last_reason,
 	},
