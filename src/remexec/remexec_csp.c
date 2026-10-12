@@ -144,11 +144,6 @@ int kfsw_remexec_server_start(void)
 	return 0;
 }
 
-bool kfsw_remexec_server_is_started(void)
-{
-	return atomic_get(&server_started) != 0;
-}
-
 K_MUTEX_DEFINE(remexec_client_lock);
 
 static int exchange(uint16_t node, enum kfsw_remexec_opcode opcode, const char *text,

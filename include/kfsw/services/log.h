@@ -52,9 +52,6 @@ enum kfsw_log_module {
 /** Short stable name for a module, as the shell and the docs print it. */
 const char *kfsw_log_module_name(enum kfsw_log_module module);
 
-/** Minimum level for one module. */
-uint8_t kfsw_log_get_module_level(enum kfsw_log_module module);
-
 /**
  * @brief Set the minimum level for one module.
  *
