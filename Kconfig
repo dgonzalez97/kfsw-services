@@ -444,6 +444,25 @@ config KFSW_FWU
 	  the bootloader. The image is written straight to flash because it
 	  doesn't fit in the filesystem partition.
 
+config KFSW_GOLDEN
+	bool "Install the recovery image when an image will not stay up"
+	depends on KFSW_FWU_MCUBOOT
+	help
+	  Count how many times an image has booted without being confirmed and,
+	  once that passes the retry budget, copy the image held in the golden
+	  partition into the secondary slot and ask the bootloader to swap it
+	  in. The budget is the boot_retries parameter, which must be persisted
+	  or it restarts at every boot and the node never reaches it.
+
+config KFSW_GOLDEN_RETRIES
+	int "Unconfirmed boots allowed before the recovery image is installed"
+	depends on KFSW_GOLDEN
+	range 1 10
+	default 3
+	help
+	  Compiled default for boot_retries. Ten is the ceiling: a node that
+	  cannot stay up for ten attempts will not manage it on the eleventh.
+
 config KFSW_FWU_MCUBOOT
 	bool "Offer completed images to MCUboot"
 	depends on KFSW_FWU

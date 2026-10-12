@@ -44,6 +44,37 @@ static void sample_last_uptime_ms(void *value)
 static uint32_t boot_count;
 static uint32_t boot_reset_cause;
 static uint8_t boot_confirmed;
+#if CONFIG_KFSW_GOLDEN
+/*
+ * The retry budget has to outlive the boots it counts, so it is persistent and
+ * the build says so when it cannot be. Without a snapshot the value restarts at
+ * the compiled default on every boot, the node never reaches the budget, and
+ * the recovery image is never installed, which is the one failure this service
+ * exists to prevent.
+ */
+#if !CONFIG_KFSW_PARAM_PERSISTENCE
+#warning "KFSW_GOLDEN without KFSW_PARAM_PERSISTENCE: boot_retries cannot be saved, \
+so the retry budget restarts at every boot and recovery never triggers"
+#endif
+static uint8_t boot_retries = CONFIG_KFSW_GOLDEN_RETRIES;
+
+uint8_t kfsw_boot_get_retry_budget(void)
+{
+	/* A budget outside the range would come from a corrupt snapshot. */
+	if ((boot_retries == 0U) || (boot_retries > KFSW_BOOT_RETRIES_MAX)) {
+		return CONFIG_KFSW_GOLDEN_RETRIES;
+	}
+	return boot_retries;
+}
+
+static int validate_retries(const union kfsw_param_scalar *value)
+{
+	if ((value->u8 == 0U) || (value->u8 > KFSW_BOOT_RETRIES_MAX)) {
+		return -EINVAL;
+	}
+	return 0;
+}
+#endif
 
 static void copy_text(void *value, const char *source, size_t capacity)
 {
@@ -139,6 +170,19 @@ static void sample_trial_valid(void *value)
 }
 
 static const struct kfsw_param_definition boot_param_definitions[] = {
+#if CONFIG_KFSW_GOLDEN
+	{
+		.offset = 0x2bU,
+		.type = KFSW_PARAM_U8,
+		.flags = KFSW_PARAM_FLAG_PERSISTENT,
+		.name = "boot_retries",
+		.description = "Unconfirmed boots of one image before the recovery image is "
+			       "installed; 1 to 10",
+		.value = &boot_retries,
+		.default_value = {.u8 = CONFIG_KFSW_GOLDEN_RETRIES},
+		.validate = validate_retries,
+	},
+#endif
 	{
 		.offset = 0x2cU,
 		.type = KFSW_PARAM_U32,
