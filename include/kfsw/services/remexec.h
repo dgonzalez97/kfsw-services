@@ -123,6 +123,12 @@ struct kfsw_remexec_stats {
 	uint32_t truncated;
 	/** Commands marked in the allowlist. */
 	uint16_t entries;
+	/** A command is running now. */
+	bool running;
+	/** What the last command returned; zero before any has run. */
+	int32_t last_result;
+	/** How long the last command took. */
+	uint32_t last_duration_ms;
 };
 
 /**
@@ -153,6 +159,14 @@ void kfsw_remexec_get_stats(struct kfsw_remexec_stats *stats);
 /** The most recent refusal, as the operator was told it. Empty before any. */
 const char *kfsw_remexec_last_refusal(void);
 
+/**
+ * @brief The last command line that was run, with its arguments.
+ *
+ * Empty before the first one. It is what the node was asked to run, not what
+ * the command printed.
+ */
+const char *kfsw_remexec_last_command(void);
+
 /** Human-readable name for a status, for shell output and logs. */
 const char *kfsw_remexec_status_name(enum kfsw_remexec_status status);
 
@@ -177,9 +191,6 @@ void kfsw_remexec_run_local(const char *line, struct kfsw_remexec_reply *reply);
 
 /** Bind the remote execution port and start serving requests. */
 int kfsw_remexec_server_start(void);
-
-/** Whether the server is accepting requests. */
-bool kfsw_remexec_server_is_started(void);
 
 /**
  * @brief Ask @p node which commands it offers.
