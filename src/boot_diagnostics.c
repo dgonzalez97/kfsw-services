@@ -261,12 +261,15 @@ int kfsw_boot_confirm_image(void)
 		kfsw_log_error("Image confirmation failed: %d", result);
 		return result;
 	}
-	/* Re-read confirmation; a failed snapshot is retried at the next startup. */
+	/* Re-read confirmation. The snapshot is bookkeeping and is retried at the
+	   next startup, so its failure is reported and not returned: the image is
+	   confirmed either way, and an image with no storage behind it, such as a
+	   recovery build, would otherwise always look like a failed confirmation. */
 	result = kfsw_boot_diagnostics_start();
 	if (result != 0) {
 		kfsw_log_error("Confirmed image but trial diagnostics save failed: %d", result);
 	}
-	return result;
+	return 0;
 #else
 	return -ENOTSUP;
 #endif
