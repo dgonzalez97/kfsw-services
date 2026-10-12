@@ -41,6 +41,13 @@
  * support it doesn't answer, and the caller falls back to the list. */
 #define KFSW_PARAM_LIST_LOOKUP_VERSION 5U
 #define KFSW_PARAM_LIST_LOOKUP_HEADER 2U
+/* v6: the tables a node carries, with their names, instead of every descriptor
+ * in them. A node that does not support it does not answer, and the caller
+ * falls back to counting the list. */
+#define KFSW_PARAM_TABLES_VERSION 6U
+#define KFSW_PARAM_TABLES_HEADER 3U
+#define KFSW_PARAM_TABLE_DESCRIPTION_MAX 64U
+#define KFSW_PARAM_TABLES_ENTRY_HEADER 5U
 #define KFSW_PARAM_LIST_ITEM 0U
 #define KFSW_PARAM_LIST_END 1U
 #define KFSW_PARAM_LIST_CHANGED 2U
@@ -582,6 +589,59 @@ static void serve_indexed_list(csp_conn_t *connection, const csp_packet_t *reque
 	csp_send(connection, reply);
 }
 
+struct table_reply {
+	csp_packet_t *packet;
+	uint8_t skip;
+	uint8_t seen;
+	uint8_t written;
+	bool full;
+};
+
+static bool append_table(const struct kfsw_param_table_info *info, void *context)
+{
+	struct table_reply *reply = context;
+	const char *description = info->description != NULL ? info->description : "";
+
+	if (reply->seen++ < reply->skip) {
+		return true;
+	}
+
+	size_t name_length = strnlen(info->name, UINT8_MAX);
+	size_t description_length = strnlen(description, UINT8_MAX);
+	size_t need = KFSW_PARAM_TABLES_ENTRY_HEADER + name_length + description_length;
+	uint8_t *at;
+
+	if ((size_t)reply->packet->length + need > CSP_BUFFER_SIZE) {
+		reply->full = true;
+		return false;
+	}
+	at = &reply->packet->data[reply->packet->length];
+	at[0] = info->id;
+	sys_put_be16(info->count, &at[1]);
+	at[3] = (uint8_t)name_length;
+	at[4] = (uint8_t)description_length;
+	memcpy(&at[KFSW_PARAM_TABLES_ENTRY_HEADER], info->name, name_length);
+	memcpy(&at[KFSW_PARAM_TABLES_ENTRY_HEADER + name_length], description, description_length);
+	reply->packet->length += (uint16_t)need;
+	reply->written++;
+	return true;
+}
+
+static void serve_tables(csp_conn_t *connection, uint8_t from)
+{
+	struct table_reply reply = {.packet = csp_buffer_get(CSP_BUFFER_SIZE), .skip = from};
+
+	if (reply.packet == NULL) {
+		return;
+	}
+	reply.packet->data[0] = KFSW_PARAM_TABLES_VERSION;
+	reply.packet->length = KFSW_PARAM_TABLES_HEADER;
+	(void)kfsw_param_visit_tables(append_table, &reply);
+	reply.packet->data[1] = reply.written;
+	reply.packet->data[2] = reply.full ? 1U : 0U;
+	csp_send(connection, reply.packet);
+}
+
 static void serve_lookup(csp_conn_t *connection, const csp_packet_t *request)
 {
 	char name[KFSW_PARAM_NAME_MAX + 1U];
@@ -635,6 +695,9 @@ static void list_server(void *arg1, void *arg2, void *arg3)
 		} else if (request != NULL && request->length == KFSW_PARAM_LIST_REQUEST_SIZE &&
 			   request->data[0] == KFSW_PARAM_LIST_INDEXED_VERSION) {
 			serve_indexed_list(connection, request);
+		} else if (request != NULL && request->length == 2U &&
+			   request->data[0] == KFSW_PARAM_TABLES_VERSION) {
+			serve_tables(connection, request->data[1]);
 		} else if (request == NULL ||
 			   (request->length == 1U && request->data[0] == KFSW_PARAM_LIST_VERSION)) {
 			serve_list(connection);
@@ -926,6 +989,110 @@ static int refresh_remote(uint16_t node, int64_t deadline, bool force)
 	/* Staged descriptors were never linked into the shared table. */
 	clear_remote_cache();
 	return result == 0 ? -EBADMSG : result;
+}
+
+int kfsw_param_remote_tables(uint16_t node, kfsw_param_table_visitor_t visitor, void *context)
+{
+	int64_t deadline = k_uptime_get() + CONFIG_KFSW_PARAM_LIST_TIMEOUT_MS;
+	uint8_t from = 0U;
+	int result = validate_remote_node(node);
+
+	if (result != 0 || visitor == NULL) {
+		return result != 0 ? result : -EINVAL;
+	}
+
+	/* One reply holds a handful of tables, so ask again from where it stopped
+	 * until the node says there are no more.
+	 */
+	for (;;) {
+		csp_conn_t *connection;
+		csp_packet_t *packet;
+		uint32_t remaining = remaining_ms(deadline);
+		uint8_t count;
+		bool more;
+		size_t at;
+
+		if (remaining == 0U) {
+			return -ETIMEDOUT;
+		}
+		connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_PARAM_LIST_PORT, 0,
+					 CSP_O_CRC32);
+		if (connection == NULL) {
+			return -ECONNREFUSED;
+		}
+		packet = csp_buffer_get(2U);
+		if (packet == NULL) {
+			csp_close(connection);
+			return -ENOMEM;
+		}
+		packet->data[0] = KFSW_PARAM_TABLES_VERSION;
+		packet->data[1] = from;
+		packet->length = 2U;
+		csp_send(connection, packet);
+
+		remaining = remaining_ms(deadline);
+		packet = remaining == 0U ? NULL : csp_read(connection, remaining);
+		csp_close(connection);
+		if (packet == NULL) {
+			/* An older node says nothing rather than refusing. */
+			return from == 0U ? -ENOTSUP : -ETIMEDOUT;
+		}
+		if (packet->length < KFSW_PARAM_TABLES_HEADER ||
+		    packet->data[0] != KFSW_PARAM_TABLES_VERSION) {
+			csp_buffer_free(packet);
+			return -EBADMSG;
+		}
+		count = packet->data[1];
+		more = packet->data[2] != 0U;
+		at = KFSW_PARAM_TABLES_HEADER;
+		for (uint8_t i = 0; i < count; i++) {
+			struct kfsw_param_table_info info;
+			char name[KFSW_PARAM_NAME_MAX + 1U];
+			char description[KFSW_PARAM_TABLE_DESCRIPTION_MAX + 1U];
+			size_t name_length;
+			size_t description_length;
+
+			if (at + KFSW_PARAM_TABLES_ENTRY_HEADER > packet->length) {
+				csp_buffer_free(packet);
+				return -EBADMSG;
+			}
+			name_length = packet->data[at + 3U];
+			description_length = packet->data[at + 4U];
+			if ((name_length > KFSW_PARAM_NAME_MAX) ||
+			    (description_length >= sizeof(description)) ||
+			    (at + KFSW_PARAM_TABLES_ENTRY_HEADER + name_length +
+				     description_length >
+			     packet->length)) {
+				csp_buffer_free(packet);
+				return -EBADMSG;
+			}
+			memcpy(name, &packet->data[at + KFSW_PARAM_TABLES_ENTRY_HEADER],
+			       name_length);
+			name[name_length] = '\0';
+			memcpy(description,
+			       &packet->data[at + KFSW_PARAM_TABLES_ENTRY_HEADER + name_length],
+			       description_length);
+			description[description_length] = '\0';
+			info.id = packet->data[at];
+			info.count = sys_get_be16(&packet->data[at + 1U]);
+			info.name = name;
+			info.description = description;
+			at += KFSW_PARAM_TABLES_ENTRY_HEADER + name_length + description_length;
+			if (!visitor(&info, context)) {
+				csp_buffer_free(packet);
+				return 0;
+			}
+		}
+		csp_buffer_free(packet);
+		if (!more) {
+			return 0;
+		}
+		if (count == 0U) {
+			/* No progress and more to come would loop forever. */
+			return -EBADMSG;
+		}
+		from += count;
+	}
 }
 
 int kfsw_param_remote_refresh(uint16_t node)
