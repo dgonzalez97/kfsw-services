@@ -28,11 +28,6 @@ BUILD_ASSERT(KFSW_FTP_PROTOCOL_HEADER_SIZE + KFSW_FTP_CHUNK_SIZE + KFSW_FTP_LINK
 		     CSP_BUFFER_SIZE,
 	     "One FTP message plus the RDP header and CRC32 must fit in one CSP packet");
 
-uint16_t kfsw_ftp_link_max_payload(void)
-{
-	return (uint16_t)(CSP_BUFFER_SIZE - KFSW_FTP_LINK_OVERHEAD - KFSW_FTP_PROTOCOL_HEADER_SIZE);
-}
-
 uint16_t kfsw_ftp_link_max_node(void)
 {
 	return (uint16_t)((1UL << csp_id_get_host_bits()) - 1UL);

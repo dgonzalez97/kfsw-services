@@ -32,11 +32,6 @@ uint32_t kfsw_boot_get_reset_cause(void)
 	return boot_reset_cause;
 }
 
-int kfsw_boot_get_reset_result(void)
-{
-	return boot_reset_rc;
-}
-
 const char *kfsw_boot_get_image_version(void)
 {
 	return KFSW_IMAGE_VERSION;

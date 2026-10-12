@@ -35,6 +35,7 @@ static struct {
 	bool initialized;
 	struct kfsw_remexec_stats stats;
 	char last_refusal[KFSW_REMEXEC_REFUSAL_MAX];
+	char last_command[KFSW_REMEXEC_COMMAND_MAX + 1U];
 } service;
 
 /* One execution at a time; a second request is refused, never queued. */
@@ -308,6 +309,11 @@ const char *kfsw_remexec_last_refusal(void)
 	return service.last_refusal;
 }
 
+const char *kfsw_remexec_last_command(void)
+{
+	return service.last_command;
+}
+
 const char *kfsw_remexec_status_name(enum kfsw_remexec_status status)
 {
 	switch (status) {
@@ -417,9 +423,17 @@ void kfsw_remexec_run_local(const char *line, struct kfsw_remexec_reply *reply)
 	capture.written = 0U;
 	capture.held = 0U;
 	capture.buf[0] = '\0';
+	/* What was asked for, recorded before it runs: a command that never
+	   returns is the one an operator most needs to see named. */
+	(void)strncpy(service.last_command, line, sizeof(service.last_command) - 1U);
+	service.last_command[sizeof(service.last_command) - 1U] = '\0';
+	service.stats.running = true;
 	started = k_uptime_get();
 	handler_result = shell_execute_cmd(&remexec_shell, line);
 	elapsed = k_uptime_get() - started;
+	service.stats.running = false;
+	service.stats.last_result = (int32_t)handler_result;
+	service.stats.last_duration_ms = (uint32_t)elapsed;
 
 	append(reply, capture.buf);
 	/* append() counted what it kept; the transport counted the whole lot. */

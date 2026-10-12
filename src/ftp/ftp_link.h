@@ -38,9 +38,6 @@ struct kfsw_ftp_link_frame {
 	void *buffer;
 };
 
-/** Largest file-data payload one message can carry on this transport. */
-uint16_t kfsw_ftp_link_max_payload(void);
-
 /** Highest node address this transport can address. */
 uint16_t kfsw_ftp_link_max_node(void);
 

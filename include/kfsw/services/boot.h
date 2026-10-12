@@ -75,9 +75,6 @@ void kfsw_boot_service_start(void);
 /** Reset cause latched at boot. Zero before the service has run. */
 uint32_t kfsw_boot_get_reset_cause(void);
 
-/** Result of the latched read: 0 if the cause is trustworthy. */
-int kfsw_boot_get_reset_result(void);
-
 /** Version of the running image, from the build. */
 const char *kfsw_boot_get_image_version(void);
 

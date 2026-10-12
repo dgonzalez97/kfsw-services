@@ -191,11 +191,6 @@ int kfsw_command_server_start(void)
 	return 0;
 }
 
-bool kfsw_command_server_is_started(void)
-{
-	return atomic_get(&server_started) != 0;
-}
-
 /* Serializes the single client workspace. */
 K_MUTEX_DEFINE(command_client_lock);
 

@@ -219,6 +219,18 @@ int kfsw_param_init(const struct kfsw_param_definition_set *const *sets, size_t 
 bool kfsw_param_is_initialized(void);
 
 /** Read a scalar local parameter by name. */
+/**
+ * @brief Read a value of this parameter's type from text.
+ *
+ * The type in @p value chooses how the text is read and what range is
+ * accepted. The scalar is written only when the whole text parses and fits.
+ *
+ * @retval 0 on success.
+ * @retval -EINVAL when the text is not a value of that type.
+ * @retval -ERANGE when it does not fit the type.
+ */
+int kfsw_param_parse_text(const char *text, struct kfsw_param_value *value);
+
 int kfsw_param_get(const char *name, struct kfsw_param_value *value);
 
 /** Write a scalar local parameter after exact type/size validation. */
