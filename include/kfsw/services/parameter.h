@@ -429,6 +429,18 @@ int kfsw_param_remote_set(uint16_t node, const char *name, const struct kfsw_par
 
 /** Visit a node's descriptors. Copy borrowed strings before the callback returns. */
 int kfsw_param_remote_visit(uint16_t node, kfsw_param_visitor_t visitor, void *context);
+
+/**
+ * @brief Visit one table of another node.
+ *
+ * A whole node does not fit the refresh budget on a slow link; one table
+ * does.
+ *
+ * @retval 0 on success, a negative errno otherwise.
+ * @retval -EINVAL when @p table is zero.
+ */
+int kfsw_param_remote_visit_table(uint16_t node, uint8_t table, kfsw_param_visitor_t visitor,
+				  void *context);
 #endif
 
 /** Return a stable printable name for a K-FSW parameter type. */
