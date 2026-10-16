@@ -767,6 +767,34 @@ config KFSW_FBO_PRIORITY
 	help
 	  Below the router and the servers.
 
+config KFSW_SCRUB
+	bool "K-FSW image scrub"
+	depends on KFSW_FWU
+	depends on FLASH_MAP
+	help
+	  Periodically re-read the resident images and compare a CRC32 against
+	  a reference learned on command. FWU checks an image as it arrives and
+	  the bootloader checks the slot it boots; nothing else reads the slot
+	  that is not running, or the recovery image, ever again.
+
+	  It depends on KFSW_FWU because the secondary image sits where FWU
+	  writes it, and because scrubbing a slot nothing writes to is work
+	  without a question behind it.
+
+if KFSW_SCRUB
+
+config KFSW_SCRUB_PERIOD_MS
+	int "How often the regions are swept, in milliseconds"
+	default 3600000
+	range 1000 86400000
+	help
+	  A sweep reads every present image whole, which is hundreds of
+	  kilobytes of flash, so this belongs in hours rather than seconds. The
+	  read is chunked and yields between chunks, so a sweep does not starve
+	  the watchdog feed.
+
+endif # KFSW_SCRUB
+
 config KFSW_RESMON
 	bool "K-FSW resource monitor"
 	select INIT_STACKS
