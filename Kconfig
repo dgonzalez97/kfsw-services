@@ -100,7 +100,7 @@ config KFSW_PARAM_FLOAT
 
 config KFSW_PARAM_MAX_DEFINITIONS
 	int "Parameters the local table can hold"
-	default 176
+	default 192
 	range 1 512
 	help
 	  Total parameters across all tables. Registration is refused once this
@@ -837,6 +837,42 @@ config KFSW_RESMON_ALERT_PERCENT
 	  configured stack size.
 
 endif # KFSW_RESMON
+
+config KFSW_LIMITS
+	bool "K-FSW parameter limits"
+	depends on KFSW_PARAM
+	depends on KFSW_FBO
+	help
+	  Watch local parameters against bounds read from a text file under the
+	  FTP root, and release a command when one is crossed. The command goes
+	  through the file based operations scheduler, so the release is
+	  recorded and may be addressed to another node.
+
+if KFSW_LIMITS
+
+config KFSW_LIMITS_MAX_RULES
+	int "Rules one file may hold"
+	range 1 64
+	default 16
+	help
+	  A file with more rules is refused whole.
+
+config KFSW_LIMITS_INTERVAL_MS
+	int "How often the rules are evaluated, in milliseconds"
+	range 0 3600000
+	default 10000
+	help
+	  Zero turns the periodic sweep off, leaving the limits sweep command.
+	  A nonzero value must be at least 100 ms. The limits_interval_ms
+	  parameter changes it at run time.
+
+config KFSW_LIMITS_FILE
+	string "Rule file read at boot"
+	default "limits.txt"
+	help
+	  A file of the limits directory under the FTP root.
+
+endif # KFSW_LIMITS
 
 config KFSW_GNDWDT
 	bool "K-FSW ground watchdog"

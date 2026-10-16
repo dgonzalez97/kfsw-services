@@ -243,6 +243,13 @@ if(CONFIG_KFSW_RESMON)
     endif()
 endif()
 
+if(CONFIG_KFSW_LIMITS)
+    list(APPEND kfsw_services_sources
+        src/limits/limits.c
+        src/limits-parameters/limits_table.c
+    )
+endif()
+
 if(CONFIG_KFSW_REMEXEC)
     list(APPEND kfsw_services_sources
         src/remexec/remexec.c
