@@ -65,6 +65,16 @@ union kfsw_param_scalar {
 #define KFSW_PARAM_TABLE_WIRE_MAX 2048U
 
 /**
+ * @brief Longest description a parameter or a table may carry.
+ *
+ * A remote table listing carries the description on the wire and the receiver
+ * holds it in a buffer this size, so a longer one makes the listing fail
+ * rather than truncate. It also keeps a `param describe` line, which starts
+ * the description at column 71, inside 140 columns.
+ */
+#define KFSW_PARAM_DESCRIPTION_MAX 64U
+
+/**
  * @brief Refuse at build time a table too large for the slowest link.
  *
  * Place it next to the definition set it guards.

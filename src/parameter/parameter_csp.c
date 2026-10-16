@@ -46,7 +46,6 @@
  * falls back to counting the list. */
 #define KFSW_PARAM_TABLES_VERSION 6U
 #define KFSW_PARAM_TABLES_HEADER 3U
-#define KFSW_PARAM_TABLE_DESCRIPTION_MAX 64U
 /* v7: the descriptors of one table. A whole node does not fit the refresh
  * budget at 4800 baud, which is what asking per table is for. */
 #define KFSW_PARAM_LIST_TABLE_VERSION 7U
@@ -1080,7 +1079,7 @@ int kfsw_param_remote_tables(uint16_t node, kfsw_param_table_visitor_t visitor, 
 		for (uint8_t i = 0; i < count; i++) {
 			struct kfsw_param_table_info info;
 			char name[KFSW_PARAM_NAME_MAX + 1U];
-			char description[KFSW_PARAM_TABLE_DESCRIPTION_MAX + 1U];
+			char description[KFSW_PARAM_DESCRIPTION_MAX + 1U];
 			size_t name_length;
 			size_t description_length;
 
