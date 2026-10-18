@@ -54,8 +54,9 @@ int kfsw_ftp_link_connect(struct kfsw_ftp_link *link, uint16_t node)
 	if (link == NULL) {
 		return -EINVAL;
 	}
-	link->connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_FTP_CSP_PORT,
-				       kfsw_ftp_get_timeout_ms(), CSP_O_RDP | (CSP_O_CRC32 | KFSW_CSP_AUTHENTICATED_CONNECTION));
+	link->connection = csp_connect(
+		CSP_PRIO_NORM, node, CONFIG_KFSW_FTP_CSP_PORT, kfsw_ftp_get_timeout_ms(),
+		CSP_O_RDP | (CSP_O_CRC32 | KFSW_CSP_AUTHENTICATED_CONNECTION));
 	return (link->connection != NULL) ? 0 : -ECONNREFUSED;
 }
 
