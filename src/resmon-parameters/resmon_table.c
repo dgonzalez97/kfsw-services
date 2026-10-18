@@ -219,6 +219,8 @@ static const struct kfsw_param_definition resmon_param_definitions[] = {
 	},
 };
 
+KFSW_PARAM_TABLE_FITS_THE_LINK(resmon_param_definitions);
+
 const struct kfsw_param_definition_set kfsw_resmon_param_definitions = {
 	.table = KFSW_RESMON_PARAM_TABLE_ID,
 	.name = KFSW_RESMON_PARAM_TABLE_NAME,

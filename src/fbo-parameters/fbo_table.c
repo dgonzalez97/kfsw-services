@@ -298,6 +298,8 @@ static const struct kfsw_param_definition fbo_param_definitions[] = {
 	},
 };
 
+KFSW_PARAM_TABLE_FITS_THE_LINK(fbo_param_definitions);
+
 const struct kfsw_param_definition_set kfsw_fbo_param_definitions = {
 	.table = KFSW_FBO_PARAM_TABLE_ID,
 	.name = KFSW_FBO_PARAM_TABLE_NAME,

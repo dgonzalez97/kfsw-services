@@ -291,6 +291,8 @@ static const struct kfsw_param_definition boot_param_definitions[] = {
 	},
 };
 
+KFSW_PARAM_TABLE_FITS_THE_LINK(boot_param_definitions);
+
 const struct kfsw_param_definition_set kfsw_boot_param_definitions = {
 	.table = KFSW_BOOT_PARAM_TABLE_ID,
 	.name = KFSW_BOOT_PARAM_TABLE_NAME,

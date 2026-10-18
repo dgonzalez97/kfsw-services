@@ -102,6 +102,8 @@ static const struct kfsw_param_definition event_param_definitions[] = {
 	},
 };
 
+KFSW_PARAM_TABLE_FITS_THE_LINK(event_param_definitions);
+
 const struct kfsw_param_definition_set kfsw_event_param_definitions = {
 	.table = KFSW_EVENT_PARAM_TABLE_ID,
 	.name = KFSW_EVENT_PARAM_TABLE_NAME,

@@ -31,6 +31,8 @@ enum kfsw_event_source {
 	KFSW_EVENT_SOURCE_GNDWDT = 6,
 	KFSW_EVENT_SOURCE_RESMON = 7,
 	KFSW_EVENT_SOURCE_TABLE = 8,
+	KFSW_EVENT_SOURCE_SCRUB = 9,
+	KFSW_EVENT_SOURCE_LIMITS = 10,
 };
 
 /** Event severity. */

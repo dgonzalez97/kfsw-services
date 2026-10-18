@@ -47,6 +47,42 @@ union kfsw_param_scalar {
 /** Longest string parameter, including the terminator. */
 #define KFSW_PARAM_STRING_MAX CONFIG_KFSW_PARAM_STRING_MAX
 
+/**
+ * @brief Bytes one descriptor takes on the link.
+ *
+ * The record without the help text, which is not sent: the ground reads it
+ * from the interface document.
+ */
+#define KFSW_PARAM_WIRE_BYTES 58U
+
+/**
+ * @brief Largest a table may be on the link.
+ *
+ * 4800 baud is the slowest link this has to work on, and carries 480 bytes a
+ * second, so 2 KB is 4.2 seconds: inside the refresh budget with room for a
+ * retry. A table that outgrows this is split, not carried.
+ */
+#define KFSW_PARAM_TABLE_WIRE_MAX 2048U
+
+/**
+ * @brief Longest description a parameter or a table may carry.
+ *
+ * A remote table listing carries the description on the wire and the receiver
+ * holds it in a buffer this size, so a longer one makes the listing fail
+ * rather than truncate. It also keeps a `param describe` line, which starts
+ * the description at column 71, inside 140 columns.
+ */
+#define KFSW_PARAM_DESCRIPTION_MAX 64U
+
+/**
+ * @brief Refuse at build time a table too large for the slowest link.
+ *
+ * Place it next to the definition set it guards.
+ */
+#define KFSW_PARAM_TABLE_FITS_THE_LINK(definitions)                                                \
+	BUILD_ASSERT(ARRAY_SIZE(definitions) * KFSW_PARAM_WIRE_BYTES <= KFSW_PARAM_TABLE_WIRE_MAX, \
+		     "a parameter table must fit 2 KB on a 4800 baud link")
+
 /** One typed value, with shared storage for text and bytes. */
 struct kfsw_param_value {
 	enum kfsw_param_type type;
@@ -219,6 +255,18 @@ int kfsw_param_init(const struct kfsw_param_definition_set *const *sets, size_t 
 bool kfsw_param_is_initialized(void);
 
 /** Read a scalar local parameter by name. */
+/**
+ * @brief Read a value of this parameter's type from text.
+ *
+ * The type in @p value chooses how the text is read and what range is
+ * accepted. The scalar is written only when the whole text parses and fits.
+ *
+ * @retval 0 on success.
+ * @retval -EINVAL when the text is not a value of that type.
+ * @retval -ERANGE when it does not fit the type.
+ */
+int kfsw_param_parse_text(const char *text, struct kfsw_param_value *value);
+
 int kfsw_param_get(const char *name, struct kfsw_param_value *value);
 
 /** Write a scalar local parameter after exact type/size validation. */
@@ -252,6 +300,19 @@ int kfsw_param_visit(kfsw_param_visitor_t visitor, void *context);
 
 /** Visit each registered local table once, in ascending identifier order. */
 int kfsw_param_visit_tables(kfsw_param_table_visitor_t visitor, void *context);
+
+/**
+ * @brief Visit the tables another node carries, without its descriptors.
+ *
+ * One exchange instead of one for every parameter in them, and the names come
+ * from the node, so a table this build does not carry is still named. The
+ * description is NULL: it is not carried.
+ *
+ * @retval 0 when every table was visited.
+ * @retval -ENOTSUP when the node does not answer this request.
+ * @retval -EMSGSIZE when the node has more tables than one reply holds.
+ */
+int kfsw_param_remote_tables(uint16_t node, kfsw_param_table_visitor_t visitor, void *context);
 
 /** Registered local tables. */
 size_t kfsw_param_table_count(void);
@@ -378,6 +439,18 @@ int kfsw_param_remote_set(uint16_t node, const char *name, const struct kfsw_par
 
 /** Visit a node's descriptors. Copy borrowed strings before the callback returns. */
 int kfsw_param_remote_visit(uint16_t node, kfsw_param_visitor_t visitor, void *context);
+
+/**
+ * @brief Visit one table of another node.
+ *
+ * A whole node does not fit the refresh budget on a slow link; one table
+ * does.
+ *
+ * @retval 0 on success, a negative errno otherwise.
+ * @retval -EINVAL when @p table is zero.
+ */
+int kfsw_param_remote_visit_table(uint16_t node, uint8_t table, kfsw_param_visitor_t visitor,
+				  void *context);
 #endif
 
 /** Return a stable printable name for a K-FSW parameter type. */

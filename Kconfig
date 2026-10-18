@@ -100,11 +100,14 @@ config KFSW_PARAM_FLOAT
 
 config KFSW_PARAM_MAX_DEFINITIONS
 	int "Parameters the local table can hold"
-	default 176
+	default 256
 	range 1 512
 	help
 	  Total parameters across all tables. Registration is refused once this
-	  is full.
+	  is full, and a composition that overflows loses the parameter server
+	  and everything behind it: no persistence, so no boot counter, so no
+	  budget for the recovery image. The NUCLEO with MCUboot, FWU, FWU lite
+	  and CAN needs more than 192, which is what 192 cost on the bench.
 
 config KFSW_PARAM_STRING_MAX
 	int "Longest string parameter, including the terminator"
@@ -208,13 +211,15 @@ config KFSW_PARAM_TIMEOUT_MS
 config KFSW_PARAM_LIST_TIMEOUT_MS
 	int "Total remote descriptor refresh budget in milliseconds"
 	range 100 120000
-	default 3000
+	default 10000
 	help
-	  Time limit for downloading a remote node's descriptors, and so how
-	  long an operator waits for a node that does not answer. About a
-	  hundred descriptors take under a second over CAN at 500 kbit/s or
-	  KISS at 115200 baud, but 35 seconds over a 57600 baud radio, so
-	  radio compositions raise it.
+	  Time limit for downloading one remote table's descriptors, and so
+	  how long an operator waits for a node that does not answer. Each
+	  descriptor costs its own CRC-protected exchange, measured at 220 ms
+	  at 4800 baud, the slowest link this is meant to work on. A table is
+	  capped at 2 KB, which is 35 descriptors, so the worst table needs
+	  about 8 seconds. A whole node does not fit any budget at that rate,
+	  which is why a listing is asked for one table at a time.
 
 config KFSW_PARAM_LIST_RDP
 	bool "Allow legacy parameter-list clients using RDP"
@@ -765,6 +770,34 @@ config KFSW_FBO_PRIORITY
 	help
 	  Below the router and the servers.
 
+config KFSW_SCRUB
+	bool "K-FSW image scrub"
+	depends on KFSW_FWU
+	depends on FLASH_MAP
+	help
+	  Periodically re-read the resident images and compare a CRC32 against
+	  a reference learned on command. FWU checks an image as it arrives and
+	  the bootloader checks the slot it boots; nothing else reads the slot
+	  that is not running, or the recovery image, ever again.
+
+	  It depends on KFSW_FWU because the secondary image sits where FWU
+	  writes it, and because scrubbing a slot nothing writes to is work
+	  without a question behind it.
+
+if KFSW_SCRUB
+
+config KFSW_SCRUB_PERIOD_MS
+	int "How often the regions are swept, in milliseconds"
+	default 3600000
+	range 1000 86400000
+	help
+	  A sweep reads every present image whole, which is hundreds of
+	  kilobytes of flash, so this belongs in hours rather than seconds. The
+	  read is chunked and yields between chunks, so a sweep does not starve
+	  the watchdog feed.
+
+endif # KFSW_SCRUB
+
 config KFSW_RESMON
 	bool "K-FSW resource monitor"
 	select INIT_STACKS
@@ -807,6 +840,42 @@ config KFSW_RESMON_ALERT_PERCENT
 	  configured stack size.
 
 endif # KFSW_RESMON
+
+config KFSW_LIMITS
+	bool "K-FSW parameter limits"
+	depends on KFSW_PARAM
+	depends on KFSW_FBO
+	help
+	  Watch local parameters against bounds read from a text file under the
+	  FTP root, and release a command when one is crossed. The command goes
+	  through the file based operations scheduler, so the release is
+	  recorded and may be addressed to another node.
+
+if KFSW_LIMITS
+
+config KFSW_LIMITS_MAX_RULES
+	int "Rules one file may hold"
+	range 1 64
+	default 16
+	help
+	  A file with more rules is refused whole.
+
+config KFSW_LIMITS_INTERVAL_MS
+	int "How often the rules are evaluated, in milliseconds"
+	range 0 3600000
+	default 10000
+	help
+	  Zero turns the periodic sweep off, leaving the limits sweep command.
+	  A nonzero value must be at least 100 ms. The limits_interval_ms
+	  parameter changes it at run time.
+
+config KFSW_LIMITS_FILE
+	string "Rule file read at boot"
+	default "limits.txt"
+	help
+	  A file of the limits directory under the FTP root.
+
+endif # KFSW_LIMITS
 
 config KFSW_GNDWDT
 	bool "K-FSW ground watchdog"

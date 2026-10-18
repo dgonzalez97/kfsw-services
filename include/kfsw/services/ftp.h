@@ -127,9 +127,6 @@ int kfsw_ftp_init(void);
 /** Bind the RDP/CRC32 CSP endpoint and start the static server threads. */
 int kfsw_ftp_start(void);
 
-/** Stop accepting new transfers and close the server endpoint. */
-int kfsw_ftp_stop(void);
-
 /** Return whether the local service is initialized and accepting connections. */
 bool kfsw_ftp_is_started(void);
 

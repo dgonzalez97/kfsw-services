@@ -41,6 +41,16 @@
  * support it doesn't answer, and the caller falls back to the list. */
 #define KFSW_PARAM_LIST_LOOKUP_VERSION 5U
 #define KFSW_PARAM_LIST_LOOKUP_HEADER 2U
+/* v6: the tables a node carries, with their names, instead of every descriptor
+ * in them. A node that does not support it does not answer, and the caller
+ * falls back to counting the list. */
+#define KFSW_PARAM_TABLES_VERSION 6U
+#define KFSW_PARAM_TABLES_HEADER 3U
+/* v7: the descriptors of one table. A whole node does not fit the refresh
+ * budget at 4800 baud, which is what asking per table is for. */
+#define KFSW_PARAM_LIST_TABLE_VERSION 7U
+#define KFSW_PARAM_LIST_TABLE_REQUEST_SIZE 8U
+#define KFSW_PARAM_TABLES_ENTRY_HEADER 5U
 #define KFSW_PARAM_LIST_ITEM 0U
 #define KFSW_PARAM_LIST_END 1U
 #define KFSW_PARAM_LIST_CHANGED 2U
@@ -454,7 +464,8 @@ static uint32_t remaining_ms(int64_t deadline)
 	return (uint32_t)CLAMP(deadline - k_uptime_get(), 0, UINT32_MAX);
 }
 
-static const param_t *list_entry(uint16_t wanted, uint16_t *total)
+/* Table zero walks every parameter; any other walks that table alone. */
+static const param_t *list_entry_in(uint8_t table, uint16_t wanted, uint16_t *total)
 {
 	const param_t *found = NULL;
 
@@ -465,6 +476,9 @@ static const param_t *list_entry(uint16_t wanted, uint16_t *total)
 		if ((param->mask & PM_HIDDEN) != 0U) {
 			continue;
 		}
+		if (table != 0U && (uint8_t)(param->id >> 8) != table) {
+			continue;
+		}
 		if ((*total)++ == wanted) {
 			found = param;
 		}
@@ -472,7 +486,7 @@ static const param_t *list_entry(uint16_t wanted, uint16_t *total)
 	return found;
 }
 
-/* Match the same entries list_entry() lists, so a lookup and a list agree.
+/* Match the same entries list_entry_in() lists, so a lookup and a list agree.
  */
 static const param_t *local_entry_by_name(const char *name)
 {
@@ -505,23 +519,29 @@ static size_t encode_descriptor(const param_t *param, uint8_t *data)
 	if (param->unit != NULL) {
 		strncpy(wire->unit, param->unit, sizeof(wire->unit) - 1U);
 	}
-	if (param->docstr != NULL) {
-		strncpy(wire->help, param->docstr, sizeof(wire->help) - 1U);
-	}
-	return offsetof(param_transfer3_t, help) + strlen(wire->help) + 1U;
+	/* The help text stays on the node. */
+	return offsetof(param_transfer3_t, help) + 1U;
 }
 
-static uint32_t list_fingerprint(void)
+/* The fingerprint covers the descriptors the request will carry, so a client
+ * can check what it received. Table zero covers the whole node.
+ */
+static uint32_t list_fingerprint(uint8_t table)
 {
 	param_transfer3_t wire;
 	uint32_t crc = 0;
 
 	for (size_t i = 0; i < kfsw_param_entry_count(); i++) {
-		if ((local_parameters[i].mask & PM_HIDDEN) == 0U) {
-			size_t size = encode_descriptor(&local_parameters[i], (uint8_t *)&wire);
+		const param_t *param = &local_parameters[i];
 
-			crc = crc32_ieee_update(crc, (uint8_t *)&wire, size);
+		if ((param->mask & PM_HIDDEN) != 0U) {
+			continue;
 		}
+		if (table != 0U && (uint8_t)(param->id >> 8) != table) {
+			continue;
+		}
+		crc = crc32_ieee_update(crc, (uint8_t *)&wire,
+					encode_descriptor(param, (uint8_t *)&wire));
 	}
 	return crc;
 }
@@ -532,7 +552,7 @@ static void serve_list(csp_conn_t *connection)
 	uint16_t total;
 
 	for (uint16_t index = 0;; index++) {
-		const param_t *param = list_entry(index, &total);
+		const param_t *param = list_entry_in(0U, index, &total);
 		csp_packet_t *packet = NULL;
 
 		if (param == NULL) {
@@ -557,17 +577,20 @@ static void serve_list(csp_conn_t *connection)
 
 static void serve_indexed_list(csp_conn_t *connection, const csp_packet_t *request)
 {
-	uint16_t index = sys_get_be16(&request->data[1]);
+	bool by_table = request->data[0] == KFSW_PARAM_LIST_TABLE_VERSION;
+	uint8_t table = by_table ? request->data[1] : 0U;
+	const uint8_t *fields = by_table ? &request->data[2] : &request->data[1];
+	uint16_t index = sys_get_be16(fields);
 	uint16_t total;
-	uint32_t expected = sys_get_be32(&request->data[3]);
-	const param_t *param = list_entry(index, &total);
-	uint32_t crc = local_list_crc;
+	uint32_t expected = sys_get_be32(&fields[2]);
+	const param_t *param = list_entry_in(table, index, &total);
+	uint32_t crc = by_table ? list_fingerprint(table) : local_list_crc;
 	csp_packet_t *reply = csp_buffer_get(CSP_BUFFER_SIZE);
 
 	if (reply == NULL) {
 		return;
 	}
-	reply->data[0] = KFSW_PARAM_LIST_INDEXED_VERSION;
+	reply->data[0] = request->data[0];
 	reply->data[1] = (index != 0U && expected != crc) || index > total
 				 ? KFSW_PARAM_LIST_CHANGED
 				 : (param == NULL ? KFSW_PARAM_LIST_END : KFSW_PARAM_LIST_ITEM);
@@ -580,6 +603,59 @@ static void serve_indexed_list(csp_conn_t *connection, const csp_packet_t *reque
 			encode_descriptor(param, &reply->data[KFSW_PARAM_LIST_REPLY_HEADER]);
 	}
 	csp_send(connection, reply);
+}
+
+struct table_reply {
+	csp_packet_t *packet;
+	uint8_t skip;
+	uint8_t seen;
+	uint8_t written;
+	bool full;
+};
+
+static bool append_table(const struct kfsw_param_table_info *info, void *context)
+{
+	struct table_reply *reply = context;
+	const char *description = info->description != NULL ? info->description : "";
+
+	if (reply->seen++ < reply->skip) {
+		return true;
+	}
+
+	size_t name_length = strnlen(info->name, UINT8_MAX);
+	size_t description_length = strnlen(description, UINT8_MAX);
+	size_t need = KFSW_PARAM_TABLES_ENTRY_HEADER + name_length + description_length;
+	uint8_t *at;
+
+	if ((size_t)reply->packet->length + need > CSP_BUFFER_SIZE) {
+		reply->full = true;
+		return false;
+	}
+	at = &reply->packet->data[reply->packet->length];
+	at[0] = info->id;
+	sys_put_be16(info->count, &at[1]);
+	at[3] = (uint8_t)name_length;
+	at[4] = (uint8_t)description_length;
+	memcpy(&at[KFSW_PARAM_TABLES_ENTRY_HEADER], info->name, name_length);
+	memcpy(&at[KFSW_PARAM_TABLES_ENTRY_HEADER + name_length], description, description_length);
+	reply->packet->length += (uint16_t)need;
+	reply->written++;
+	return true;
+}
+
+static void serve_tables(csp_conn_t *connection, uint8_t from)
+{
+	struct table_reply reply = {.packet = csp_buffer_get(CSP_BUFFER_SIZE), .skip = from};
+
+	if (reply.packet == NULL) {
+		return;
+	}
+	reply.packet->data[0] = KFSW_PARAM_TABLES_VERSION;
+	reply.packet->length = KFSW_PARAM_TABLES_HEADER;
+	(void)kfsw_param_visit_tables(append_table, &reply);
+	reply.packet->data[1] = reply.written;
+	reply.packet->data[2] = reply.full ? 1U : 0U;
+	csp_send(connection, reply.packet);
 }
 
 static void serve_lookup(csp_conn_t *connection, const csp_packet_t *request)
@@ -632,9 +708,15 @@ static void list_server(void *arg1, void *arg2, void *arg3)
 		if (request != NULL && request->length > 1U &&
 		    request->data[0] == KFSW_PARAM_LIST_LOOKUP_VERSION) {
 			serve_lookup(connection, request);
-		} else if (request != NULL && request->length == KFSW_PARAM_LIST_REQUEST_SIZE &&
-			   request->data[0] == KFSW_PARAM_LIST_INDEXED_VERSION) {
+		} else if (request != NULL &&
+			   ((request->length == KFSW_PARAM_LIST_REQUEST_SIZE &&
+			     request->data[0] == KFSW_PARAM_LIST_INDEXED_VERSION) ||
+			    (request->length == KFSW_PARAM_LIST_TABLE_REQUEST_SIZE &&
+			     request->data[0] == KFSW_PARAM_LIST_TABLE_VERSION))) {
 			serve_indexed_list(connection, request);
+		} else if (request != NULL && request->length == 2U &&
+			   request->data[0] == KFSW_PARAM_TABLES_VERSION) {
+			serve_tables(connection, request->data[1]);
 		} else if (request == NULL ||
 			   (request->length == 1U && request->data[0] == KFSW_PARAM_LIST_VERSION)) {
 			serve_list(connection);
@@ -673,7 +755,7 @@ static int server_start(void)
 		return result;
 	}
 
-	local_list_crc = list_fingerprint();
+	local_list_crc = list_fingerprint(0U);
 	memset(&list_socket, 0, sizeof(list_socket));
 	list_socket.opts = KFSW_PARAM_LIST_SOCKET_OPTIONS;
 	result = csp_listen(&list_socket, 4U);
@@ -800,7 +882,10 @@ static int stage_remote_descriptor(uint16_t node, param_transfer3_t *wire, const
 	return 0;
 }
 
-static int refresh_remote(uint16_t node, int64_t deadline, bool force)
+/* table zero asks for the whole node, anything else for that table alone. The
+ * cache is only complete when the whole node was asked for.
+ */
+static int refresh_table(uint16_t node, uint8_t table, int64_t deadline, bool force)
 {
 	uint32_t crc = 0;
 	uint32_t received_crc = 0;
@@ -810,7 +895,7 @@ static int refresh_remote(uint16_t node, int64_t deadline, bool force)
 	if (result != 0 || node == 0U) {
 		return result != 0 ? result : -EINVAL;
 	}
-	if (!force && cache_complete && cached_node == node) {
+	if (!force && table == 0U && cache_complete && cached_node == node) {
 		return 0;
 	}
 	if (kfsw_param_table_lock_until(deadline) != 0) {
@@ -835,16 +920,24 @@ static int refresh_remote(uint16_t node, int64_t deadline, bool force)
 			result = -ECONNREFUSED;
 			break;
 		}
-		packet = csp_buffer_get(KFSW_PARAM_LIST_REQUEST_SIZE);
+		packet = csp_buffer_get(KFSW_PARAM_LIST_TABLE_REQUEST_SIZE);
 		if (packet == NULL) {
 			csp_close(connection);
 			result = -ENOMEM;
 			break;
 		}
-		packet->data[0] = KFSW_PARAM_LIST_INDEXED_VERSION;
-		sys_put_be16(index, &packet->data[1]);
-		sys_put_be32(crc, &packet->data[3]);
-		packet->length = KFSW_PARAM_LIST_REQUEST_SIZE;
+		if (table == 0U) {
+			packet->data[0] = KFSW_PARAM_LIST_INDEXED_VERSION;
+			sys_put_be16(index, &packet->data[1]);
+			sys_put_be32(crc, &packet->data[3]);
+			packet->length = KFSW_PARAM_LIST_REQUEST_SIZE;
+		} else {
+			packet->data[0] = KFSW_PARAM_LIST_TABLE_VERSION;
+			packet->data[1] = table;
+			sys_put_be16(index, &packet->data[2]);
+			sys_put_be32(crc, &packet->data[4]);
+			packet->length = KFSW_PARAM_LIST_TABLE_REQUEST_SIZE;
+		}
 		csp_send(connection, packet);
 		remaining = remaining_ms(deadline);
 		packet = remaining == 0U ? NULL : csp_read(connection, remaining);
@@ -855,7 +948,8 @@ static int refresh_remote(uint16_t node, int64_t deadline, bool force)
 		}
 		result = -EBADMSG;
 		if (packet->length < KFSW_PARAM_LIST_REPLY_HEADER ||
-		    packet->data[0] != KFSW_PARAM_LIST_INDEXED_VERSION) {
+		    packet->data[0] != (table == 0U ? KFSW_PARAM_LIST_INDEXED_VERSION
+						    : KFSW_PARAM_LIST_TABLE_VERSION)) {
 			csp_buffer_free(packet);
 			break;
 		}
@@ -884,7 +978,7 @@ static int refresh_remote(uint16_t node, int64_t deadline, bool force)
 				(void)param_list_add((param_t *)cached[i]);
 			}
 			cached_linked = cached_count;
-			cache_complete = true;
+			cache_complete = table == 0U;
 			kfsw_param_table_unlock();
 			return 0;
 		}
@@ -928,6 +1022,110 @@ static int refresh_remote(uint16_t node, int64_t deadline, bool force)
 	return result == 0 ? -EBADMSG : result;
 }
 
+int kfsw_param_remote_tables(uint16_t node, kfsw_param_table_visitor_t visitor, void *context)
+{
+	int64_t deadline = k_uptime_get() + CONFIG_KFSW_PARAM_LIST_TIMEOUT_MS;
+	uint8_t from = 0U;
+	int result = validate_remote_node(node);
+
+	if (result != 0 || visitor == NULL) {
+		return result != 0 ? result : -EINVAL;
+	}
+
+	/* One reply holds a handful of tables, so ask again from where it stopped
+	 * until the node says there are no more.
+	 */
+	for (;;) {
+		csp_conn_t *connection;
+		csp_packet_t *packet;
+		uint32_t remaining = remaining_ms(deadline);
+		uint8_t count;
+		bool more;
+		size_t at;
+
+		if (remaining == 0U) {
+			return -ETIMEDOUT;
+		}
+		connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_PARAM_LIST_PORT, 0,
+					 CSP_O_CRC32);
+		if (connection == NULL) {
+			return -ECONNREFUSED;
+		}
+		packet = csp_buffer_get(2U);
+		if (packet == NULL) {
+			csp_close(connection);
+			return -ENOMEM;
+		}
+		packet->data[0] = KFSW_PARAM_TABLES_VERSION;
+		packet->data[1] = from;
+		packet->length = 2U;
+		csp_send(connection, packet);
+
+		remaining = remaining_ms(deadline);
+		packet = remaining == 0U ? NULL : csp_read(connection, remaining);
+		csp_close(connection);
+		if (packet == NULL) {
+			/* An older node says nothing rather than refusing. */
+			return from == 0U ? -ENOTSUP : -ETIMEDOUT;
+		}
+		if (packet->length < KFSW_PARAM_TABLES_HEADER ||
+		    packet->data[0] != KFSW_PARAM_TABLES_VERSION) {
+			csp_buffer_free(packet);
+			return -EBADMSG;
+		}
+		count = packet->data[1];
+		more = packet->data[2] != 0U;
+		at = KFSW_PARAM_TABLES_HEADER;
+		for (uint8_t i = 0; i < count; i++) {
+			struct kfsw_param_table_info info;
+			char name[KFSW_PARAM_NAME_MAX + 1U];
+			char description[KFSW_PARAM_DESCRIPTION_MAX + 1U];
+			size_t name_length;
+			size_t description_length;
+
+			if (at + KFSW_PARAM_TABLES_ENTRY_HEADER > packet->length) {
+				csp_buffer_free(packet);
+				return -EBADMSG;
+			}
+			name_length = packet->data[at + 3U];
+			description_length = packet->data[at + 4U];
+			if ((name_length > KFSW_PARAM_NAME_MAX) ||
+			    (description_length >= sizeof(description)) ||
+			    (at + KFSW_PARAM_TABLES_ENTRY_HEADER + name_length +
+				     description_length >
+			     packet->length)) {
+				csp_buffer_free(packet);
+				return -EBADMSG;
+			}
+			memcpy(name, &packet->data[at + KFSW_PARAM_TABLES_ENTRY_HEADER],
+			       name_length);
+			name[name_length] = '\0';
+			memcpy(description,
+			       &packet->data[at + KFSW_PARAM_TABLES_ENTRY_HEADER + name_length],
+			       description_length);
+			description[description_length] = '\0';
+			info.id = packet->data[at];
+			info.count = sys_get_be16(&packet->data[at + 1U]);
+			info.name = name;
+			info.description = description;
+			at += KFSW_PARAM_TABLES_ENTRY_HEADER + name_length + description_length;
+			if (!visitor(&info, context)) {
+				csp_buffer_free(packet);
+				return 0;
+			}
+		}
+		csp_buffer_free(packet);
+		if (!more) {
+			return 0;
+		}
+		if (count == 0U) {
+			/* No progress and more to come would loop forever. */
+			return -EBADMSG;
+		}
+		from += count;
+	}
+}
+
 int kfsw_param_remote_refresh(uint16_t node)
 {
 	int64_t deadline = k_uptime_get() + CONFIG_KFSW_PARAM_LIST_TIMEOUT_MS;
@@ -936,7 +1134,7 @@ int kfsw_param_remote_refresh(uint16_t node)
 	if (result != 0) {
 		return -ETIMEDOUT;
 	}
-	result = refresh_remote(node, deadline, true);
+	result = refresh_table(node, 0U, deadline, true);
 	k_mutex_unlock(&kfsw_param_remote_lock);
 	return result;
 }
@@ -1318,7 +1516,7 @@ static int find_remote(uint16_t node, const char *name, const param_t **found, i
 	}
 
 	/* The node does not serve lookups. Walk its list, as before. */
-	result = refresh_remote(node, deadline, false);
+	result = refresh_table(node, 0U, deadline, false);
 	if (result != 0) {
 		return result;
 	}
@@ -1433,7 +1631,7 @@ static int set_remote(uint16_t node, const char *name, const struct kfsw_param_v
 	return result;
 }
 
-static int visit_remote(uint16_t node, kfsw_param_visitor_t visitor, void *context,
+static int visit_remote(uint16_t node, uint8_t table, kfsw_param_visitor_t visitor, void *context,
 			int64_t deadline)
 {
 	struct kfsw_param_info info;
@@ -1444,7 +1642,7 @@ static int visit_remote(uint16_t node, kfsw_param_visitor_t visitor, void *conte
 	if (visitor == NULL) {
 		return -EINVAL;
 	}
-	result = refresh_remote(node, deadline, false);
+	result = refresh_table(node, table, deadline, table != 0U);
 	if (result != 0) {
 		return result;
 	}
@@ -1530,7 +1728,7 @@ int kfsw_param_remote_visit_until(uint16_t node, kfsw_param_visitor_t visitor, v
 	    k_mutex_lock(&kfsw_param_remote_lock, K_MSEC(remaining_ms(deadline))) != 0) {
 		return -ETIMEDOUT;
 	}
-	int result = visit_remote(node, visitor, context, deadline);
+	int result = visit_remote(node, 0U, visitor, context, deadline);
 
 	k_mutex_unlock(&kfsw_param_remote_lock);
 	return result;
@@ -1540,4 +1738,21 @@ int kfsw_param_remote_visit(uint16_t node, kfsw_param_visitor_t visitor, void *c
 {
 	return kfsw_param_remote_visit_until(node, visitor, context,
 					     k_uptime_get() + CONFIG_KFSW_PARAM_LIST_TIMEOUT_MS);
+}
+
+int kfsw_param_remote_visit_table(uint16_t node, uint8_t table, kfsw_param_visitor_t visitor,
+				  void *context)
+{
+	int64_t deadline = k_uptime_get() + CONFIG_KFSW_PARAM_LIST_TIMEOUT_MS;
+	int result;
+
+	if (table == 0U) {
+		return -EINVAL;
+	}
+	if (k_mutex_lock(&kfsw_param_remote_lock, K_MSEC(remaining_ms(deadline))) != 0) {
+		return -ETIMEDOUT;
+	}
+	result = visit_remote(node, table, visitor, context, deadline);
+	k_mutex_unlock(&kfsw_param_remote_lock);
+	return result;
 }
