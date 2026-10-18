@@ -19,7 +19,7 @@
 #include <kfsw/services/fbo.h>
 #include <kfsw/services/ftp.h>
 #include <kfsw/services/limits.h>
-#define KFSW_LOG_MODULE KFSW_LOG_MODULE_APP
+#define KFSW_LOG_MODULE KFSW_LOG_MODULE_LIMITS
 #include <kfsw/services/log.h>
 
 /* Parameter, comparison, bound, dwell, node and a 79 character action with its
@@ -30,6 +30,14 @@
 /* Room for a full rule set with comments between the rules. */
 #define LIMITS_FILE_BYTES_MAX (CONFIG_KFSW_LIMITS_MAX_RULES * LIMITS_LINE_BYTES * 2U)
 /* The scheduler refuses a release due now, so the shortest delay is one second. */
+/*
+ * The rules arrive as a file, so a composition without the file transfer
+ * service can only ever run the rules it was compiled with, which is none.
+ */
+#if !IS_ENABLED(CONFIG_KFSW_FTP) && !IS_ENABLED(CONFIG_ZTEST)
+#warning "KFSW_LIMITS without KFSW_FTP: nothing can upload a rule file to this node"
+#endif
+
 #define LIMITS_RELEASE_DELAY_S 1U
 
 BUILD_ASSERT((CONFIG_KFSW_LIMITS_INTERVAL_MS == 0) ||
@@ -654,6 +662,24 @@ int kfsw_limits_init(void)
 	k_mutex_unlock(&state_lock);
 	if (!first) {
 		return 0;
+	}
+
+	/* Same reason as the procedures directory: a rule file has to be able to
+	 * arrive before anybody can load one.
+	 */
+	if (kfsw_storage_is_ready()) {
+		char directory[64];
+
+		(void)snprintf(directory, sizeof(directory), "%s/%s", KFSW_FTP_STORAGE_ROOT,
+			       KFSW_LIMITS_FTP_PATH);
+		result = fs_mkdir(KFSW_FTP_STORAGE_ROOT);
+		if ((result == 0) || (result == -EEXIST)) {
+			result = fs_mkdir(directory);
+		}
+		if ((result != 0) && (result != -EEXIST)) {
+			kfsw_log_warning("Limits: %s is missing (%d); no rule file can be uploaded",
+					 directory, result);
+		}
 	}
 
 	/* A restored interval that is out of range gives way to the compiled one. */

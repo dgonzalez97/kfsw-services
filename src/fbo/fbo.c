@@ -25,6 +25,17 @@
 
 #define KFSW_FBO_DIRECTORY KFSW_FTP_STORAGE_ROOT "/" KFSW_FBO_FTP_PATH
 
+/*
+ * A reduced composition is allowed to leave the file transfer service out, and
+ * then this one still runs: a procedure already on the filesystem is carried
+ * out, and the time-tagged queue works. What is gone is the only way to put a
+ * procedure there, so the build says so rather than letting an operator find
+ * out over a pass.
+ */
+#if !IS_ENABLED(CONFIG_KFSW_FTP) && !IS_ENABLED(CONFIG_ZTEST)
+#warning "KFSW_FBO without KFSW_FTP: nothing can upload a procedure to this node"
+#endif
+
 struct line {
 	char text[CONFIG_KFSW_FBO_LINE_MAX];
 	size_t length;
@@ -448,6 +459,28 @@ void kfsw_fbo_count_skipped(uint16_t line)
 	k_mutex_unlock(&lock);
 }
 
+/*
+ * A procedure arrives as a file, and a file cannot be uploaded into a
+ * directory that is not there: the transfer is refused with "not found" and
+ * the operator is left guessing. The parent is attempted too, because this
+ * service starts before the file transfer service that owns the root.
+ */
+static void make_directory(void)
+{
+	int result = fs_mkdir(KFSW_FTP_STORAGE_ROOT);
+
+	if ((result != 0) && (result != -EEXIST)) {
+		kfsw_log_warning("FBO: no transfer root (%d); procedures cannot be uploaded",
+				 result);
+		return;
+	}
+	result = fs_mkdir(KFSW_FBO_DIRECTORY);
+	if ((result != 0) && (result != -EEXIST)) {
+		kfsw_log_warning("FBO: %s is missing (%d); procedures cannot be uploaded",
+				 KFSW_FBO_DIRECTORY, result);
+	}
+}
+
 int kfsw_fbo_init(void)
 {
 	k_mutex_lock(&lock, K_FOREVER);
@@ -457,6 +490,9 @@ int kfsw_fbo_init(void)
 		kfsw_fbo_schedule_init();
 	}
 	k_mutex_unlock(&lock);
+	if (kfsw_storage_is_ready()) {
+		make_directory();
+	}
 	kfsw_log_info("FBO: ready, up to %u lines a procedure", CONFIG_KFSW_FBO_LINES_MAX);
 	return 0;
 }
