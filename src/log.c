@@ -34,8 +34,9 @@ static atomic_t kfsw_log_level = ATOMIC_INIT(CONFIG_KFSW_LOG_MIN_LEVEL);
 static uint8_t kfsw_log_module_levels[KFSW_LOG_MODULE_COUNT];
 
 static const char *const kfsw_log_module_names[KFSW_LOG_MODULE_COUNT] = {
-	"app", "boot",   "log",     "param", "storage", "csp", "uart", "ftp",
-	"fwu", "health", "command", "event", "radio",   "hk",  "fbo",
+	"app",   "boot",    "log",     "param",  "storage", "csp",    "uart", "ftp",
+	"fwu",   "health",  "command", "event",  "radio",   "hk",     "fbo",  "can",
+	"table", "remexec", "resmon",  "gndwdt", "scrub",   "limits",
 };
 
 const char *kfsw_log_module_name(enum kfsw_log_module module)
@@ -56,6 +57,14 @@ int kfsw_log_set_module_level(enum kfsw_log_module module, uint8_t level)
 	}
 	kfsw_log_module_levels[module] = level;
 	return 0;
+}
+
+uint8_t kfsw_log_get_module_level(enum kfsw_log_module module)
+{
+	if ((unsigned int)module >= KFSW_LOG_MODULE_COUNT) {
+		return 4U;
+	}
+	return kfsw_log_module_levels[module];
 }
 
 /* Used by the write path, so not behind the parameter guard. */

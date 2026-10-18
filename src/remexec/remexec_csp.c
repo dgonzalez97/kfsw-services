@@ -11,7 +11,7 @@
 #include <csp/csp_buffer.h>
 
 #include <kfsw/comms/csp.h>
-#define KFSW_LOG_MODULE KFSW_LOG_MODULE_COMMAND
+#define KFSW_LOG_MODULE KFSW_LOG_MODULE_REMEXEC
 #include <kfsw/services/log.h>
 
 #include "remexec_internal.h"

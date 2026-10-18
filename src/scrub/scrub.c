@@ -1,4 +1,4 @@
-#define KFSW_LOG_MODULE KFSW_LOG_MODULE_BOOT
+#define KFSW_LOG_MODULE KFSW_LOG_MODULE_SCRUB
 
 #include <errno.h>
 #include <string.h>

@@ -15,7 +15,7 @@
 #if CONFIG_KFSW_EVENT
 #include <kfsw/services/event.h>
 #endif
-#define KFSW_LOG_MODULE KFSW_LOG_MODULE_PARAM
+#define KFSW_LOG_MODULE KFSW_LOG_MODULE_TABLE
 #include <kfsw/services/log.h>
 #include <kfsw/services/table.h>
 
