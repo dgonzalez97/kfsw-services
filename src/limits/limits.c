@@ -1,4 +1,5 @@
 #include <errno.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -140,7 +141,10 @@ static void widen(enum kfsw_param_type type, const union kfsw_param_scalar *scal
 		break;
 	case KFSW_PARAM_I8:
 		wide->kind = WIDE_SIGNED;
-		wide->i = scalar->i8;
+		/* Widened explicitly: a plain assignment from a signed char is
+		 * the shape that usually hides a sign-extension mistake.
+		 */
+		wide->i = (int64_t)scalar->i8;
 		break;
 	case KFSW_PARAM_I16:
 		wide->kind = WIDE_SIGNED;
@@ -174,7 +178,7 @@ static int order(const struct wide *a, const struct wide *b)
 	case WIDE_SIGNED:
 		return (a->i > b->i) - (a->i < b->i);
 	case WIDE_FLOAT:
-		if ((a->f != a->f) || (b->f != b->f)) {
+		if (isnan(a->f) || isnan(b->f)) {
 			return ORDER_NONE;
 		}
 		return (a->f > b->f) - (a->f < b->f);
