@@ -47,6 +47,11 @@ jobs:
         with:
           path: ${{ env.KFSW_MODULE_PATH }}
 
+      # libcsp and libparam are west projects that live inside kfsw-comms and
+      # kfsw-services, so replacing a module wipes the clone west put there.
+      - name: Put the nested projects back
+        run: west update libcsp libparam
+
       - name: Say which revisions are being tested
         run: |
           echo "k-fsw:    $(git -C k-fsw rev-parse --short HEAD) (develop)"
