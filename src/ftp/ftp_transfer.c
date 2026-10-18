@@ -55,11 +55,23 @@ static bool data_message_is_valid(const struct kfsw_ftp_transfer *transfer,
 
 int kfsw_ftp_transfer_open_source(struct kfsw_ftp_transfer *transfer, const char *source_path)
 {
+	int result;
+
 	if ((transfer == NULL) || (source_path == NULL)) {
 		return -EINVAL;
 	}
 	fs_file_t_init(&transfer->file);
-	return fs_open(&transfer->file, source_path, FS_O_READ);
+	result = fs_open(&transfer->file, source_path, FS_O_READ);
+	if ((result != 0) || (transfer->offset == 0U)) {
+		return result;
+	}
+
+	/* Continuing a transfer: skip what the far side already holds. */
+	result = fs_seek(&transfer->file, (off_t)transfer->offset, FS_SEEK_SET);
+	if (result != 0) {
+		(void)fs_close(&transfer->file);
+	}
+	return result;
 }
 
 int kfsw_ftp_transfer_send(struct kfsw_ftp_transfer *transfer)

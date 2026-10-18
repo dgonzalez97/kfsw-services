@@ -11,6 +11,8 @@
 
 #include <kfsw/platform/storage.h>
 #include <kfsw/services/ftp.h>
+#define KFSW_LOG_MODULE KFSW_LOG_MODULE_FTP
+#include <kfsw/services/log.h>
 #if CONFIG_KFSW_EVENT
 #include <kfsw/services/event.h>
 #endif
@@ -351,15 +353,6 @@ static int await_put_ready(struct kfsw_ftp_link *link, struct kfsw_ftp_transfer 
 	return result;
 }
 
-/* Skip what the server already holds. */
-static int seek_source_to_offset(struct kfsw_ftp_transfer *transfer)
-{
-	if (transfer->offset == 0U) {
-		return 0;
-	}
-	return fs_seek(&transfer->file, (off_t)transfer->offset, FS_SEEK_SET);
-}
-
 /* The peer echoes what it committed; a disagreement is an integrity failure. */
 static int await_transfer_result(struct kfsw_ftp_link *link, uint8_t result_opcode,
 				 const struct kfsw_ftp_transfer *transfer)
@@ -453,9 +446,6 @@ int kfsw_ftp_put(uint16_t node, const char *local_path, const char *remote_path,
 		result = kfsw_ftp_transfer_open_source(&transfer, client_workspace.path);
 	}
 	if (result == 0) {
-		result = seek_source_to_offset(&transfer);
-	}
-	if (result == 0) {
 		result = kfsw_ftp_transfer_send(&transfer);
 	}
 	if (result == 0) {
@@ -475,13 +465,16 @@ int kfsw_ftp_put(uint16_t node, const char *local_path, const char *remote_path,
 }
 
 /*
- * Resolve both ends of a download and derive the temporary path. An existing
- * local file stays untouched until the transfer commits.
+ * Resolve both ends of a download, derive the temporary path, and work out
+ * whether an interrupted download of this same file can be continued. An
+ * existing local file stays untouched until the transfer commits.
  */
 static int prepare_download(const char *remote_path, const char *local_path,
-			    struct kfsw_ftp_message *request)
+			    struct kfsw_ftp_message *request, uint32_t *partial_crc32)
 {
 	struct fs_dirent entry;
+	uint32_t noted_size = 0U;
+	uint32_t noted_crc32 = 0U;
 	uint16_t local_path_size;
 	uint16_t path_size;
 	int result;
@@ -505,13 +498,36 @@ static int prepare_download(const char *remote_path, const char *local_path,
 	if ((result != 0) && (result != -ENOENT)) {
 		return result;
 	}
-	return kfsw_ftp_make_temporary_path(client_workspace.path, client_workspace.temporary_path,
-					    sizeof(client_workspace.temporary_path));
+	result =
+		kfsw_ftp_make_temporary_path(client_workspace.path, client_workspace.temporary_path,
+					     sizeof(client_workspace.temporary_path));
+	if (result != 0) {
+		return result;
+	}
+
+	/* Only the note says which file the partial beside it belongs to, so the
+	 * claim carries that size and CRC32 and the far side decides.
+	 */
+	if (kfsw_ftp_partial_note_read(client_workspace.path, &noted_size, &noted_crc32) == 0) {
+		(void)kfsw_ftp_partial_resume_point(client_workspace.path, &client_workspace,
+						    noted_size, noted_crc32, &request->offset,
+						    partial_crc32);
+	}
+	if (request->offset != 0U) {
+		request->total_size = noted_size;
+		request->crc32 = noted_crc32;
+		request->flags = KFSW_FTP_FLAG_RESUME;
+	}
+	return 0;
 }
 
-/* GET_INFO carries the expected size and CRC; GET_RESULT means the server
- * refused. */
-static int await_get_info(struct kfsw_ftp_link *link, struct kfsw_ftp_transfer *transfer)
+/*
+ * GET_INFO carries the expected size and CRC and where the sender starts;
+ * GET_RESULT means it refused the request outright. A start that is neither
+ * zero nor the offset asked for is a reply to some other conversation.
+ */
+static int await_get_info(struct kfsw_ftp_link *link, struct kfsw_ftp_transfer *transfer,
+			  uint32_t claimed_offset)
 {
 	struct kfsw_ftp_link_frame frame;
 	int result = kfsw_ftp_link_receive(link, &frame);
@@ -528,12 +544,36 @@ static int await_get_info(struct kfsw_ftp_link *link, struct kfsw_ftp_transfer *
 		if ((result == 0) && (frame.message.opcode == KFSW_FTP_OP_GET_INFO)) {
 			transfer->total_size = frame.message.total_size;
 			transfer->crc32 = frame.message.crc32;
+			if ((frame.message.offset != 0U) &&
+			    (frame.message.offset != claimed_offset)) {
+				result = -EBADMSG;
+			} else {
+				transfer->offset = frame.message.offset;
+			}
 		} else if (result == 0) {
 			result = -EBADMSG;
 		}
 	}
 	kfsw_ftp_link_release(&frame);
 	return result;
+}
+
+/*
+ * This node receives, so this node keeps the partial and the note beside it. A
+ * continued download inherits the CRC32 of what is already on disk; a refused
+ * claim starts again, and then the note has to describe the file now coming in
+ * before any of it is written.
+ */
+static int prepare_partial(struct kfsw_ftp_transfer *transfer, uint32_t partial_crc32)
+{
+	if (transfer->offset != 0U) {
+		transfer->actual_crc32 = partial_crc32;
+		kfsw_log_info("FTP: continuing %s at %u of %u bytes", client_workspace.path,
+			      transfer->offset, transfer->total_size);
+		return 0;
+	}
+	return kfsw_ftp_partial_note_write(client_workspace.path, transfer->total_size,
+					   transfer->crc32);
 }
 
 int kfsw_ftp_get(uint16_t node, const char *remote_path, const char *local_path,
@@ -550,6 +590,7 @@ int kfsw_ftp_get(uint16_t node, const char *remote_path, const char *local_path,
 		.request_id = request.request_id,
 		.data_opcode = KFSW_FTP_OP_GET_DATA,
 	};
+	uint32_t partial_crc32 = 0U;
 	uint32_t started_ms;
 	int result;
 
@@ -564,7 +605,7 @@ int kfsw_ftp_get(uint16_t node, const char *remote_path, const char *local_path,
 	started_ms = k_uptime_get_32();
 	result = validate_client(node);
 	if (result == 0) {
-		result = prepare_download(remote_path, local_path, &request);
+		result = prepare_download(remote_path, local_path, &request, &partial_crc32);
 	}
 	if (result == 0) {
 		result = kfsw_ftp_link_connect(&link, node);
@@ -573,11 +614,14 @@ int kfsw_ftp_get(uint16_t node, const char *remote_path, const char *local_path,
 		result = kfsw_ftp_link_send(&link, &request);
 	}
 	if (result == 0) {
-		result = await_get_info(&link, &transfer);
+		result = await_get_info(&link, &transfer, request.offset);
 	}
 	if (result == 0) {
 		result = kfsw_ftp_check_space(client_workspace.path,
 					      transfer.total_size - transfer.offset);
+	}
+	if (result == 0) {
+		result = prepare_partial(&transfer, partial_crc32);
 	}
 	if (result == 0) {
 		result = kfsw_ftp_transfer_open_sink(&transfer, client_workspace.temporary_path);

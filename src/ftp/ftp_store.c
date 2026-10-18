@@ -159,6 +159,26 @@ static int read_note(const char *note_path, struct partial_note *note)
 	return 0;
 }
 
+int kfsw_ftp_partial_note_read(const char *path, uint32_t *total_size, uint32_t *crc32)
+{
+	char note_path[KFSW_FTP_FULL_PATH_SIZE];
+	struct partial_note note;
+	int result;
+
+	if ((path == NULL) || (total_size == NULL) || (crc32 == NULL)) {
+		return -EINVAL;
+	}
+	result = make_note_path(path, note_path, sizeof(note_path));
+	if (result == 0) {
+		result = read_note(note_path, &note);
+	}
+	if (result == 0) {
+		*total_size = note.total_size;
+		*crc32 = note.crc32;
+	}
+	return result;
+}
+
 int kfsw_ftp_partial_resume_point(const char *path, struct kfsw_ftp_workspace *workspace,
 				  uint32_t total_size, uint32_t crc32, uint32_t *offset,
 				  uint32_t *partial_crc32)

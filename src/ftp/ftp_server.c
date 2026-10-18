@@ -64,12 +64,16 @@ static int send_status(struct kfsw_ftp_link *link, uint8_t opcode, uint32_t requ
 	return kfsw_ftp_link_send(link, &response);
 }
 
-/* PUT_READY differs from a plain status by carrying where to start writing. */
-static int send_ready(struct kfsw_ftp_link *link, uint32_t request_id, uint32_t offset,
-		      uint32_t total_size, uint32_t crc32)
+/*
+ * PUT_READY and GET_INFO differ from a plain status by carrying where the
+ * transfer starts: what the receiving side already holds, as agreed by the
+ * side that holds it.
+ */
+static int send_ready(struct kfsw_ftp_link *link, uint8_t opcode, uint32_t request_id,
+		      uint32_t offset, uint32_t total_size, uint32_t crc32)
 {
 	const struct kfsw_ftp_message response = {
-		.opcode = KFSW_FTP_OP_PUT_READY,
+		.opcode = opcode,
 		.status = KFSW_FTP_STATUS_OK,
 		.request_id = request_id,
 		.offset = offset,
@@ -274,8 +278,8 @@ static int serve_put(struct kfsw_ftp_link *link, const struct kfsw_ftp_message *
 	/* The temporary file exists from here on, so the client may start sending.
 	 * The offset tells the client where to pick up; zero means from the start.
 	 */
-	result = send_ready(link, request->request_id, transfer.offset, request->total_size,
-			    request->crc32);
+	result = send_ready(link, KFSW_FTP_OP_PUT_READY, request->request_id, transfer.offset,
+			    request->total_size, request->crc32);
 	if (result == 0) {
 		result = kfsw_ftp_transfer_receive(&transfer);
 	}
@@ -283,6 +287,30 @@ static int serve_put(struct kfsw_ftp_link *link, const struct kfsw_ftp_message *
 					  server_workspace.temporary_path, result);
 	return send_status(link, KFSW_FTP_OP_PUT_RESULT, request->request_id, wire_status(result),
 			   transfer.offset, transfer.actual_crc32);
+}
+
+/*
+ * What a download may skip. The client states how much it already holds and
+ * which file that was, and the claim is only good when it describes the file
+ * this node holds now: a file rewritten between two passes is sent whole
+ * rather than stitched together from two versions of itself.
+ */
+static uint32_t accepted_resume_offset(const struct kfsw_ftp_message *request,
+				       const struct kfsw_ftp_transfer *transfer)
+{
+	if (((request->flags & KFSW_FTP_FLAG_RESUME) == 0U) || (request->offset == 0U)) {
+		return 0U;
+	}
+	if ((request->total_size != transfer->total_size) || (request->crc32 != transfer->crc32)) {
+		return 0U;
+	}
+	/* A claim to the whole file leaves nothing to send, and a claim past its
+	 * end is nonsense. Either way the file goes out from the start.
+	 */
+	if (request->offset >= transfer->total_size) {
+		return 0U;
+	}
+	return request->offset;
 }
 
 static int serve_get(struct kfsw_ftp_link *link, const struct kfsw_ftp_message *request)
@@ -296,7 +324,12 @@ static int serve_get(struct kfsw_ftp_link *link, const struct kfsw_ftp_message *
 	struct fs_dirent entry;
 	int result;
 
-	result = path_request_is_valid(request) ? resolve_message_path(request, false) : -EBADMSG;
+	if ((request->data_size != 0U) || (request->status != 0U) ||
+	    ((request->flags & (uint8_t)~KFSW_FTP_FLAG_RESUME) != 0U)) {
+		result = -EBADMSG;
+	} else {
+		result = resolve_message_path(request, false);
+	}
 	if (result == 0) {
 		result = fs_stat(server_workspace.path, &entry);
 	}
@@ -308,15 +341,24 @@ static int serve_get(struct kfsw_ftp_link *link, const struct kfsw_ftp_message *
 					   &transfer.total_size, &transfer.crc32);
 	}
 	if (result == 0) {
+		/* Set before the open, which positions the file at it. */
+		transfer.offset = accepted_resume_offset(request, &transfer);
 		result = kfsw_ftp_transfer_open_source(&transfer, server_workspace.path);
 	}
 	if (result != 0) {
 		return send_status(link, KFSW_FTP_OP_GET_RESULT, request->request_id,
 				   wire_status(result), 0U, 0U);
 	}
+	if (transfer.offset != 0U) {
+		kfsw_log_info("FTP: sending %s from %u of %u bytes", server_workspace.path,
+			      transfer.offset, transfer.total_size);
+	}
 
-	result = send_status(link, KFSW_FTP_OP_GET_INFO, request->request_id, KFSW_FTP_STATUS_OK,
-			     transfer.total_size, transfer.crc32);
+	/* The offset names what this node is not going to send again; zero means
+	 * the claim was refused and the file comes whole.
+	 */
+	result = send_ready(link, KFSW_FTP_OP_GET_INFO, request->request_id, transfer.offset,
+			    transfer.total_size, transfer.crc32);
 	if (result == 0) {
 		result = kfsw_ftp_transfer_send(&transfer);
 	} else {

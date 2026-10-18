@@ -160,6 +160,10 @@ int kfsw_ftp_mkdir(uint16_t node, const char *path);
  *
  * Transfers are between two nodes; this node's own CSP address returns
  * -ENOTSUP.
+ *
+ * An interrupted transfer leaves a partial file on the receiving node, and the
+ * next call for the same file continues from it instead of starting again. The
+ * partial is only continued when it belongs to this same content.
  */
 int kfsw_ftp_put(uint16_t node, const char *local_path, const char *remote_path,
 		 struct kfsw_ftp_transfer_result *result);
@@ -168,7 +172,8 @@ int kfsw_ftp_put(uint16_t node, const char *local_path, const char *remote_path,
  * Stream a remote FTP-root file to a local FTP-root path.
  *
  * Transfers are between two nodes; this node's own CSP address returns
- * -ENOTSUP.
+ * -ENOTSUP. Interrupted downloads continue in the same way as uploads, with
+ * the partial kept on this node.
  */
 int kfsw_ftp_get(uint16_t node, const char *remote_path, const char *local_path,
 		 struct kfsw_ftp_transfer_result *result);
