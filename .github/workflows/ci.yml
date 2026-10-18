@@ -1,0 +1,74 @@
+---
+# This repository is a Zephyr module, so nothing here builds on its own: the
+# workspace, the application and the tests all live in k-fsw. The job takes
+# k-fsw's development manifest, lets west fetch every sibling at its pinned
+# revision, and then replaces this module with the commit under test. What it
+# proves is narrow and worth having: that this change still formats, still
+# analyses clean, still builds the reference composition, and still passes the
+# suites, without waiting for somebody to move the pin in k-fsw.
+name: Module CI
+
+"on":
+  pull_request:
+  push:
+    branches:
+      - main
+      - develop
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  KFSW_MODULE_PATH: kfsw-services
+
+jobs:
+  module:
+    name: MODULE / build, quality and tests
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out K-FSW
+        uses: actions/checkout@v4
+        with:
+          repository: dgonzalez97/k-fsw
+          ref: develop
+          path: k-fsw
+
+      - name: Set up the workspace
+        uses: ./k-fsw/.github/actions/workspace
+        with:
+          packages: cppcheck clang-format
+
+      # After the workspace exists, so this overwrites the pinned revision west
+      # just fetched. The pin is what k-fsw releases; this is what is proposed.
+      - name: Put this commit in place of the pinned revision
+        uses: actions/checkout@v4
+        with:
+          path: ${{ env.KFSW_MODULE_PATH }}
+
+      - name: Say which revisions are being tested
+        run: |
+          echo "k-fsw:    $(git -C k-fsw rev-parse --short HEAD) (develop)"
+          echo "$KFSW_MODULE_PATH: $(git -C "$KFSW_MODULE_PATH" rev-parse --short HEAD)"
+
+      - name: Validate west manifest
+        run: west manifest --validate
+
+      - name: Build the reference composition
+        run: ./k-fsw/tools/ci/build.sh linux
+
+      - name: Quality
+        run: ./k-fsw/tools/ci/quality.sh
+
+      - name: Unit tests
+        run: ./k-fsw/tools/ci/unit.sh
+
+      - name: Keep the test output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: twister-output
+          path: build/twister/
+          if-no-files-found: ignore
+          retention-days: 7
