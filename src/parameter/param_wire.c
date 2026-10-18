@@ -15,10 +15,17 @@ int kfsw_param_wire_type_of(const struct kfsw_param_entry *entry, uint8_t *type,
 {
 	switch (entry->info.type) {
 	case KFSW_PARAM_U8:
+	/* The hex types differ from their unsigned twins only in how the shell
+	 * prints them, so they persist as the same width. Without this a
+	 * persistent hex value fails to encode, and one entry that cannot be
+	 * encoded used to take the whole snapshot with it.
+	 */
+	case KFSW_PARAM_X8:
 		*type = KFSW_PARAM_WIRE_U8;
 		*value_size = sizeof(uint8_t);
 		return 0;
 	case KFSW_PARAM_U16:
+	case KFSW_PARAM_X16:
 		*type = KFSW_PARAM_WIRE_U16;
 		*value_size = sizeof(uint16_t);
 		return 0;
@@ -27,6 +34,7 @@ int kfsw_param_wire_type_of(const struct kfsw_param_entry *entry, uint8_t *type,
 		*value_size = sizeof(int16_t);
 		return 0;
 	case KFSW_PARAM_U32:
+	case KFSW_PARAM_X32:
 		*type = KFSW_PARAM_WIRE_U32;
 		*value_size = sizeof(uint32_t);
 		return 0;

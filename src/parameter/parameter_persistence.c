@@ -87,7 +87,14 @@ static int build_snapshot(size_t *snapshot_size)
 		}
 		result = kfsw_param_wire_type_of(entry, &type, &value_size);
 		if (result != 0) {
-			break;
+			/* One value the format cannot hold is not worth losing
+			 * the snapshot over: the boot counter and the recovery
+			 * budget live in it too.
+			 */
+			kfsw_log_warning("PARAM: '%s' cannot be saved (%d); snapshot continues",
+					 entry->info.name, result);
+			result = 0;
+			continue;
 		}
 		/* Check against the capacity, not the current length. */
 		if ((entry->info.type == KFSW_PARAM_STRING) ||

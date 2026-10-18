@@ -100,11 +100,14 @@ config KFSW_PARAM_FLOAT
 
 config KFSW_PARAM_MAX_DEFINITIONS
 	int "Parameters the local table can hold"
-	default 192
+	default 256
 	range 1 512
 	help
 	  Total parameters across all tables. Registration is refused once this
-	  is full.
+	  is full, and a composition that overflows loses the parameter server
+	  and everything behind it: no persistence, so no boot counter, so no
+	  budget for the recovery image. The NUCLEO with MCUboot, FWU, FWU lite
+	  and CAN needs more than 192, which is what 192 cost on the bench.
 
 config KFSW_PARAM_STRING_MAX
 	int "Longest string parameter, including the terminator"
