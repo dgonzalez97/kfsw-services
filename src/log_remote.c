@@ -453,7 +453,7 @@ int kfsw_log_remote_read(uint16_t node, enum kfsw_log_remote_stream stream, uint
 	}
 	sys_put_be64(k_cycle_get_64() ^ ((uint64_t)node << 48), nonce);
 	connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_LOG_REMOTE_PORT,
-				 CONFIG_KFSW_LOG_REMOTE_TIMEOUT_MS, CSP_O_CRC32);
+				 CONFIG_KFSW_LOG_REMOTE_TIMEOUT_MS, (CSP_O_CRC32 | KFSW_CSP_AUTHENTICATED_CONNECTION));
 	if (connection == NULL) {
 		return -ENOTCONN;
 	}

@@ -125,7 +125,7 @@ void kfsw_hk_beacon_tick(uint8_t report, int64_t now)
 
 	/* Use a separate destination port so a beacon cannot trigger a request. */
 	csp_sendto(CSP_PRIO_LOW, node, CONFIG_KFSW_HK_BEACON_PORT, CONFIG_KFSW_HK_CSP_PORT,
-		   CSP_O_CRC32, packet);
+		   (CSP_O_CRC32 | KFSW_CSP_AUTHENTICATED_CONNECTION), packet);
 	kfsw_hk_lock();
 	sent_count++;
 	kfsw_hk_unlock();

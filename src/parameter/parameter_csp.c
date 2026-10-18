@@ -915,7 +915,7 @@ static int refresh_table(uint16_t node, uint8_t table, int64_t deadline, bool fo
 			break;
 		}
 		connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_PARAM_LIST_PORT, 0,
-					 CSP_O_CRC32);
+					 (CSP_O_CRC32 | KFSW_CSP_AUTHENTICATED_CONNECTION));
 		if (connection == NULL) {
 			result = -ECONNREFUSED;
 			break;
@@ -1047,7 +1047,7 @@ int kfsw_param_remote_tables(uint16_t node, kfsw_param_table_visitor_t visitor, 
 			return -ETIMEDOUT;
 		}
 		connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_PARAM_LIST_PORT, 0,
-					 CSP_O_CRC32);
+					 (CSP_O_CRC32 | KFSW_CSP_AUTHENTICATED_CONNECTION));
 		if (connection == NULL) {
 			return -ECONNREFUSED;
 		}
@@ -1313,7 +1313,7 @@ static int pull_remote_batch(uint16_t node, const param_t *const *params, size_t
 		return added == 0 ? -EMSGSIZE : -ETIMEDOUT;
 	}
 	packet->length = queue.used + 2;
-	connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_PARAM_PORT, 0, CSP_O_CRC32);
+	connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_PARAM_PORT, 0, (CSP_O_CRC32 | KFSW_CSP_AUTHENTICATED_CONNECTION));
 	if (connection == NULL) {
 		csp_buffer_free(packet);
 		return -ECONNREFUSED;
@@ -1388,7 +1388,7 @@ static int push_remote(const param_t *param, uint16_t node, const struct kfsw_pa
 	}
 	packet->length = queue.used + 2U;
 
-	connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_PARAM_PORT, 0, CSP_O_CRC32);
+	connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_PARAM_PORT, 0, (CSP_O_CRC32 | KFSW_CSP_AUTHENTICATED_CONNECTION));
 	if (connection == NULL) {
 		csp_buffer_free(packet);
 		return -ECONNREFUSED;
@@ -1439,7 +1439,7 @@ static int lookup_remote(uint16_t node, const char *name, int64_t deadline)
 	if (remaining == 0U) {
 		return -ETIMEDOUT;
 	}
-	connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_PARAM_LIST_PORT, 0, CSP_O_CRC32);
+	connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_PARAM_LIST_PORT, 0, (CSP_O_CRC32 | KFSW_CSP_AUTHENTICATED_CONNECTION));
 	if (connection == NULL) {
 		return -ECONNREFUSED;
 	}

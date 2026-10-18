@@ -125,7 +125,7 @@ int kfsw_remexec_server_start(void)
 	}
 
 	memset(&remexec_socket, 0, sizeof(remexec_socket));
-	remexec_socket.opts = CSP_SO_CRC32REQ;
+	remexec_socket.opts = CSP_SO_CRC32REQ | KFSW_CSP_AUTHENTICATED_SOCKET;
 	result = csp_listen(&remexec_socket, 1U);
 	if (result != CSP_ERR_NONE) {
 		(void)csp_socket_close(&remexec_socket);
@@ -160,7 +160,7 @@ static int exchange(uint16_t node, enum kfsw_remexec_opcode opcode, const char *
 		return result;
 	}
 	connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_REMEXEC_CSP_PORT,
-				 CONFIG_KFSW_REMEXEC_TIMEOUT_MS, CSP_O_CRC32);
+				 CONFIG_KFSW_REMEXEC_TIMEOUT_MS, (CSP_O_CRC32 | KFSW_CSP_AUTHENTICATED_CONNECTION));
 	if (connection == NULL) {
 		return -ECONNREFUSED;
 	}
