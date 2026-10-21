@@ -177,10 +177,20 @@ uint32_t kfsw_fbo_schedule_get_latency_s(void)
 	return latency_s;
 }
 
-int kfsw_fbo_schedule_set_latency_s(uint32_t seconds)
+int kfsw_fbo_schedule_check_latency_s(uint32_t seconds)
 {
 	if ((seconds < latency_floor_s()) || (seconds > KFSW_FBO_SCHEDULE_LATENCY_MAX_S)) {
 		return -ERANGE;
+	}
+	return 0;
+}
+
+int kfsw_fbo_schedule_set_latency_s(uint32_t seconds)
+{
+	int result = kfsw_fbo_schedule_check_latency_s(seconds);
+
+	if (result != 0) {
+		return result;
 	}
 	latency_s = seconds;
 	return 0;

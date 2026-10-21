@@ -9,7 +9,7 @@
 #include <zephyr/sys/util.h>
 
 #include <kfsw/services/resmon.h>
-#define KFSW_LOG_MODULE KFSW_LOG_MODULE_APP
+#define KFSW_LOG_MODULE KFSW_LOG_MODULE_RESMON
 #include <kfsw/services/log.h>
 #if CONFIG_KFSW_EVENT
 #include <kfsw/services/event.h>

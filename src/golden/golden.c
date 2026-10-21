@@ -13,6 +13,10 @@
 #include <kfsw/services/golden.h>
 #include <kfsw/services/log.h>
 
+#if CONFIG_KFSW_CSP_HMAC_REQUIRE
+#warning "A recovery image that requires authentication cannot be reached without the key"
+#endif
+
 #define GOLDEN_NODE DT_CHOSEN(kfsw_golden_partition)
 #define GOLDEN_PRESENT DT_NODE_EXISTS(GOLDEN_NODE)
 
@@ -121,6 +125,14 @@ int kfsw_golden_check(enum kfsw_golden_outcome *outcome)
 	/* Said once a boot, because the budget it counts against is not saved. */
 	kfsw_log_warning("Recovery: boot_retries is not persisted, so the budget restarts at "
 			 "every boot and this will not trigger");
+#endif
+
+#if CONFIG_KFSW_CSP_HMAC_REQUIRE
+	/* The recovery image is what is left when everything else failed, and
+	 * asking it for a key is how a recoverable node becomes a silent one.
+	 */
+	kfsw_log_warning("Recovery: this image refuses unsigned commanding, so a lost key "
+			 "leaves it unreachable");
 #endif
 
 	kfsw_boot_get_diagnostics(&diagnostics);

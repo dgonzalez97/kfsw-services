@@ -56,6 +56,7 @@
 #define KFSW_PARAM_LIST_CHANGED 2U
 #define KFSW_PARAM_REMOTE_BATCH_MAX 16U
 #define KFSW_PARAM_REPLY_MAX_PACKETS 64U
+#define KFSW_PARAM_HWID_ANY 1234U
 #define KFSW_PARAM_LIST_SOCKET_OPTIONS CSP_SO_CRC32REQ
 
 static param_t local_parameters[KFSW_PARAM_MAX_DEFINITIONS];
@@ -63,12 +64,14 @@ static bool local_parameters_registered;
 static uint32_t local_list_crc;
 
 static size_t scalar_size(enum kfsw_param_type type);
+static int decode_value(mpack_reader_t *reader, const param_t *param,
+			struct kfsw_param_value *value);
 
 static void parameter_changed_from_csp(const param_t *param, int offset)
 {
 	ARG_UNUSED(offset);
 
-	kfsw_param_value_changed(param->id);
+	kfsw_param_value_accepted(param->id);
 }
 
 static param_type_e to_libparam_type(enum kfsw_param_type type)
@@ -337,10 +340,15 @@ static void fill_info(const param_t *param, struct kfsw_param_info *info)
 
 static bool push_allowed(csp_packet_t *packet)
 {
-	param_queue_t queue;
+	param_queue_t queue = {0};
 	mpack_reader_t reader;
 	size_t payload_length;
 	int version;
+	bool first = true;
+	size_t count = 0U;
+	const struct kfsw_param_entry *fallible = NULL;
+	union kfsw_param_scalar proposed = {0};
+	bool response;
 
 	if (packet->length < 2U) {
 		return false;
@@ -359,12 +367,22 @@ static bool push_allowed(csp_packet_t *packet)
 		if (packet->length < (2U + sizeof(uint32_t))) {
 			return false;
 		}
+		uint32_t hwid;
+		__attribute__((weak)) int serial_get(void);
+
+		memcpy(&hwid, &packet->data[packet->length - sizeof(hwid)], sizeof(hwid));
+		if ((serial_get != NULL) && (hwid != (uint32_t)serial_get()) &&
+		    (hwid != KFSW_PARAM_HWID_ANY)) {
+			return false;
+		}
 		version = 2;
 		break;
 	default:
 		return true;
 	}
 
+	response =
+		packet->data[0] == PARAM_PULL_RESPONSE || packet->data[0] == PARAM_PULL_RESPONSE_V2;
 	payload_length = packet->length - 2U;
 	if (packet->data[0] == PARAM_PUSH_REQUEST_V2_HWID) {
 		payload_length -= sizeof(uint32_t);
@@ -375,28 +393,82 @@ static bool push_allowed(csp_packet_t *packet)
 	while (reader.data < reader.end) {
 		csp_timestamp_t timestamp = {0};
 		const param_t *param;
+		struct kfsw_param_value value;
 		int offset = -1;
 		int node = 0;
 		int id = 0;
 
+		if (version == 2) {
+			mpack_reader_t peek = reader;
+			uint16_t header = be16toh(mpack_expect_u16(&peek));
+
+			/* param_queue_apply() does not initialize last_node. */
+			if (mpack_reader_error(&peek) != mpack_ok ||
+			    (first && (header & BIT(14)) == 0U) || (header & BIT(10)) != 0U ||
+			    ((header & BIT(11)) != 0U && (header & BIT(13)) == 0U)) {
+				return false;
+			}
+		}
 		param_deserialize_id(&reader, &id, &node, &timestamp, &offset, &queue);
+		first = false;
 		if (mpack_reader_error(&reader) != mpack_ok) {
 			return false;
 		}
 
-		param = param_list_find_id(node, id);
+		/* Match param_queue_apply(), including cached responses from a peer. */
+		param = param_list_find_id(node == 0 ? packet->id.src : node, id);
 		if ((param == NULL) ||
 		    ((param->mask & (PM_READONLY | KFSW_PARAM_FLAG_LOCAL_ONLY)) != 0U) ||
-		    ((offset >= 0) && (offset >= param->array_size))) {
+		    (offset < -1) || (offset > 0)) {
 			return false;
 		}
 
-		mpack_discard(&reader);
+		bool array = mpack_peek_tag(&reader).type == mpack_type_array;
+
+		if (array && mpack_expect_array(&reader) != 1U) {
+			return false;
+		}
+		if (decode_value(&reader, param, &value) != 0) {
+			return false;
+		}
+		if (array) {
+			mpack_done_array(&reader);
+		}
 		if (mpack_reader_error(&reader) != mpack_ok) {
 			return false;
+		}
+		count++;
+		if (*param->node == node_self) {
+			const struct kfsw_param_entry *entry = kfsw_param_find_id(param->id);
+
+			if (response) {
+				return false;
+			}
+			if (kfsw_param_validate_entry(entry, &value) != 0) {
+				kfsw_log_warning("Remote parameter '%s' refused", param->name);
+				return false;
+			}
+			if (entry->definition->apply != NULL) {
+				fallible = entry;
+				proposed = value.scalar;
+			}
 		}
 	}
 
+	if (fallible != NULL) {
+		if (count != 1U) {
+			kfsw_log_warning("Remote parameter '%s' requires a standalone write",
+					 fallible->info.name);
+			return false;
+		}
+		int result = fallible->definition->apply(&proposed);
+
+		if (result != 0) {
+			kfsw_log_warning("Remote parameter '%s' application failed: %d",
+					 fallible->info.name, result);
+			return false;
+		}
+	}
 	return true;
 }
 
@@ -425,8 +497,13 @@ static void serve_values(csp_packet_t *packet)
 
 	kfsw_param_table_lock();
 	if (push_allowed(packet)) {
-		/* libparam reads storage directly, so refresh sampled values first. */
-		kfsw_param_sample_all();
+		/* PUSH must apply against the state its validators inspected. */
+		if (packet->data[0] == PARAM_PULL_REQUEST ||
+		    packet->data[0] == PARAM_PULL_REQUEST_V2 ||
+		    packet->data[0] == PARAM_PULL_ALL_REQUEST ||
+		    packet->data[0] == PARAM_PULL_ALL_REQUEST_V2) {
+			kfsw_param_sample_all();
+		}
 		param_serve(packet);
 	} else {
 		csp_buffer_free(packet);
@@ -915,7 +992,7 @@ static int refresh_table(uint16_t node, uint8_t table, int64_t deadline, bool fo
 			break;
 		}
 		connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_PARAM_LIST_PORT, 0,
-					 CSP_O_CRC32);
+					 (CSP_O_CRC32 | KFSW_CSP_AUTHENTICATED_CONNECTION));
 		if (connection == NULL) {
 			result = -ECONNREFUSED;
 			break;
@@ -1047,7 +1124,7 @@ int kfsw_param_remote_tables(uint16_t node, kfsw_param_table_visitor_t visitor, 
 			return -ETIMEDOUT;
 		}
 		connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_PARAM_LIST_PORT, 0,
-					 CSP_O_CRC32);
+					 (CSP_O_CRC32 | KFSW_CSP_AUTHENTICATED_CONNECTION));
 		if (connection == NULL) {
 			return -ECONNREFUSED;
 		}
@@ -1313,7 +1390,8 @@ static int pull_remote_batch(uint16_t node, const param_t *const *params, size_t
 		return added == 0 ? -EMSGSIZE : -ETIMEDOUT;
 	}
 	packet->length = queue.used + 2;
-	connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_PARAM_PORT, 0, CSP_O_CRC32);
+	connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_PARAM_PORT, 0,
+				 (CSP_O_CRC32 | KFSW_CSP_AUTHENTICATED_CONNECTION));
 	if (connection == NULL) {
 		csp_buffer_free(packet);
 		return -ECONNREFUSED;
@@ -1388,7 +1466,8 @@ static int push_remote(const param_t *param, uint16_t node, const struct kfsw_pa
 	}
 	packet->length = queue.used + 2U;
 
-	connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_PARAM_PORT, 0, CSP_O_CRC32);
+	connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_PARAM_PORT, 0,
+				 (CSP_O_CRC32 | KFSW_CSP_AUTHENTICATED_CONNECTION));
 	if (connection == NULL) {
 		csp_buffer_free(packet);
 		return -ECONNREFUSED;
@@ -1439,7 +1518,8 @@ static int lookup_remote(uint16_t node, const char *name, int64_t deadline)
 	if (remaining == 0U) {
 		return -ETIMEDOUT;
 	}
-	connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_PARAM_LIST_PORT, 0, CSP_O_CRC32);
+	connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_PARAM_LIST_PORT, 0,
+				 (CSP_O_CRC32 | KFSW_CSP_AUTHENTICATED_CONNECTION));
 	if (connection == NULL) {
 		return -ECONNREFUSED;
 	}

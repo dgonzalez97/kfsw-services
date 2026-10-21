@@ -173,17 +173,31 @@ struct kfsw_param_table_info {
 /** Parameter may be configured locally, but remote writes are refused. */
 #define KFSW_PARAM_FLAG_LOCAL_ONLY 0x00040000UL
 
-/** Validate a proposed scalar value; return zero to accept it. */
+/**
+ * Validate a proposed scalar value; return zero to accept it.
+ * Validators must not change stored values or apply side effects. Packet preflight
+ * may validate a value and later reject the packet. Apply accepted values in the
+ * changed callback instead, or use apply for work that can fail.
+ */
 typedef int (*kfsw_param_validator_t)(const union kfsw_param_scalar *value);
 /**
  * Validate a proposed string; return zero to accept it. Separate from the
- * scalar validator because a string does not fit the scalar union.
+ * scalar validator because a string does not fit the scalar union. The same
+ * side-effect-free contract applies.
  */
 typedef int (*kfsw_param_text_validator_t)(const char *text);
 /**
- * Validate the whole proposed byte array; return zero to accept it.
+ * Validate the whole proposed byte array; return zero to accept it. The same
+ * side-effect-free contract as the scalar validator applies.
  */
 typedef int (*kfsw_param_data_validator_t)(const uint8_t *data, size_t size);
+/**
+ * Apply a validated scalar before committing storage. Return zero on success or
+ * a negative errno without changing owner state on failure. Runs under the table
+ * lock and must not call the parameter API. Remote writes must contain only this
+ * value. Registry initialization copies defaults without calling this callback.
+ */
+typedef int (*kfsw_param_apply_t)(const union kfsw_param_scalar *value);
 /** Called after the stored scalar changes. */
 typedef void (*kfsw_param_changed_t)(const union kfsw_param_scalar *value);
 /** Called after the stored string changes. */
@@ -200,8 +214,8 @@ typedef void (*kfsw_param_sample_t)(void *value);
  * One parameter definition.
  *
  * The definition, its strings and its storage must stay valid while the service
- * runs. Defaults are copied into storage at init. Validators and change
- * callbacks run under the parameter lock, so they must not call the parameter
+ * runs. Defaults are copied into storage at init. Validators, appliers and
+ * change callbacks run under the parameter lock, so they must not call the parameter
  * API.
  */
 struct kfsw_param_definition {
@@ -223,6 +237,7 @@ struct kfsw_param_definition {
 	/** Compiled default for a KFSW_PARAM_STRING; NULL means empty. */
 	const char *default_text;
 	kfsw_param_validator_t validate;
+	kfsw_param_apply_t apply;
 	kfsw_param_changed_t changed;
 	kfsw_param_text_validator_t validate_text;
 	kfsw_param_text_changed_t changed_text;
@@ -376,7 +391,11 @@ const char *kfsw_param_mode_name(uint32_t flags);
 /** Save all explicitly persistent local parameters as one atomic snapshot. */
 int kfsw_param_persist_save(void);
 
-/** Load a valid snapshot, ignoring unknown names and incompatible entries. */
+/**
+ * Load a valid snapshot, ignoring unknown names and incompatible entries.
+ * A fallible scalar must be the snapshot's only value; mixed snapshots return
+ * -ENOTSUP before any change. Application errors are returned to the caller.
+ */
 int kfsw_param_persist_load(void);
 
 /** Delete the active persistent snapshot and any abandoned temporary file. */
@@ -399,7 +418,11 @@ uint32_t kfsw_param_persist_bytes(void);
 /** Most space a snapshot is allowed to occupy, in bytes. */
 uint32_t kfsw_param_persist_max_bytes(void);
 
-/** Restore persistent parameters to their compiled defaults in RAM only. */
+/**
+ * Restore persistent parameters to their compiled defaults in RAM only.
+ * A fallible scalar must be the only persistent value; mixed resets return
+ * -ENOTSUP before any change. Application errors are returned to the caller.
+ */
 int kfsw_param_restore_defaults(void);
 #endif
 

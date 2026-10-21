@@ -14,8 +14,9 @@
 #define KFSW_FTP_PROTOCOL_VERSION 1U
 /*
  * Set on a PUT request by a client that understands a non-zero start offset in
- * the PUT_READY reply. A client without it gets the original behaviour: any
- * partial is discarded and the upload starts from zero.
+ * the PUT_READY reply, and on a GET request that states how much of the file
+ * the client already holds. A request without the flag gets the original
+ * behaviour: any partial is discarded and the transfer starts from zero.
  */
 #define KFSW_FTP_FLAG_RESUME 0x01U
 #define KFSW_FTP_PROTOCOL_HEADER_SIZE 24U
@@ -163,6 +164,15 @@ int kfsw_ftp_partial_resume_point(const char *path, struct kfsw_ftp_workspace *w
 /** Record what a fresh partial is going to become, so it can be continued. */
 int kfsw_ftp_partial_note_write(const char *path, uint32_t total_size, uint32_t crc32);
 
+/**
+ * @brief Read what the partial beside path was going to become.
+ *
+ * The side that receives a download learns the size and CRC32 from the sender,
+ * so between passes the note is the only record of which file the partial
+ * belongs to. Fails when there is no readable note.
+ */
+int kfsw_ftp_partial_note_read(const char *path, uint32_t *total_size, uint32_t *crc32);
+
 /** Forget the note. Safe when there is none. */
 void kfsw_ftp_partial_note_remove(const char *path);
 int kfsw_ftp_commit_temporary(const char *path, const char *temporary_path, uint32_t actual_size,
@@ -175,6 +185,8 @@ int kfsw_ftp_local_list(const char *virtual_path, struct kfsw_ftp_workspace *wor
 			kfsw_ftp_list_visitor_t visitor, void *context);
 
 /* Transfer engine; see ftp_transfer.c. */
+
+/** Open the file to send, positioned at the transfer's offset. */
 int kfsw_ftp_transfer_open_source(struct kfsw_ftp_transfer *transfer, const char *source_path);
 int kfsw_ftp_transfer_send(struct kfsw_ftp_transfer *transfer);
 int kfsw_ftp_transfer_open_sink(struct kfsw_ftp_transfer *transfer, const char *temporary_path);

@@ -191,14 +191,15 @@ int kfsw_param_wire_decode(const struct kfsw_param_entry *entry, uint8_t type, c
 	return kfsw_param_validate_entry(entry, decoded);
 }
 
-void kfsw_param_wire_apply(const struct kfsw_param_entry *entry,
-			   const struct kfsw_param_value *decoded)
+int kfsw_param_wire_apply(const struct kfsw_param_entry *entry,
+			  const struct kfsw_param_value *decoded)
 {
 	if (decoded->type == KFSW_PARAM_STRING) {
 		kfsw_param_write_text_entry(entry, decoded->text);
 	} else if (decoded->type == KFSW_PARAM_DATA) {
 		kfsw_param_write_data_entry(entry, decoded->bytes, decoded->size);
 	} else {
-		kfsw_param_write_entry(entry, &decoded->scalar);
+		return kfsw_param_write_entry(entry, &decoded->scalar);
 	}
+	return 0;
 }

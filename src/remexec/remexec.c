@@ -8,7 +8,7 @@
 #include <zephyr/shell/shell.h>
 #include <zephyr/sys/util.h>
 
-#define KFSW_LOG_MODULE KFSW_LOG_MODULE_COMMAND
+#define KFSW_LOG_MODULE KFSW_LOG_MODULE_REMEXEC
 #include <kfsw/services/log.h>
 #include <kfsw/services/remexec.h>
 

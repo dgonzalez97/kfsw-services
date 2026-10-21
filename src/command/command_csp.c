@@ -172,7 +172,7 @@ int kfsw_command_server_start(void)
 	}
 
 	memset(&command_socket, 0, sizeof(command_socket));
-	command_socket.opts = CSP_SO_CRC32REQ;
+	command_socket.opts = CSP_SO_CRC32REQ | KFSW_CSP_AUTHENTICATED_SOCKET;
 	result = csp_listen(&command_socket, 1U);
 	if (result != CSP_ERR_NONE) {
 		(void)csp_socket_close(&command_socket);
@@ -238,7 +238,8 @@ static int exchange(uint16_t node, const struct kfsw_command_message *request,
 		    struct kfsw_command_result *result)
 {
 	csp_conn_t *connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_COMMAND_CSP_PORT,
-					     kfsw_command_get_timeout_ms(), CSP_O_CRC32);
+					     kfsw_command_get_timeout_ms(),
+					     (CSP_O_CRC32 | KFSW_CSP_AUTHENTICATED_CONNECTION));
 	csp_packet_t *packet;
 	int outcome;
 

@@ -14,7 +14,7 @@
 
 #include <kfsw/platform/time.h>
 #include <kfsw/services/gndwdt.h>
-#define KFSW_LOG_MODULE KFSW_LOG_MODULE_HEALTH
+#define KFSW_LOG_MODULE KFSW_LOG_MODULE_GNDWDT
 #include <kfsw/services/log.h>
 #if CONFIG_KFSW_EVENT
 #include <kfsw/services/event.h>

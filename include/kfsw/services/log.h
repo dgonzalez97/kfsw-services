@@ -38,6 +38,13 @@ enum kfsw_log_module {
 	KFSW_LOG_MODULE_RADIO,
 	KFSW_LOG_MODULE_HK,
 	KFSW_LOG_MODULE_FBO,
+	KFSW_LOG_MODULE_CAN,
+	KFSW_LOG_MODULE_TABLE,
+	KFSW_LOG_MODULE_REMEXEC,
+	KFSW_LOG_MODULE_RESMON,
+	KFSW_LOG_MODULE_GNDWDT,
+	KFSW_LOG_MODULE_SCRUB,
+	KFSW_LOG_MODULE_LIMITS,
 	KFSW_LOG_MODULE_COUNT,
 };
 
@@ -60,6 +67,14 @@ const char *kfsw_log_module_name(enum kfsw_log_module module);
  * @retval -ERANGE Level above 4.
  */
 int kfsw_log_set_module_level(enum kfsw_log_module module, uint8_t level);
+
+/**
+ * @brief The minimum level one module is held to.
+ *
+ * Returns the disabled level for a module this build does not know, so a
+ * caller that walks the list cannot read past it.
+ */
+uint8_t kfsw_log_get_module_level(enum kfsw_log_module module);
 
 /**
  * Write one message. Called through the kfsw_log_* macros, not directly.
