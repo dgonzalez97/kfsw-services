@@ -107,7 +107,11 @@ void kfsw_log_history_append(uint8_t module, uint8_t severity, const char *forma
 		record->package = true;
 		record->size = (uint16_t)size;
 	} else {
-		size_t length = strnlen(text, sizeof(record->data));
+		size_t length = 0U;
+
+		while (length < sizeof(record->data) && text[length] != '\0') {
+			length++;
+		}
 
 		if (length == sizeof(record->data)) {
 			length--;
