@@ -98,7 +98,9 @@ struct kfsw_table_status {
  * @brief Check a table file without applying any of it.
  *
  * Reads the file, checks its header, its checksum and every entry against the
- * running parameter registry, and reports what it found.
+ * running parameter registry, and reports what it found. A value with a fallible
+ * scalar applier must be the file's only entry; mixed files are refused with
+ * report reason -ENOTSUP before any application.
  *
  * @param path File to read.
  * @param[out] report What the file holds and, on failure, which entry stopped
@@ -122,16 +124,21 @@ int kfsw_table_validate(const char *path, struct kfsw_table_report *report);
  * Validates the whole file first and applies nothing unless every entry passes,
  * so a file with one bad entry leaves the table as it was. The values it
  * replaces are held, so the load can be undone with @ref kfsw_table_revert.
+ * A failed application returns its errno and keeps the previous undo values.
+ * No physical rollback is attempted.
  *
  * @param path File to read.
  * @param[out] report What was applied, or what stopped it. May be NULL.
  *
- * @return The codes of @ref kfsw_table_validate.
+ * @return The codes of @ref kfsw_table_validate, or the applier's errno.
  */
 int kfsw_table_load(const char *path, struct kfsw_table_report *report);
 
 /**
  * @brief Put back the values the last load replaced.
+ *
+ * Values are validated before application. A failed application keeps the undo
+ * values for a later retry and returns its errno.
  *
  * @retval 0 The previous values are back.
  * @retval -ENOENT Nothing has been loaded, or the last load was already undone.

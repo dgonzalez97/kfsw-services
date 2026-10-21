@@ -13,6 +13,7 @@
 #include <kfsw/services/parameter.h>
 
 #include "parameter_internal.h"
+#include "param_wire.h"
 
 static struct kfsw_param_entry parameter_table[KFSW_PARAM_MAX_DEFINITIONS];
 static size_t parameter_count;
@@ -401,15 +402,23 @@ int kfsw_param_validate_entry(const struct kfsw_param_entry *entry,
 	return 0;
 }
 
-void kfsw_param_write_entry(const struct kfsw_param_entry *entry,
-			    const union kfsw_param_scalar *value)
+int kfsw_param_write_entry(const struct kfsw_param_entry *entry,
+			   const union kfsw_param_scalar *value)
 {
 	const size_t size = scalar_size(entry->info.type);
 
+	if (initialized && (entry->definition->apply != NULL)) {
+		int result = entry->definition->apply(value);
+
+		if (result != 0) {
+			return result;
+		}
+	}
 	memcpy(entry->definition->value, value, size);
 	if (entry->definition->changed != NULL) {
 		entry->definition->changed(value);
 	}
+	return 0;
 }
 
 void kfsw_param_write_data_entry(const struct kfsw_param_entry *entry, const uint8_t *data,
@@ -430,58 +439,61 @@ void kfsw_param_write_text_entry(const struct kfsw_param_entry *entry, const cha
 	}
 }
 
-/* Writing a default, shared by every reset path. */
-void kfsw_param_write_default(const struct kfsw_param_entry *entry)
+static void read_default(const struct kfsw_param_entry *entry, struct kfsw_param_value *value)
 {
+	*value = (struct kfsw_param_value){.type = entry->info.type, .size = entry_capacity(entry)};
 	if (entry->info.type == KFSW_PARAM_DATA) {
-		const size_t size = entry->info.array_size;
-
 		if (entry->definition->default_data != NULL) {
-			kfsw_param_write_data_entry(entry, entry->definition->default_data, size);
-		} else {
-			(void)memset(entry->definition->value, 0, size);
-			if (entry->definition->changed_data != NULL) {
-				entry->definition->changed_data(entry->definition->value, size);
-			}
+			memcpy(value->bytes, entry->definition->default_data, value->size);
 		}
-		return;
+	} else if (entry->info.type == KFSW_PARAM_STRING) {
+		const char *text = entry->definition->default_text;
+
+		value->size = copy_text(value->text, sizeof(value->text), text != NULL ? text : "",
+					entry->info.array_size) +
+			      1U;
+	} else {
+		value->scalar = entry->definition->default_value;
 	}
-	if (entry->info.type == KFSW_PARAM_STRING) {
-		kfsw_param_write_text_entry(entry, (entry->definition->default_text != NULL)
-							   ? entry->definition->default_text
-							   : "");
-		return;
-	}
-	kfsw_param_write_entry(entry, &entry->definition->default_value);
 }
 
-void kfsw_param_value_changed(uint16_t id)
+int kfsw_param_write_default(const struct kfsw_param_entry *entry)
 {
-	const struct kfsw_param_entry *entry = kfsw_param_find_id(id);
 	struct kfsw_param_value value;
+	int result;
 
-	if ((entry == NULL) || (kfsw_param_read_stored_entry(entry, &value) != 0)) {
-		return;
-	}
-	if (kfsw_param_validate_entry(entry, &value) != 0) {
-		/* The write already reached storage, so fall back to the default. */
-		kfsw_param_write_default(entry);
-		return;
-	}
+	read_default(entry, &value);
+	result = initialized ? kfsw_param_validate_entry(entry, &value) : 0;
+	return result == 0 ? kfsw_param_wire_apply(entry, &value) : result;
+}
+
+static void notify_changed(const struct kfsw_param_entry *entry,
+			   const struct kfsw_param_value *value)
+{
 	if (entry->info.type == KFSW_PARAM_STRING) {
 		if (entry->definition->changed_text != NULL) {
-			entry->definition->changed_text(value.text);
+			entry->definition->changed_text(value->text);
 		}
 		return;
 	}
 	if (entry->info.type == KFSW_PARAM_DATA) {
 		if (entry->definition->changed_data != NULL) {
-			entry->definition->changed_data(value.bytes, value.size);
+			entry->definition->changed_data(value->bytes, value->size);
 		}
 		return;
 	}
 	if (entry->definition->changed != NULL) {
-		entry->definition->changed(&value.scalar);
+		entry->definition->changed(&value->scalar);
+	}
+}
+
+void kfsw_param_value_accepted(uint16_t id)
+{
+	const struct kfsw_param_entry *entry = kfsw_param_find_id(id);
+	struct kfsw_param_value value;
+
+	if (entry != NULL && kfsw_param_read_stored_entry(entry, &value) == 0) {
+		notify_changed(entry, &value);
 	}
 }
 
@@ -556,6 +568,11 @@ static int add_definition(const struct kfsw_param_definition_set *set,
 
 	if ((definition == NULL) || (definition->name == NULL) || (definition->name[0] == '\0') ||
 	    (definition->value == NULL)) {
+		return -EINVAL;
+	}
+
+	if ((definition->apply != NULL) &&
+	    ((definition->type == KFSW_PARAM_STRING) || (definition->type == KFSW_PARAM_DATA))) {
 		return -EINVAL;
 	}
 
@@ -663,10 +680,9 @@ static int add_definition(const struct kfsw_param_definition_set *set,
 		}
 	}
 
-	/* Only the service sets LIVE, for definitions with a change callback. */
 	flags = definition->flags;
-	if ((definition->changed != NULL) || (definition->changed_text != NULL) ||
-	    (definition->changed_data != NULL)) {
+	if ((definition->apply != NULL) || (definition->changed != NULL) ||
+	    (definition->changed_text != NULL) || (definition->changed_data != NULL)) {
 		flags |= KFSW_PARAM_FLAG_LIVE;
 	}
 
@@ -749,9 +765,12 @@ int kfsw_param_init(const struct kfsw_param_definition_set *const *sets, size_t 
 		for (size_t index = 0U; index < parameter_count; index++) {
 			const struct kfsw_param_entry *entry = &parameter_table[index];
 
-			kfsw_param_write_default(entry);
+			result = kfsw_param_write_default(entry);
+			if (result != 0) {
+				break;
+			}
 		}
-		initialized = true;
+		initialized = result == 0;
 		kfsw_log_info("PARAM: %u parameters in %u tables", (unsigned int)parameter_count,
 			      (unsigned int)table_count);
 	} else {
@@ -826,13 +845,7 @@ int kfsw_param_set(const char *name, const struct kfsw_param_value *value)
 	} else {
 		result = kfsw_param_validate_entry(entry, value);
 		if (result == 0) {
-			if (entry->info.type == KFSW_PARAM_STRING) {
-				kfsw_param_write_text_entry(entry, value->text);
-			} else if (entry->info.type == KFSW_PARAM_DATA) {
-				kfsw_param_write_data_entry(entry, value->bytes, value->size);
-			} else {
-				kfsw_param_write_entry(entry, &value->scalar);
-			}
+			result = kfsw_param_wire_apply(entry, value);
 		}
 	}
 	kfsw_param_table_unlock();
@@ -856,6 +869,11 @@ int kfsw_param_set(const char *name, const struct kfsw_param_value *value)
 #if CONFIG_KFSW_PARAM_PERSISTENCE
 int kfsw_param_restore_defaults(void)
 {
+	size_t count = 0U;
+	bool fallible = false;
+	int result = 0;
+	struct kfsw_param_value value;
+
 	if (!initialized) {
 		return -EACCES;
 	}
@@ -864,12 +882,35 @@ int kfsw_param_restore_defaults(void)
 	for (size_t index = 0U; index < parameter_count; index++) {
 		const struct kfsw_param_entry *entry = &parameter_table[index];
 
-		if ((entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) != 0U) {
-			kfsw_param_write_default(entry);
+		if ((entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) == 0U) {
+			continue;
+		}
+		count++;
+		fallible |= entry->definition->apply != NULL;
+		read_default(entry, &value);
+		result = kfsw_param_validate_entry(entry, &value);
+		if (result != 0) {
+			goto out;
 		}
 	}
+	if (fallible && (count != 1U)) {
+		result = -ENOTSUP;
+		goto out;
+	}
+	for (size_t index = 0U; index < parameter_count; index++) {
+		const struct kfsw_param_entry *entry = &parameter_table[index];
+
+		if ((entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) != 0U) {
+			read_default(entry, &value);
+			result = kfsw_param_wire_apply(entry, &value);
+			if (result != 0) {
+				break;
+			}
+		}
+	}
+out:
 	kfsw_param_table_unlock();
-	return 0;
+	return result;
 }
 #endif
 

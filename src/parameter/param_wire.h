@@ -83,9 +83,10 @@ int kfsw_param_wire_decode(const struct kfsw_param_entry *entry, uint8_t type, c
 /**
  * @brief Write a value that @ref kfsw_param_wire_decode accepted.
  *
- * The caller holds the table lock.
+ * The caller holds the table lock. Returns an application errno on failure;
+ * storage and notifications are committed only after successful application.
  */
-void kfsw_param_wire_apply(const struct kfsw_param_entry *entry,
-			   const struct kfsw_param_value *decoded);
+int kfsw_param_wire_apply(const struct kfsw_param_entry *entry,
+			  const struct kfsw_param_value *decoded);
 
 #endif /* KFSW_SERVICES_PARAM_WIRE_H */
