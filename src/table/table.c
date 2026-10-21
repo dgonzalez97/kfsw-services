@@ -69,6 +69,7 @@ static K_MUTEX_DEFINE(table_lock);
 static uint8_t image[KFSW_TABLE_MAX_BYTES];
 static struct saved_value saved[KFSW_TABLE_MAX_ENTRIES];
 static uint16_t saved_count;
+static struct saved_value pending[KFSW_TABLE_MAX_ENTRIES];
 /* Filled by a load's check pass and applied by the pass after it, so nothing is
  * written until every entry has been accepted. */
 static struct kfsw_param_value decoded[KFSW_TABLE_MAX_ENTRIES];
@@ -261,6 +262,11 @@ static int check_entries(size_t size, uint16_t entry_count, uint8_t table,
 			return -EBADMSG;
 		}
 
+		if ((param_entry->definition->apply != NULL) && (entry_count != 1U)) {
+			report->reason = -ENOTSUP;
+			return -EBADMSG;
+		}
+
 		/* The parameter's own range check runs here, before anything is
 		 * written, which is the whole point of validating a file. */
 		result = kfsw_param_wire_decode(param_entry, entry.type, entry.value,
@@ -338,7 +344,9 @@ int kfsw_table_validate(const char *path, struct kfsw_table_report *report)
 	int result;
 
 	k_mutex_lock(&table_lock, K_FOREVER);
+	kfsw_param_table_lock();
 	result = examine(path, &local, NULL, false);
+	kfsw_param_table_unlock();
 	k_mutex_unlock(&table_lock);
 
 	if (report != NULL) {
@@ -354,64 +362,66 @@ int kfsw_table_load(const char *path, struct kfsw_table_report *report)
 	int result;
 
 	k_mutex_lock(&table_lock, K_FOREVER);
+	kfsw_param_table_lock();
 	result = examine(path, &local, entries, true);
 	if (result != 0) {
-		count_up(&status.rejections);
-		k_mutex_unlock(&table_lock);
-		if (local.failed_entry == 0U) {
-			kfsw_log_warning("Table file '%s' refused (%d)", path, local.reason);
-		} else {
-			kfsw_log_warning("Table file '%s' refused at entry %u (%d)", path,
-					 local.failed_entry, local.reason);
-		}
-		report_event(KFSW_EVENT_TABLE_REJECTED, local.table, local.entries);
-		if (report != NULL) {
-			*report = local;
-		}
-		return result;
+		goto out;
 	}
-
-	/* Every entry passed, so the whole file goes in under one lock and the
-	 * values it replaces are kept in the same pass. */
-	kfsw_param_table_lock();
-	saved_count = 0U;
 	for (uint16_t index = 0U; index < local.entries; index++) {
-		struct kfsw_param_value previous;
-
-		if (kfsw_param_read_stored_entry(entries[index], &previous) == 0) {
-			saved[saved_count].id = entries[index]->info.id;
-			saved[saved_count].value = previous;
-			saved_count++;
+		pending[index].id = entries[index]->info.id;
+		result = kfsw_param_read_stored_entry(entries[index], &pending[index].value);
+		if (result != 0) {
+			local.failed_entry = index + 1U;
+			local.failed_offset = entries[index]->info.offset;
+			goto out;
 		}
-		kfsw_param_wire_apply(entries[index], &decoded[index]);
 	}
-	kfsw_param_table_unlock();
-
 	for (uint16_t index = 0U; index < local.entries; index++) {
-		kfsw_param_value_changed(entries[index]->info.id);
+		result = kfsw_param_wire_apply(entries[index], &decoded[index]);
+		if (result != 0) {
+			local.failed_entry = index + 1U;
+			local.failed_offset = entries[index]->info.offset;
+			goto out;
+		}
 	}
-
+	memcpy(saved, pending, local.entries * sizeof(saved[0]));
+	saved_count = local.entries;
 	status.state = KFSW_TABLE_LOADED;
 	status.table = local.table;
 	status.entries = local.entries;
 	count_up(&status.loads);
 	(void)strncpy(status.path, path, sizeof(status.path) - 1U);
 	status.path[sizeof(status.path) - 1U] = '\0';
+out:
+	kfsw_param_table_unlock();
+	if (result != 0) {
+		if (local.reason == 0) {
+			local.reason = result;
+		}
+		count_up(&status.rejections);
+	}
 	k_mutex_unlock(&table_lock);
 
-	kfsw_log_info("Table %u loaded from '%s', %u entries", local.table, path, local.entries);
-	report_event(KFSW_EVENT_TABLE_LOADED, local.table, local.entries);
-
+	if (result == 0) {
+		kfsw_log_info("Table %u loaded from '%s', %u entries", local.table, path,
+			      local.entries);
+		report_event(KFSW_EVENT_TABLE_LOADED, local.table, local.entries);
+	} else {
+		kfsw_log_warning("Table file '%s' refused at entry %u (%d)", path,
+				 local.failed_entry, local.reason);
+		report_event(KFSW_EVENT_TABLE_REJECTED, local.table, local.entries);
+	}
 	if (report != NULL) {
 		*report = local;
 	}
-	return 0;
+	return result;
 }
 
 int kfsw_table_revert(void)
 {
 	uint16_t restored = 0U;
 	uint8_t table;
+	int result = 0;
 
 	if (!kfsw_param_is_initialized()) {
 		return -EACCES;
@@ -423,27 +433,42 @@ int kfsw_table_revert(void)
 		return -ENOENT;
 	}
 	table = status.table;
-
 	kfsw_param_table_lock();
 	for (uint16_t index = 0U; index < saved_count; index++) {
 		const struct kfsw_param_entry *entry = kfsw_param_find_id(saved[index].id);
 
-		if (entry != NULL) {
-			kfsw_param_wire_apply(entry, &saved[index].value);
-			restored++;
+		if (entry == NULL) {
+			result = -ENOENT;
+			goto out;
+		}
+		if ((entry->definition->apply != NULL) && (saved_count != 1U)) {
+			result = -ENOTSUP;
+			goto out;
+		}
+		result = kfsw_param_validate_entry(entry, &saved[index].value);
+		if (result != 0) {
+			goto out;
 		}
 	}
-	kfsw_param_table_unlock();
-
 	for (uint16_t index = 0U; index < saved_count; index++) {
-		kfsw_param_value_changed(saved[index].id);
-	}
+		const struct kfsw_param_entry *entry = kfsw_param_find_id(saved[index].id);
 
+		result = kfsw_param_wire_apply(entry, &saved[index].value);
+		if (result != 0) {
+			goto out;
+		}
+		restored++;
+	}
 	saved_count = 0U;
 	status.state = KFSW_TABLE_REVERTED;
 	count_up(&status.reverts);
+out:
+	kfsw_param_table_unlock();
 	k_mutex_unlock(&table_lock);
-
+	if (result != 0) {
+		kfsw_log_warning("Table %u undo refused: %d", table, result);
+		return result;
+	}
 	kfsw_log_info("Table %u reverted, %u values put back", table, restored);
 	report_event(KFSW_EVENT_TABLE_REVERTED, table, restored);
 	return 0;

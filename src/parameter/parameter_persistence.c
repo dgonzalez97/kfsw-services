@@ -278,15 +278,20 @@ static bool entry_matches(const struct kfsw_param_entry *param_entry,
 	uint16_t value_size;
 	uint8_t type;
 
-	return (kfsw_param_wire_type_of(param_entry, &type, &value_size) == 0) &&
-	       (type == persist_entry->type) && (value_size == persist_entry->value_size);
+	if ((kfsw_param_wire_type_of(param_entry, &type, &value_size) != 0) ||
+	    (type != persist_entry->type)) {
+		return false;
+	}
+	if (type == KFSW_PARAM_WIRE_STRING) {
+		return persist_entry->value_size <= param_entry->info.array_size;
+	}
+	return value_size == persist_entry->value_size;
 }
 
-static int apply_snapshot(size_t size, uint16_t entry_count)
+static int walk_snapshot(size_t size, uint16_t entry_count, bool apply)
 {
 	size_t offset = KFSW_PARAM_PERSIST_HEADER_SIZE;
 
-	kfsw_param_table_lock();
 	for (uint16_t index = 0U; index < entry_count; index++) {
 		struct persist_entry entry;
 		const struct kfsw_param_entry *param_entry;
@@ -294,7 +299,6 @@ static int apply_snapshot(size_t size, uint16_t entry_count)
 		int result = next_entry(snapshot, size, &offset, &entry);
 
 		if (result != 0) {
-			kfsw_param_table_unlock();
 			return result;
 		}
 		memcpy(name, entry.name, entry.name_size);
@@ -309,6 +313,9 @@ static int apply_snapshot(size_t size, uint16_t entry_count)
 			kfsw_log_warning("Ignoring incompatible persistent parameter '%s'", name);
 			continue;
 		}
+		if ((param_entry->definition->apply != NULL) && (entry_count != 1U)) {
+			return -ENOTSUP;
+		}
 		struct kfsw_param_value value;
 
 		if (kfsw_param_wire_decode(param_entry, entry.type, entry.value, entry.value_size,
@@ -316,10 +323,27 @@ static int apply_snapshot(size_t size, uint16_t entry_count)
 			kfsw_log_warning("Ignoring invalid persistent parameter '%s'", name);
 			continue;
 		}
-		kfsw_param_wire_apply(param_entry, &value);
+		if (apply) {
+			result = kfsw_param_wire_apply(param_entry, &value);
+			if (result != 0) {
+				return result;
+			}
+		}
+	}
+	return 0;
+}
+
+static int apply_snapshot(size_t size, uint16_t entry_count)
+{
+	int result;
+
+	kfsw_param_table_lock();
+	result = walk_snapshot(size, entry_count, false);
+	if (result == 0) {
+		result = walk_snapshot(size, entry_count, true);
 	}
 	kfsw_param_table_unlock();
-	return 0;
+	return result;
 }
 
 static int persist_save(void)

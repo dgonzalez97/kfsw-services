@@ -5,6 +5,8 @@
 #include <kfsw/services/fbo.h>
 #include <kfsw/services/parameter.h>
 
+#include "../fbo/fbo_internal.h"
+
 /* Procedure counters and state. */
 
 static char fbo_name[KFSW_FBO_NAME_MAX];
@@ -88,11 +90,11 @@ SCHED_SAMPLE(hash, uint32_t)
 SCHED_SAMPLE(latency_s, uint32_t)
 SCHED_SAMPLE(next_due_utc, int64_t)
 
-/*
- * The service owns the only rule about what a latency is allowed to be, so the
- * proposed value is handed to it here rather than range-checked a second time.
- * A table that kept its own copy of the rule would eventually disagree with it.
- */
+static int validate_latency(const union kfsw_param_scalar *value)
+{
+	return kfsw_fbo_schedule_check_latency_s(value->u32);
+}
+
 static int apply_latency(const union kfsw_param_scalar *value)
 {
 	return kfsw_fbo_schedule_set_latency_s(value->u32);
@@ -284,7 +286,8 @@ static const struct kfsw_param_definition fbo_param_definitions[] = {
 		.description = "An entry later than this reports overdue instead of running",
 		.value = &sched_latency_s,
 		.default_value = {.u32 = CONFIG_KFSW_FBO_SCHEDULE_LATENCY_S},
-		.validate = apply_latency,
+		.validate = validate_latency,
+		.apply = apply_latency,
 		.sample = sample_sched_latency_s,
 	},
 	{

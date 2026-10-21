@@ -1,6 +1,10 @@
 #include <stdarg.h>
 #include <errno.h>
 #include <stddef.h>
+#if CONFIG_KFSW_LOG_SEMIHOST
+#include <string.h>
+#include <kfsw/platform/semihost.h>
+#endif
 
 #include <zephyr/sys/atomic.h>
 #include <zephyr/sys/printk.h>
@@ -320,6 +324,34 @@ static const char *severity_color(uint8_t severity)
 	}
 }
 
+#if CONFIG_KFSW_LOG_SEMIHOST
+static void mirror_to_semihost(const char *color, const char *level, const char *message,
+			       const char *reset)
+{
+	char line[KFSW_LOG_MESSAGE_SIZE + sizeof("\033[90m[WARNING] \033[0m\n")];
+	BUILD_ASSERT(sizeof(line) <= KFSW_SEMIHOST_MAX_WRITE);
+	size_t used = 0U;
+	const char *parts[] = {color,
+			       level != NULL ? "[" : "",
+			       level != NULL ? level : "",
+			       level != NULL ? "] " : "",
+			       message,
+			       reset,
+			       "\n"};
+
+	for (size_t i = 0U; i < ARRAY_SIZE(parts); i++) {
+		size_t size = strlen(parts[i]);
+
+		if (size > sizeof(line) - used) {
+			return;
+		}
+		memcpy(&line[used], parts[i], size);
+		used += size;
+	}
+	(void)kfsw_semihost_write(line, used);
+}
+#endif
+
 #if CONFIG_KFSW_LOG_MIN_LEVEL < 4
 static void kfsw_log_vwrite(uint8_t module, uint8_t severity, const char *level, const char *format,
 			    va_list args)
@@ -363,6 +395,12 @@ static void kfsw_log_vwrite(uint8_t module, uint8_t severity, const char *level,
 	       (IS_ENABLED(CONFIG_KFSW_LOG_COLOR) && (kfsw_log_color_value != 0U))
 		       ? KFSW_LOG_COLOR_RESET
 		       : "");
+#if CONFIG_KFSW_LOG_SEMIHOST
+	mirror_to_semihost(severity_color(severity), level, message,
+			   (IS_ENABLED(CONFIG_KFSW_LOG_COLOR) && (kfsw_log_color_value != 0U))
+				   ? KFSW_LOG_COLOR_RESET
+				   : "");
+#endif
 #if CONFIG_KFSW_LOG_SHELL
 	mirror_to_shell(level, message);
 #endif
@@ -390,6 +428,9 @@ void kfsw_log_write_marker(uint8_t module, const char *format, ...)
 	ARG_UNUSED(length);
 #endif
 	printk("%s\n", message);
+#if CONFIG_KFSW_LOG_SEMIHOST
+	mirror_to_semihost("", NULL, message, "");
+#endif
 #if CONFIG_KFSW_LOG_SHELL
 	mirror_to_shell(NULL, message);
 #endif

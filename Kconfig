@@ -25,6 +25,16 @@ config KFSW_LOG_SHELL
 	  immediately when PARAM is built. Messages from interrupt context and
 	  before a shell is ready stay on the existing backend only.
 
+config KFSW_LOG_SEMIHOST
+	bool "Mirror K-FSW text logs to the debugger"
+	depends on KFSW_SEMIHOST
+	default n
+	help
+	  Mirror rendered K-FSW messages and markers, including line boundaries,
+	  to the platform semihost sink. The local console stays enabled.
+	  Requires deliberate debugger semihost enablement. Not for flight:
+	  semihost calls halt the core and have unbounded host latency.
+
 config KFSW_LOG_HISTORY
 	bool "Keep recent K-FSW text logs in RAM"
 	depends on KFSW_LOG_MIN_LEVEL < 4

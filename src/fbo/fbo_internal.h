@@ -32,6 +32,9 @@ void kfsw_fbo_count_skipped(uint16_t line);
 /** Emit one service event carrying a line number or an entry index. */
 void kfsw_fbo_note(uint16_t id, enum kfsw_event_severity severity, uint16_t detail);
 
+/** Check the scheduler latency range and current command timeout floor without applying it. */
+int kfsw_fbo_schedule_check_latency_s(uint32_t seconds);
+
 /** Start the release thread. Called once from kfsw_fbo_init(). */
 void kfsw_fbo_schedule_init(void);
 
