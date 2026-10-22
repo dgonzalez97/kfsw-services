@@ -101,7 +101,10 @@ static atomic_t kfsw_log_dropped;
 
 #if CONFIG_KFSW_LOG_REMOTE
 /* Read by the remote log server for each read; a parameter when PARAM is built. */
-static uint8_t kfsw_log_remote_format_value = KFSW_LOG_REMOTE_TEXT;
+#define KFSW_LOG_REMOTE_DEFAULT_FORMAT                                                             \
+	(IS_ENABLED(CONFIG_KFSW_LOG_REMOTE_DEFAULT_DICTIONARY) ? KFSW_LOG_REMOTE_DICTIONARY        \
+							       : KFSW_LOG_REMOTE_TEXT)
+static uint8_t kfsw_log_remote_format_value = KFSW_LOG_REMOTE_DEFAULT_FORMAT;
 
 uint8_t kfsw_log_remote_format(void)
 {
@@ -269,7 +272,7 @@ static const struct kfsw_param_definition log_param_definitions[] = {
 		.name = "log_remote_format",
 		.description = "How log remote sends messages: 0 text, 1 dictionary",
 		.value = &kfsw_log_remote_format_value,
-		.default_value = {.u8 = KFSW_LOG_REMOTE_TEXT},
+		.default_value = {.u8 = KFSW_LOG_REMOTE_DEFAULT_FORMAT},
 		.validate = validate_remote_format,
 	},
 #endif

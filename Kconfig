@@ -69,6 +69,23 @@ config KFSW_LOG_REMOTE
 	  how messages travel: text, or dictionary (a cbprintf package that a
 	  host decodes with the image's ELF).
 
+choice KFSW_LOG_REMOTE_DEFAULT
+	prompt "Initial remote log format"
+	depends on KFSW_LOG_REMOTE
+	default KFSW_LOG_REMOTE_DEFAULT_TEXT
+	help
+	  Initial value and parameter reset default of log_remote_format.
+	  A restored persistent value or runtime write still overrides this.
+	  Local console text and the existing remote wire format are unchanged.
+
+config KFSW_LOG_REMOTE_DEFAULT_TEXT
+	bool "Text"
+
+config KFSW_LOG_REMOTE_DEFAULT_DICTIONARY
+	bool "Dictionary (cbprintf package with text fallback)"
+
+endchoice
+
 config KFSW_LOG_REMOTE_PORT
 	int "Remote log CSP port"
 	depends on KFSW_LOG_REMOTE
@@ -537,7 +554,8 @@ config KFSW_FWU_SLOT_OFFSET_SECTORS
 	  secondary slot. An image written at the start is not swapped and the
 	  old image keeps running.
 
-	  Set to 0 only for a swap mode that expects the image at the slot start.
+	  Set to 0 for recovery replacement or a swap mode that expects the
+	  image at the slot start.
 
 config KFSW_HEALTH
 	bool "K-FSW health monitoring"
