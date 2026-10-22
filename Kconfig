@@ -454,10 +454,21 @@ config KFSW_FWU
 	select STREAM_FLASH
 	select CRC
 	help
-	  Receive a firmware image into the secondary slot selected by the
+	  Receive a firmware image into the target slot selected by the
 	  kfsw,fwu-partition chosen property, check its CRC32 and offer it to
 	  the bootloader. The image is written straight to flash because it
 	  doesn't fit in the filesystem partition.
+
+config KFSW_FWU_RECOVERY
+	bool "Replace primary A from permanent Golden"
+	depends on KFSW_FWU
+	help
+	  Write the entire primary partition from an executable permanent
+	  Golden image. No swap offset or trailer is reserved, and finish
+	  does not request a swap or reset. The previous A is lost at begin.
+	  MCUboot must validate A and fall back to Golden when A is invalid.
+	  The composition must disable swap integration, Golden installation,
+	  scrub and read-only firmware files.
 
 config KFSW_GOLDEN
 	bool "Install the recovery image when an image will not stay up"
@@ -492,6 +503,7 @@ config KFSW_FWU_MCUBOOT
 	depends on KFSW_FWU
 	depends on BOOTLOADER_MCUBOOT
 	depends on IMG_MANAGER
+	default n if KFSW_FWU_RECOVERY
 	default y
 	help
 	  Mark a completed image for a trial boot and check that the bootloader
@@ -501,6 +513,7 @@ config KFSW_FWU_MCUBOOT
 config KFSW_FWU_FILES
 	bool "Read firmware slots as files"
 	depends on KFSW_FWU && FILE_SYSTEM && MCUBOOT_BOOTUTIL_LIB
+	default n if KFSW_FWU_RECOVERY
 	default y
 	help
 	  Mount /kfsw/boot with read-only firmware_1.bin and firmware_2.bin
@@ -516,6 +529,7 @@ config KFSW_FWU_FILE_HANDLES
 config KFSW_FWU_SLOT_OFFSET_SECTORS
 	int "Sectors to skip at the start of the target slot"
 	depends on KFSW_FWU
+	default 0 if KFSW_FWU_RECOVERY
 	default 1
 	range 0 8
 	help

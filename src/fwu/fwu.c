@@ -28,8 +28,37 @@
 #define KFSW_FWU_PARTITION_SIZE DT_REG_SIZE(KFSW_FWU_PARTITION_NODE)
 #endif
 
-/* Reserve the last sector for the bootloader trailer. */
-#define KFSW_FWU_TRAILER_SECTORS 1U
+#if CONFIG_KFSW_FWU_RECOVERY
+BUILD_ASSERT(KFSW_FWU_PARTITION_PRESENT, "Recovery requires a target partition");
+BUILD_ASSERT(DT_SAME_NODE(KFSW_FWU_PARTITION_NODE, DT_NODELABEL(slot0_partition)),
+	     "Recovery must target primary A");
+BUILD_ASSERT(DT_SAME_NODE(DT_CHOSEN(zephyr_code_partition), DT_NODELABEL(slot1_partition)),
+	     "Recovery must execute from permanent Golden");
+BUILD_ASSERT(DT_SAME_NODE(DT_MTD_FROM_FIXED_PARTITION(KFSW_FWU_PARTITION_NODE),
+			  DT_MTD_FROM_FIXED_PARTITION(DT_CHOSEN(zephyr_code_partition))),
+	     "Recovery partitions must share flash");
+BUILD_ASSERT(DT_REG_ADDR(KFSW_FWU_PARTITION_NODE) + DT_REG_SIZE(KFSW_FWU_PARTITION_NODE) <=
+			     DT_REG_ADDR(DT_CHOSEN(zephyr_code_partition)) ||
+		     DT_REG_ADDR(DT_CHOSEN(zephyr_code_partition)) +
+				     DT_REG_SIZE(DT_CHOSEN(zephyr_code_partition)) <=
+			     DT_REG_ADDR(KFSW_FWU_PARTITION_NODE),
+	     "Recovery code and target must not overlap");
+BUILD_ASSERT(CONFIG_KFSW_FWU_SLOT_OFFSET_SECTORS == 0, "Recovery must not reserve a swap offset");
+BUILD_ASSERT(!IS_ENABLED(CONFIG_KFSW_FWU_MCUBOOT) && !IS_ENABLED(CONFIG_KFSW_GOLDEN) &&
+		     !IS_ENABLED(CONFIG_KFSW_SCRUB) && !IS_ENABLED(CONFIG_KFSW_FWU_FILES),
+	     "Recovery cannot use secondary-slot services");
+BUILD_ASSERT(IS_ENABLED(CONFIG_BOOTLOADER_MCUBOOT) ||
+		     (IS_ENABLED(CONFIG_ZTEST) && IS_ENABLED(CONFIG_ARCH_POSIX)),
+	     "Recovery requires MCUboot outside native tests");
+#if CONFIG_BOOTLOADER_MCUBOOT
+BUILD_ASSERT(IS_ENABLED(CONFIG_MCUBOOT_BOOTLOADER_MODE_FIRMWARE_UPDATER) &&
+		     IS_ENABLED(CONFIG_MCUBOOT_APPLICATION_FIRMWARE_UPDATER),
+	     "Recovery requires MCUboot firmware updater mode");
+#endif
+#endif
+
+/* Swap mode reserves the last sector for the bootloader trailer. */
+#define KFSW_FWU_TRAILER_SECTORS (IS_ENABLED(CONFIG_KFSW_FWU_RECOVERY) ? 0U : 1U)
 
 K_MUTEX_DEFINE(fwu_lock);
 static struct kfsw_fwu_status fwu_state = {

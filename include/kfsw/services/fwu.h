@@ -24,6 +24,11 @@ extern "C" {
  * also available as read-only files, without using data filesystem space.
  * The service handles the MCUboot write offset and checks upgrade scheduling.
  *
+ * With KFSW_FWU_RECOVERY, permanent Golden replaces primary A directly.
+ * The whole partition is available, READY schedules no swap, and finish never
+ * resets the board. Begin destroys previous A; there is no previous-A rollback.
+ * MCUboot must reject invalid A and execute Golden after an interrupted upload.
+ *
  * The CRC32 catches corruption in transit, not tampering. Authenticity is the
  * bootloader's signature check.
  *
@@ -36,7 +41,7 @@ enum kfsw_fwu_state {
 	KFSW_FWU_IDLE = 0,
 	/** A transfer has begun and is accepting data. */
 	KFSW_FWU_RECEIVING = 1,
-	/** Fully received, verified, and offered to the bootloader. */
+	/** Fully received and verified; swap scheduled only with swap integration. */
 	KFSW_FWU_READY = 2,
 	/** The transfer failed; call @ref kfsw_fwu_abort before retrying. */
 	KFSW_FWU_FAILED = 3,
@@ -72,7 +77,7 @@ struct kfsw_fwu_status {
  * @brief Largest image the target slot can hold, in bytes.
  *
  * Smaller than the partition: the swap offset costs one sector at the start,
- * and the bootloader needs its trailer at the end.
+ * and the bootloader needs its trailer at the end. Recovery uses the full partition.
  *
  * @return The maximum image size, or zero when no target is bound.
  */
@@ -81,7 +86,7 @@ uint32_t kfsw_fwu_max_image_size(void);
 /**
  * @brief Byte offset within the target partition where an image is written.
  *
- * Non-zero because of the bootloader's swap mode.
+ * Non-zero because of the bootloader's swap mode; zero in recovery mode.
  *
  * @return The offset in bytes.
  */
@@ -157,7 +162,10 @@ int kfsw_fwu_files_mount(void);
  * if it confirms itself after booting; otherwise the bootloader restores the
  * previous image.
  *
- * @retval 0 The image was accepted and a swap is scheduled.
+ * Recovery instead leaves A ready for signature verification on an explicitly
+ * commanded reset. It neither schedules a swap nor resets the board.
+ *
+ * @retval 0 The image was accepted; swap_scheduled reports swap integration.
  * @retval -EINVAL No transfer is receiving or verified.
  * @retval -EBUSY A secondary-slot reader is open.
  * @retval -EAGAIN Fewer bytes were received than declared.
