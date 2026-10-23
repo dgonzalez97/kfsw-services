@@ -17,6 +17,9 @@
 #endif
 
 #include <kfsw/services/fwu.h>
+#if CONFIG_KFSW_BOOT_STORE
+#include <kfsw/services/boot_budget.h>
+#endif
 #include "fwu_internal.h"
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_FWU
 #include <kfsw/services/log.h>
@@ -451,6 +454,14 @@ static int fwu_finish_locked(void)
 
 	fwu_state.state = KFSW_FWU_READY;
 	fwu_state.completed++;
+
+#if CONFIG_KFSW_BOOT_STORE
+	result = kfsw_boot_budget_refill();
+	if (result != 0) {
+		/* The installed image remains usable even if the budget store fails. */
+		kfsw_log_error("Firmware installed but boot budget refill failed (%d)", result);
+	}
+#endif
 
 	kfsw_log_info("Firmware update ready: %u bytes accepted", fwu_state.total_size);
 	return 0;

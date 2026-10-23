@@ -882,7 +882,8 @@ int kfsw_param_restore_defaults(void)
 	for (size_t index = 0U; index < parameter_count; index++) {
 		const struct kfsw_param_entry *entry = &parameter_table[index];
 
-		if ((entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) == 0U) {
+		if (((entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) == 0U) ||
+		    ((entry->info.flags & KFSW_PARAM_FLAG_OWNER_STORE) != 0U)) {
 			continue;
 		}
 		count++;
@@ -900,7 +901,8 @@ int kfsw_param_restore_defaults(void)
 	for (size_t index = 0U; index < parameter_count; index++) {
 		const struct kfsw_param_entry *entry = &parameter_table[index];
 
-		if ((entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) != 0U) {
+		if (((entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) != 0U) &&
+		    ((entry->info.flags & KFSW_PARAM_FLAG_OWNER_STORE) == 0U)) {
 			read_default(entry, &value);
 			result = kfsw_param_wire_apply(entry, &value);
 			if (result != 0) {

@@ -162,8 +162,10 @@ struct kfsw_param_table_info {
 #define KFSW_PARAM_FLAG_SYSTEM_INFO 0x00000040UL
 /** Parameter exists for diagnostic or test behavior. */
 #define KFSW_PARAM_FLAG_DEBUG 0x00000200UL
-/** User flag: the value is saved in the snapshot. */
+/** User flag: the value survives reset. Uses the snapshot unless OWNER_STORE. */
 #define KFSW_PARAM_FLAG_PERSISTENT 0x00010000UL
+/** Owner persists writes; exclude from snapshot save/load and RAM defaults. */
+#define KFSW_PARAM_FLAG_OWNER_STORE 0x00080000UL
 /**
  * User flag: a write takes effect immediately. Set for every definition with a
  * change callback; a definition that reads its value every cycle can set it too.
@@ -419,7 +421,7 @@ uint32_t kfsw_param_persist_bytes(void);
 uint32_t kfsw_param_persist_max_bytes(void);
 
 /**
- * Restore persistent parameters to their compiled defaults in RAM only.
+ * Restore snapshot parameters to compiled defaults in RAM; owner stores stay.
  * A fallible scalar must be the only persistent value; mixed resets return
  * -ENOTSUP before any change. Application errors are returned to the caller.
  */

@@ -75,7 +75,8 @@ static int build_snapshot(size_t *snapshot_size)
 
 		/* Read-only values can still be saved, like the boot counter. */
 		if ((entry->info.node != 0U) ||
-		    ((entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) == 0U)) {
+		    ((entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) == 0U) ||
+		    ((entry->info.flags & KFSW_PARAM_FLAG_OWNER_STORE) != 0U)) {
 			continue;
 		}
 
@@ -87,10 +88,6 @@ static int build_snapshot(size_t *snapshot_size)
 		}
 		result = kfsw_param_wire_type_of(entry, &type, &value_size);
 		if (result != 0) {
-			/* One value the format cannot hold is not worth losing
-			 * the snapshot over: the boot counter and the recovery
-			 * budget live in it too.
-			 */
 			kfsw_log_warning("PARAM: '%s' cannot be saved (%d); snapshot continues",
 					 entry->info.name, result);
 			result = 0;
@@ -305,8 +302,9 @@ static int walk_snapshot(size_t size, uint16_t entry_count, bool apply)
 		name[entry.name_size] = '\0';
 		param_entry = kfsw_param_find_name(name);
 		if ((param_entry == NULL) ||
-		    ((param_entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) == 0U)) {
-			kfsw_log_warning("Ignoring unknown persistent parameter '%s'", name);
+		    ((param_entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) == 0U) ||
+		    ((param_entry->info.flags & KFSW_PARAM_FLAG_OWNER_STORE) != 0U)) {
+			kfsw_log_warning("Ignoring '%s' from the snapshot", name);
 			continue;
 		}
 		if (!entry_matches(param_entry, &entry)) {

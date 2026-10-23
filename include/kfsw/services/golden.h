@@ -12,10 +12,9 @@ extern "C" {
  * @defgroup kfsw_services_golden Recovery image
  * @ingroup kfsw_services
  *
- * Installs the image held in the golden partition once the running one has
- * booted unconfirmed more times than its retry budget allows. The bootloader
- * only boots the slots, so installing means copying the image into the
- * secondary slot and asking for a permanent swap.
+ * Installs the image held in the golden partition when the early flash boot
+ * budget reaches zero. The bootloader only boots the slots, so installing means
+ * copying the image into the secondary slot and asking for a trial swap.
  *
  * @{
  */
@@ -51,7 +50,7 @@ bool kfsw_golden_present(void);
 int kfsw_golden_install(void);
 
 /**
- * @brief Decide whether the running image has run out of attempts, and act.
+ * @brief Install Golden at zero budget; MCUboot revert takes priority (-EBUSY).
  *
  * @param outcome Filled with the decision. Must not be NULL.
  * @retval 0 on success, a negative errno when the decision could not be made.

@@ -10,6 +10,9 @@
 #include <zephyr/sys/crc.h>
 
 #include <kfsw/services/boot.h>
+#if CONFIG_KFSW_BOOT_BUDGET
+#include <kfsw/services/boot_budget.h>
+#endif
 #include <kfsw/services/fwu.h>
 #include <kfsw/services/golden.h>
 #include <kfsw/services/log.h>
@@ -19,7 +22,7 @@
 #endif
 
 #define GOLDEN_NODE DT_CHOSEN(kfsw_golden_partition)
-#define GOLDEN_PRESENT DT_NODE_EXISTS(GOLDEN_NODE)
+#define GOLDEN_PRESENT (DT_NODE_EXISTS(GOLDEN_NODE) && !IS_ENABLED(CONFIG_KFSW_GOLDEN_IMAGE))
 
 #if GOLDEN_PRESENT
 #define GOLDEN_ID DT_FIXED_PARTITION_ID(GOLDEN_NODE)
@@ -140,7 +143,7 @@ static int install_image(void)
 
 int kfsw_golden_install(void)
 {
-#if GOLDEN_PRESENT
+#if GOLDEN_PRESENT && !CONFIG_KFSW_GOLDEN_IMAGE
 	struct kfsw_fwu_status status;
 	struct kfsw_fwu_handle handle;
 	int result = 0;
@@ -163,57 +166,30 @@ int kfsw_golden_install(void)
 
 int kfsw_golden_check(enum kfsw_golden_outcome *outcome)
 {
-	struct kfsw_boot_diagnostics diagnostics;
-	uint8_t budget;
-	int result;
-
 	if (outcome == NULL) {
 		return -EINVAL;
 	}
 	*outcome = KFSW_GOLDEN_NOT_NEEDED;
+#if CONFIG_KFSW_BOOT_BUDGET && !CONFIG_KFSW_GOLDEN_IMAGE
+	uint8_t left;
+	uint8_t maximum;
+	int result;
 
-#if !CONFIG_KFSW_PARAM_PERSISTENCE
-	/* Said once a boot, because the budget it counts against is not saved. */
-	kfsw_log_warning("Recovery: boot_retries is not persisted, so the budget restarts at "
-			 "every boot and this will not trigger");
-#endif
-
-#if CONFIG_KFSW_CSP_HMAC_REQUIRE
-	/* The recovery image is what is left when everything else failed, and
-	 * asking it for a key is how a recoverable node becomes a silent one.
-	 */
-	kfsw_log_warning("Recovery: this image refuses unsigned commanding, so a lost key "
-			 "leaves it unreachable");
-#endif
-
-	kfsw_boot_get_diagnostics(&diagnostics);
-	if (!diagnostics.valid) {
-		/* Without a readable count there is no evidence to act on, and
-		   installing the recovery image on no evidence is worse than
-		   leaving a working image alone. */
-		kfsw_log_warning("Recovery: no boot attempt count, so nothing is decided");
+	kfsw_boot_budget_get(&left, &maximum);
+	if (left == UINT8_MAX) {
 		return -ENODATA;
 	}
-
-	budget = kfsw_boot_get_retry_budget();
-	if (diagnostics.attempts <= budget) {
+	if (left != 0U) {
 		return 0;
 	}
-
 	if (!kfsw_golden_present()) {
-		kfsw_log_error("Recovery: %u attempts against a budget of %u and the golden "
-			       "partition is empty",
-			       diagnostics.attempts, budget);
 		return -ENOENT;
 	}
-
-	kfsw_log_warning("Recovery: %u unconfirmed boots against a budget of %u; installing the "
-			 "recovery image",
-			 diagnostics.attempts, budget);
 	result = kfsw_golden_install();
 	if (result != 0) {
 		return result;
 	}
 	*outcome = KFSW_GOLDEN_INSTALLED;
+#endif
 	return 0;
 }

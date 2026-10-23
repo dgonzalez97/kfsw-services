@@ -5,6 +5,9 @@
 #include <zephyr/sys/util.h>
 
 #include <kfsw/services/boot.h>
+#if CONFIG_KFSW_BOOT_STORE
+#include <kfsw/services/boot_budget.h>
+#endif
 #include <kfsw/services/parameter.h>
 
 #if CONFIG_BOOTLOADER_MCUBOOT && CONFIG_MCUBOOT_IMG_MANAGER
@@ -44,34 +47,32 @@ static void sample_last_uptime_ms(void *value)
 static uint32_t boot_count;
 static uint32_t boot_reset_cause;
 static uint8_t boot_confirmed;
-#if CONFIG_KFSW_GOLDEN
-/*
- * The budget has to outlive the boots it counts. Without a snapshot it restarts
- * at the compiled default every boot and the node never reaches it.
- */
-#if !CONFIG_KFSW_PARAM_PERSISTENCE
-#warning "KFSW_GOLDEN without KFSW_PARAM_PERSISTENCE: boot_retries cannot be saved, \
-so the retry budget restarts at every boot and recovery never triggers"
-#endif
-BUILD_ASSERT(CONFIG_KFSW_GOLDEN_RETRIES <= KFSW_BOOT_RETRIES_MAX,
-	     "the compiled retry budget must be one an operator could also set");
-static uint8_t boot_retries = CONFIG_KFSW_GOLDEN_RETRIES;
+#if CONFIG_KFSW_BOOT_STORE
+static uint8_t boot_attempts_left;
+static uint8_t boot_attempts_max;
 
-uint8_t kfsw_boot_get_retry_budget(void)
+static void sample_left(void *value)
 {
-	/* A budget outside the range would come from a corrupt snapshot. */
-	if ((boot_retries == 0U) || (boot_retries > KFSW_BOOT_RETRIES_MAX)) {
-		return CONFIG_KFSW_GOLDEN_RETRIES;
-	}
-	return boot_retries;
+	uint8_t maximum;
+
+	kfsw_boot_budget_get(value, &maximum);
 }
 
-static int validate_retries(const union kfsw_param_scalar *value)
+static void sample_max(void *value)
 {
-	if ((value->u8 == 0U) || (value->u8 > KFSW_BOOT_RETRIES_MAX)) {
-		return -EINVAL;
-	}
-	return 0;
+	uint8_t left;
+
+	kfsw_boot_budget_get(&left, value);
+}
+
+static int apply_left(const union kfsw_param_scalar *value)
+{
+	return kfsw_boot_budget_set_left(value->u8);
+}
+
+static int apply_max(const union kfsw_param_scalar *value)
+{
+	return kfsw_boot_budget_set_max(value->u8);
 }
 #endif
 
@@ -169,16 +170,28 @@ static void sample_trial_valid(void *value)
 }
 
 static const struct kfsw_param_definition boot_param_definitions[] = {
-#if CONFIG_KFSW_GOLDEN
+#if CONFIG_KFSW_BOOT_STORE
 	{
 		.offset = 0x2bU,
 		.type = KFSW_PARAM_U8,
-		.flags = KFSW_PARAM_FLAG_PERSISTENT,
-		.name = "boot_retries",
-		.description = "Unconfirmed boots before the recovery image goes in; 1 to 10",
-		.value = &boot_retries,
-		.default_value = {.u8 = CONFIG_KFSW_GOLDEN_RETRIES},
-		.validate = validate_retries,
+		.flags = KFSW_PARAM_FLAG_PERSISTENT | KFSW_PARAM_FLAG_OWNER_STORE,
+		.name = "boot_attempts_left",
+		.description = "Attempts remaining; ground writes persist in early flash",
+		.value = &boot_attempts_left,
+		.default_value = {.u8 = CONFIG_KFSW_BOOT_ATTEMPTS_MAX},
+		.apply = apply_left,
+		.sample = sample_left,
+	},
+	{
+		.offset = 0x3cU,
+		.type = KFSW_PARAM_U8,
+		.flags = KFSW_PARAM_FLAG_PERSISTENT | KFSW_PARAM_FLAG_OWNER_STORE,
+		.name = "boot_attempts_max",
+		.description = "Boot attempt limit: 3, 5 or 10; raising never refills",
+		.value = &boot_attempts_max,
+		.default_value = {.u8 = CONFIG_KFSW_BOOT_ATTEMPTS_MAX},
+		.apply = apply_max,
+		.sample = sample_max,
 	},
 #endif
 	{

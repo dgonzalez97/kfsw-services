@@ -47,7 +47,7 @@ int kfsw_boot_diagnostics_start(void);
 int kfsw_boot_record_image(const uint8_t image[KFSW_BOOT_IMAGE_ID_SIZE], bool confirmed,
 			   bool revert_pending);
 
-/** Confirm the running image and persist the reset attempt count. */
+/** Confirm the running image and update trial diagnostics. Never refill the budget. */
 int kfsw_boot_confirm_image(void);
 
 /**
@@ -122,19 +122,6 @@ void kfsw_boot_count_restart(void);
 
 /** Restarts recorded across the life of the node. */
 uint32_t kfsw_boot_get_count(void);
-#endif
-
-#if CONFIG_KFSW_GOLDEN
-/** The highest retry budget an operator may set. */
-#define KFSW_BOOT_RETRIES_MAX 10U
-
-/**
- * @brief Unconfirmed boots of one image allowed before recovery.
- *
- * The boot_retries parameter, or its compiled default when the parameter
- * service is absent. Never zero and never above ten.
- */
-uint8_t kfsw_boot_get_retry_budget(void);
 #endif
 
 #ifdef __cplusplus

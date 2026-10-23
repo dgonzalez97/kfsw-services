@@ -502,11 +502,29 @@ config KFSW_GOLDEN
 	bool "Install the recovery image when an image will not stay up"
 	depends on KFSW_FWU_MCUBOOT
 	help
-	  Count how many times an image has booted without being confirmed and,
-	  once that passes the retry budget, copy the image held in the golden
-	  partition into the secondary slot and ask the bootloader to swap it
-	  in. The budget is the boot_retries parameter, which must be persisted
-	  or it restarts at every boot and the node never reaches it.
+	  Install the recovery image when the early flash boot budget is zero.
+	  A pending MCUboot revert takes priority over installing Golden.
+
+config KFSW_GOLDEN_IMAGE
+	bool "This is the Golden recovery image"
+	help
+	  Recovery has no boot budget and cannot install itself. It may refill
+	  the application budget when installing a replacement image.
+
+config KFSW_BOOT_BUDGET
+	bool "Spend an attempt on every unexplained reset"
+	depends on KFSW_BOOT_STORE && !KFSW_GOLDEN_IMAGE
+	help
+	  Consume the flash record before application startup. Only a software
+	  reset with a CRC-valid commanded lastwords note is exempt.
+
+config KFSW_BOOT_ATTEMPTS_MAX
+	int "Compiled boot attempt limit (3, 5 or 10)"
+	default 3
+	range 3 10
+	help
+	  Default for the live boot_attempts_max parameter. Only 3, 5 and 10
+	  are accepted. A healthy boot or MCUboot revert never refills it.
 
 config KFSW_BOOT_CONFIRM_AT_START
 	bool "Confirm the running image once it has started"
@@ -516,15 +534,6 @@ config KFSW_BOOT_CONFIRM_AT_START
 	  reaching the end of startup is the evidence that it runs, so it keeps
 	  itself instead of being reverted at the next reset. An image an operator
 	  confirms should leave this off.
-
-config KFSW_GOLDEN_RETRIES
-	int "Unconfirmed boots allowed before the recovery image is installed"
-	depends on KFSW_GOLDEN
-	range 1 10
-	default 3
-	help
-	  Compiled default for boot_retries. Ten is the ceiling: a node that
-	  cannot stay up for ten attempts will not manage it on the eleventh.
 
 config KFSW_FWU_MCUBOOT
 	bool "Offer completed images to MCUboot"
