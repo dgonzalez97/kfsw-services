@@ -3,6 +3,7 @@
 #include <errno.h>
 
 #include <zephyr/devicetree.h>
+#include <zephyr/kernel.h>
 #include <bootutil/image.h>
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/sys/byteorder.h>
@@ -26,6 +27,9 @@
 
 /* Read in pieces: the partition is larger than anything worth putting on a stack. */
 #define GOLDEN_CHUNK 256U
+
+static K_MUTEX_DEFINE(install_lock);
+static struct kfsw_fwu_handle pending_cleanup;
 #endif
 
 bool kfsw_golden_present(void)
@@ -48,11 +52,30 @@ bool kfsw_golden_present(void)
 #endif
 }
 
-int kfsw_golden_install(void)
-{
 #if GOLDEN_PRESENT
+static int abort_install(const struct kfsw_fwu_handle *handle, struct kfsw_fwu_status *status)
+{
+	int result = kfsw_fwu_session_abort(handle, status);
+
+	if (result == 0 || result == -ESTALE || result == -EACCES) {
+		if (pending_cleanup.generation == handle->generation) {
+			pending_cleanup = (struct kfsw_fwu_handle){0};
+		}
+		return 0;
+	}
+	pending_cleanup = *handle;
+	kfsw_log_error("Recovery image cleanup failed (%d)", result);
+	return result;
+}
+
+static int install_image(void)
+{
 	const struct flash_area *area;
 	uint8_t chunk[GOLDEN_CHUNK];
+	const struct kfsw_fwu_owner owner = {.kind = KFSW_FWU_OWNER_LOCAL, .peer = 1U};
+	struct kfsw_fwu_image image = {.size = GOLDEN_SIZE};
+	struct kfsw_fwu_handle handle = {0};
+	struct kfsw_fwu_status status;
 	uint32_t crc = 0U;
 	uint32_t offset;
 	int result;
@@ -77,34 +100,62 @@ int kfsw_golden_install(void)
 		crc = crc32_ieee_update(crc, chunk, GOLDEN_CHUNK);
 	}
 
-	result = kfsw_fwu_begin(GOLDEN_SIZE, crc);
+	image.crc32 = crc;
+	result = kfsw_fwu_session_begin(&owner, &image, 0U, &handle, &status);
 	if (result != 0) {
 		flash_area_close(area);
+		if (handle.generation != 0U) {
+			(void)abort_install(&handle, &status);
+		}
 		return result;
 	}
 
 	for (offset = 0U; offset < GOLDEN_SIZE; offset += GOLDEN_CHUNK) {
 		result = flash_area_read(area, offset, chunk, GOLDEN_CHUNK);
 		if (result == 0) {
-			result = kfsw_fwu_write(offset, chunk, GOLDEN_CHUNK);
+			result = kfsw_fwu_session_write(&handle, offset, chunk, GOLDEN_CHUNK,
+							&status);
 		}
 		if (result != 0) {
 			flash_area_close(area);
-			(void)kfsw_fwu_abort();
+			(void)abort_install(&handle, &status);
 			return result;
 		}
 	}
 	flash_area_close(area);
 
-	result = kfsw_fwu_finish();
+	result = kfsw_fwu_session_verify(&handle, &status);
+	if (result == 0) {
+		result = kfsw_fwu_session_activate(&handle, &status);
+	}
 	if (result != 0) {
-		(void)kfsw_fwu_abort();
+		(void)abort_install(&handle, &status);
 		return result;
 	}
 
-
 	kfsw_log_warning("Recovery image installed; it boots at the next restart");
 	return 0;
+}
+#endif
+
+int kfsw_golden_install(void)
+{
+#if GOLDEN_PRESENT
+	struct kfsw_fwu_status status;
+	struct kfsw_fwu_handle handle;
+	int result = 0;
+
+	/* Serialize the copy and retain failed cleanup across explicit install attempts. */
+	k_mutex_lock(&install_lock, K_FOREVER);
+	handle = pending_cleanup;
+	if (handle.generation != 0U) {
+		result = abort_install(&handle, &status);
+	}
+	if (result == 0) {
+		result = install_image();
+	}
+	k_mutex_unlock(&install_lock);
+	return result;
 #else
 	return -ENODEV;
 #endif

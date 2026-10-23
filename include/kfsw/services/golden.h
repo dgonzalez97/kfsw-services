@@ -41,7 +41,8 @@ bool kfsw_golden_present(void);
  *
  * The caller restarts the node. Refused with -EBUSY while the bootloader still
  * needs the secondary slot to revert, because that revert is the cheaper
- * recovery and it comes first.
+ * recovery and it comes first. If cleanup fails, a later explicit install retries
+ * only the exact acquired transfer before beginning another copy.
  *
  * @retval 0 on success.
  * @retval -ENOENT when the partition holds no image.

@@ -250,7 +250,7 @@ static int serve_put(struct kfsw_ftp_link *link, const struct kfsw_ftp_message *
 	} else {
 		result = resolve_message_path(request, false);
 	}
-#if CONFIG_KFSW_FWU
+#if CONFIG_KFSW_FWU_STANDARD
 	/* A put to the reserved path is a firmware upload. */
 	if ((result == 0) && kfsw_ftp_path_is_firmware(request->path, request->path_size)) {
 		result = kfsw_ftp_transfer_open_firmware_sink(&transfer);

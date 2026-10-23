@@ -198,7 +198,10 @@ if(CONFIG_KFSW_FWU)
     if(CONFIG_KFSW_FWU_LITE)
         list(APPEND kfsw_services_sources src/fwu/fwu_lite_protocol.c)
         if(CONFIG_KFSW_FWU_LITE_CSP)
-            list(APPEND kfsw_services_sources src/fwu/fwu_lite_csp.c)
+            list(APPEND kfsw_services_sources
+                src/fwu/fwu_lite_csp.c
+                src/fwu/fwu_lite_client.c
+            )
         endif()
     endif()
 endif()

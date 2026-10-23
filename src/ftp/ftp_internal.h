@@ -1,6 +1,8 @@
 #ifndef KFSW_SERVICES_FTP_INTERNAL_H
 #define KFSW_SERVICES_FTP_INTERNAL_H
 
+#include <kfsw/services/fwu.h>
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -109,6 +111,7 @@ struct kfsw_ftp_transfer {
 	/* True when this upload goes to the firmware update slot instead of a file.
 	 */
 	bool firmware;
+	struct kfsw_fwu_handle firmware_handle;
 };
 
 /* Wire codec, path policy and status mapping. */
@@ -191,7 +194,7 @@ int kfsw_ftp_transfer_open_source(struct kfsw_ftp_transfer *transfer, const char
 int kfsw_ftp_transfer_send(struct kfsw_ftp_transfer *transfer);
 int kfsw_ftp_transfer_open_sink(struct kfsw_ftp_transfer *transfer, const char *temporary_path);
 
-#if CONFIG_KFSW_FWU
+#if CONFIG_KFSW_FWU_STANDARD
 /**
  * Send this upload to the firmware update slot instead of a file. The PUT
  * request already has the size and CRC32 the update service needs.

@@ -470,11 +470,22 @@ config KFSW_FWU
 	depends on FLASH_MAP
 	select STREAM_FLASH
 	select CRC
+	select PSA_CRYPTO
+	select PSA_WANT_ALG_SHA_256
 	help
 	  Receive a firmware image into the target slot selected by the
 	  kfsw,fwu-partition chosen property, check its CRC32 and offer it to
 	  the bootloader. The image is written straight to flash because it
 	  doesn't fit in the filesystem partition.
+
+config KFSW_FWU_STANDARD
+	bool "Standard firmware update commands and FTP sink"
+	depends on KFSW_FWU
+	default y
+	help
+	  Enable the normal fwu shell commands and the reserved firmware upload
+	  path when FTP is selected. Disable this for a lite-only composition.
+	  Both front ends share the same flash writer and ownership checks.
 
 config KFSW_FWU_RECOVERY
 	bool "Replace primary A from permanent Golden"
@@ -662,7 +673,7 @@ config KFSW_FWU_LITE_BLOCK_RETRIES
 
 config KFSW_FTP_FIRMWARE_PATH
 	string "Reserved upload path that routes to the firmware slot"
-	depends on KFSW_FWU
+	depends on KFSW_FWU_STANDARD
 	depends on KFSW_FTP
 	default "firmware.bin"
 	help
