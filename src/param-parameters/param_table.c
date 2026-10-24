@@ -15,6 +15,7 @@ static uint16_t param_persistent;
 static uint32_t param_saves;
 static uint32_t param_load_failures;
 static uint32_t param_requests_dropped;
+static uint32_t param_read_resends;
 static uint8_t param_autosave;
 #if CONFIG_KFSW_PARAM_PERSISTENCE
 static uint32_t param_persist_bytes;
@@ -38,6 +39,7 @@ static void sample_stats(void)
 	param_saves = stats.saves;
 	param_load_failures = stats.load_failures;
 	param_requests_dropped = stats.requests_dropped;
+	param_read_resends = stats.read_resends;
 }
 
 #define PARAM_SAMPLE(field, type)                                                                  \
@@ -53,6 +55,7 @@ PARAM_SAMPLE(persistent, uint16_t)
 PARAM_SAMPLE(saves, uint32_t)
 PARAM_SAMPLE(load_failures, uint32_t)
 PARAM_SAMPLE(requests_dropped, uint32_t)
+PARAM_SAMPLE(read_resends, uint32_t)
 
 static int validate_autosave(const union kfsw_param_scalar *value)
 {
@@ -161,6 +164,15 @@ static const struct kfsw_param_definition param_param_definitions[] = {
 		.description = "Value requests dropped before worker admission",
 		.value = &param_requests_dropped,
 		.sample = sample_requests_dropped,
+	},
+	{
+		.offset = 0x20U,
+		.type = KFSW_PARAM_U32,
+		.flags = KFSW_PARAM_FLAG_READ_ONLY,
+		.name = "param_read_resends",
+		.description = "Extra read request packets after timeouts since boot; saturates",
+		.value = &param_read_resends,
+		.sample = sample_read_resends,
 	},
 };
 

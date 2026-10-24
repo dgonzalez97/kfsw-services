@@ -348,6 +348,9 @@ struct kfsw_param_stats {
 	uint32_t load_failures;
 	/** Incoming CSP value requests dropped before the worker could accept them. */
 	uint32_t requests_dropped;
+	/** Extra outgoing read request packets after timeouts; saturates at UINT32_MAX since boot.
+	 */
+	uint32_t read_resends;
 };
 
 /** Read service counters. Returns -EINVAL for a NULL destination. */
@@ -435,7 +438,7 @@ int kfsw_param_server_start(void);
 /** Refresh a node's indexed v4 list; publish it only after count and CRC verification. */
 int kfsw_param_remote_refresh(uint16_t node);
 
-/** Read a scalar parameter from a selected CSP node. */
+/** Read a scalar parameter with the bounded retry policy of kfsw_param_remote_get_many(). */
 int kfsw_param_remote_get(uint16_t node, const char *name, struct kfsw_param_value *value);
 
 /**
@@ -445,6 +448,8 @@ int kfsw_param_remote_get(uint16_t node, const char *name, struct kfsw_param_val
  * by CONFIG_KFSW_PARAM_TIMEOUT_MS. @p values must hold @p count entries. All
  * names are resolved before anything is requested. Returns 0 with every value
  * filled, or an errno if any value is missing.
+ * Only -ETIMEDOUT is retried, with at most three total read attempts within
+ * the original budget. Earlier batches may be read again; this is not a snapshot.
  */
 int kfsw_param_remote_get_many(uint16_t node, const char *const *names, size_t count,
 			       struct kfsw_param_value *values);

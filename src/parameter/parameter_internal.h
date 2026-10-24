@@ -43,6 +43,7 @@ void kfsw_param_count_save(void);
 void kfsw_param_count_load_failure(void);
 #if CONFIG_KFSW_PARAM_CSP
 uint32_t kfsw_param_csp_dropped_requests(void);
+uint32_t kfsw_param_csp_read_resends(void);
 #endif
 
 #endif

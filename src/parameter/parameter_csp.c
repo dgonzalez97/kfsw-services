@@ -55,6 +55,7 @@
 #define KFSW_PARAM_LIST_END 1U
 #define KFSW_PARAM_LIST_CHANGED 2U
 #define KFSW_PARAM_REMOTE_BATCH_MAX 16U
+#define KFSW_PARAM_READ_MAX_ATTEMPTS 3U
 #define KFSW_PARAM_REPLY_MAX_PACKETS 64U
 #define KFSW_PARAM_HWID_ANY 1234U
 #define KFSW_PARAM_LIST_SOCKET_OPTIONS CSP_SO_CRC32REQ
@@ -882,6 +883,23 @@ static int validate_remote_node(uint16_t node)
 	return 0;
 }
 
+static atomic_t read_resends;
+
+uint32_t kfsw_param_csp_read_resends(void)
+{
+	return (uint32_t)atomic_get(&read_resends);
+}
+
+/* Writers hold the remote lock; readers must not take it under the table lock. */
+static void count_read_resend(bool resend)
+{
+	uint32_t count = kfsw_param_csp_read_resends();
+
+	if (resend && count != UINT32_MAX) {
+		atomic_set(&read_resends, (atomic_val_t)(count + 1U));
+	}
+}
+
 /* The libparam pool holds one remote node at a time. Its destructor resets the
  * whole pool, so every descriptor is unlinked before reuse. */
 static uint16_t cached_node;
@@ -962,7 +980,7 @@ static int stage_remote_descriptor(uint16_t node, param_transfer3_t *wire, const
 /* table zero asks for the whole node, anything else for that table alone. The
  * cache is only complete when the whole node was asked for.
  */
-static int refresh_table(uint16_t node, uint8_t table, int64_t deadline, bool force)
+static int refresh_table(uint16_t node, uint8_t table, int64_t deadline, bool force, bool resend)
 {
 	uint32_t crc = 0;
 	uint32_t received_crc = 0;
@@ -1015,6 +1033,7 @@ static int refresh_table(uint16_t node, uint8_t table, int64_t deadline, bool fo
 			sys_put_be32(crc, &packet->data[4]);
 			packet->length = KFSW_PARAM_LIST_TABLE_REQUEST_SIZE;
 		}
+		count_read_resend(resend);
 		csp_send(connection, packet);
 		remaining = remaining_ms(deadline);
 		packet = remaining == 0U ? NULL : csp_read(connection, remaining);
@@ -1211,7 +1230,7 @@ int kfsw_param_remote_refresh(uint16_t node)
 	if (result != 0) {
 		return -ETIMEDOUT;
 	}
-	result = refresh_table(node, 0U, deadline, true);
+	result = refresh_table(node, 0U, deadline, true, false);
 	k_mutex_unlock(&kfsw_param_remote_lock);
 	return result;
 }
@@ -1359,7 +1378,7 @@ static int decode_reply(uint16_t node, csp_packet_t *packet, const param_t *cons
 }
 
 static int pull_remote_batch(uint16_t node, const param_t *const *params, size_t count,
-			     size_t *consumed, int64_t deadline)
+			     size_t *consumed, int64_t deadline, bool resend)
 {
 	static struct kfsw_param_value staged[KFSW_PARAM_REMOTE_BATCH_MAX];
 	bool seen[KFSW_PARAM_REMOTE_BATCH_MAX] = {0};
@@ -1396,6 +1415,7 @@ static int pull_remote_batch(uint16_t node, const param_t *const *params, size_t
 		csp_buffer_free(packet);
 		return -ECONNREFUSED;
 	}
+	count_read_resend(resend);
 	csp_send(connection, packet);
 	for (size_t packets = 0; packets < KFSW_PARAM_REPLY_MAX_PACKETS; packets++) {
 		uint32_t remaining = MIN(remaining_ms(deadline), CONFIG_KFSW_PARAM_TIMEOUT_MS);
@@ -1495,7 +1515,7 @@ static int push_remote(const param_t *param, uint16_t node, const struct kfsw_pa
  * Returns -ENOTSUP when the node doesn't answer the lookup, so the caller can
  * fall back to the list.
  */
-static int lookup_remote(uint16_t node, const char *name, int64_t deadline)
+static int lookup_remote(uint16_t node, const char *name, int64_t deadline, bool resend)
 {
 	size_t length = strlen(name);
 	csp_conn_t *connection;
@@ -1531,6 +1551,7 @@ static int lookup_remote(uint16_t node, const char *name, int64_t deadline)
 	packet->data[0] = KFSW_PARAM_LIST_LOOKUP_VERSION;
 	memcpy(&packet->data[1], name, length);
 	packet->length = (uint16_t)(1U + length);
+	count_read_resend(resend);
 	csp_send(connection, packet);
 
 	/* Wait one transaction timeout, not the whole budget, so the fallback still has time. */
@@ -1569,7 +1590,8 @@ static int lookup_remote(uint16_t node, const char *name, int64_t deadline)
 	return result;
 }
 
-static int find_remote(uint16_t node, const char *name, const param_t **found, int64_t deadline)
+static int find_remote(uint16_t node, const char *name, const param_t **found, int64_t deadline,
+		       bool resend)
 {
 	int result;
 
@@ -1586,7 +1608,7 @@ static int find_remote(uint16_t node, const char *name, const param_t **found, i
 		}
 	}
 
-	result = lookup_remote(node, name, deadline);
+	result = lookup_remote(node, name, deadline, resend);
 	if (result == 0) {
 		*found = cached[cached_count - 1U];
 		return 0;
@@ -1596,7 +1618,7 @@ static int find_remote(uint16_t node, const char *name, const param_t **found, i
 	}
 
 	/* The node does not serve lookups. Walk its list, as before. */
-	result = refresh_table(node, 0U, deadline, false);
+	result = refresh_table(node, 0U, deadline, false, resend);
 	if (result != 0) {
 		return result;
 	}
@@ -1610,7 +1632,7 @@ static int find_remote(uint16_t node, const char *name, const param_t **found, i
 }
 
 static int get_many(uint16_t node, const char *const *names, size_t count,
-		    struct kfsw_param_value *values, int64_t deadline)
+		    struct kfsw_param_value *values, int64_t deadline, bool resend)
 {
 	size_t done = 0U;
 
@@ -1630,7 +1652,7 @@ static int get_many(uint16_t node, const char *const *names, size_t count,
 			result = names[done + index] == NULL
 					 ? -EINVAL
 					 : find_remote(node, names[done + index], &window[index],
-						       deadline);
+						       deadline, resend);
 			if (result != 0) {
 				return result;
 			}
@@ -1640,7 +1662,7 @@ static int get_many(uint16_t node, const char *const *names, size_t count,
 			size_t consumed = 0U;
 
 			result = pull_remote_batch(node, &window[pulled], window_count - pulled,
-						   &consumed, deadline);
+						   &consumed, deadline, resend);
 			if (result != 0) {
 				return result;
 			}
@@ -1674,7 +1696,7 @@ static int set_remote(uint16_t node, const char *name, const struct kfsw_param_v
 	if ((name == NULL) || (value == NULL)) {
 		return -EINVAL;
 	}
-	result = find_remote(node, name, &param, deadline);
+	result = find_remote(node, name, &param, deadline, false);
 	if (result != 0) {
 		return result;
 	}
@@ -1722,7 +1744,7 @@ static int visit_remote(uint16_t node, uint8_t table, kfsw_param_visitor_t visit
 	if (visitor == NULL) {
 		return -EINVAL;
 	}
-	result = refresh_table(node, table, deadline, table != 0U);
+	result = refresh_table(node, table, deadline, table != 0U, false);
 	if (result != 0) {
 		return result;
 	}
@@ -1769,7 +1791,17 @@ int kfsw_param_remote_get_many_until(uint16_t node, const char *const *names, si
 	    k_mutex_lock(&kfsw_param_remote_lock, K_MSEC(remaining_ms(deadline))) != 0) {
 		return -ETIMEDOUT;
 	}
-	int result = get_many(node, names, count, values, deadline);
+	int result = -ETIMEDOUT;
+
+	for (unsigned int attempt = 0U; attempt < KFSW_PARAM_READ_MAX_ATTEMPTS; attempt++) {
+		if (remaining_ms(deadline) == 0U) {
+			break;
+		}
+		result = get_many(node, names, count, values, deadline, attempt != 0U);
+		if (result != -ETIMEDOUT) {
+			break;
+		}
+	}
 
 	k_mutex_unlock(&kfsw_param_remote_lock);
 	return result;

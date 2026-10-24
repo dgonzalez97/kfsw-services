@@ -968,8 +968,10 @@ int kfsw_param_get_stats(struct kfsw_param_stats *stats)
 	stats->saves = (uint32_t)atomic_get(&param_saves);
 	stats->load_failures = (uint32_t)atomic_get(&param_load_failures);
 	stats->requests_dropped = 0U;
+	stats->read_resends = 0U;
 #if CONFIG_KFSW_PARAM_CSP
 	stats->requests_dropped = kfsw_param_csp_dropped_requests();
+	stats->read_resends = kfsw_param_csp_read_resends();
 #endif
 	return 0;
 }
