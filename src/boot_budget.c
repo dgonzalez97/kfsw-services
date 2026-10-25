@@ -151,6 +151,11 @@ int kfsw_boot_budget_refill(void)
 }
 
 #if CONFIG_KFSW_BOOT_BUDGET
+/* GCOVR_EXCL_START
+ * A SYS_INIT handler that runs before any test and reboots on two of its
+ * paths, so unit coverage cannot reach it. What it decides is proved on the
+ * bench by tests/hil/golden-auto-smoke.sh.
+ */
 static int early_budget(void)
 {
 	bool commanded = false;
@@ -168,11 +173,19 @@ static int early_budget(void)
 	kfsw_log_info("Boot budget: left=%u max=%u commanded=%u", attempts_left, attempts_max,
 		      commanded);
 	if (kfsw_boot_budget_spent()) {
+		/* left=0 is printed by both the startup that spends the last attempt
+		   and the one after it. Only this one acts, so say which it is. */
+		kfsw_log_warning("Boot attempts exhausted; recovering");
 #if CONFIG_KFSW_GOLDEN
 		enum kfsw_golden_outcome outcome;
 
 		result = kfsw_golden_check(&outcome);
-		if (result == -EBUSY || (result == 0 && outcome == KFSW_GOLDEN_INSTALLED)) {
+		if (result == -EBUSY) {
+			kfsw_log_warning("Recovery deferred to a pending revert; restarting");
+			sys_reboot(SYS_REBOOT_COLD);
+		}
+		if (result == 0 && outcome == KFSW_GOLDEN_INSTALLED) {
+			kfsw_log_warning("Recovery image installed; restarting into it");
 			sys_reboot(SYS_REBOOT_COLD);
 		}
 		if (result != 0) {
@@ -186,4 +199,5 @@ static int early_budget(void)
 }
 
 SYS_INIT(early_budget, POST_KERNEL, 52);
+/* GCOVR_EXCL_STOP */
 #endif
