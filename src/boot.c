@@ -74,8 +74,10 @@ void kfsw_boot_service_start(void)
 	/* CI and HIL tests parse these markers. The raw mask is kept because several
 	 * causes can be latched at once.
 	 */
-	kfsw_log_marker("@BOOT sw=%s board=%s unit=%s reset=0x%08x reset_rc=%d reset_cause=%s",
+	kfsw_log_marker("@BOOT sw=%s board=%s image=%s unit=%s reset=0x%08x reset_rc=%d "
+			"reset_cause=%s",
 			KFSW_IMAGE_VERSION, CONFIG_BOARD_TARGET,
+			IS_ENABLED(CONFIG_KFSW_GOLDEN_IMAGE) ? "golden" : "application",
 			(boot_hardware_id[0] != '\0') ? boot_hardware_id : "unknown",
 			(unsigned int)reset_cause, reset_rc,
 			kfsw_platform_reset_cause_name(reset_cause));
