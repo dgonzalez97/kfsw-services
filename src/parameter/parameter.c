@@ -576,6 +576,20 @@ static int add_definition(const struct kfsw_param_definition_set *set,
 		return -EINVAL;
 	}
 
+	/* A snapshot is restored as a whole, and a restored parameter with an
+	 * apply callback is refused unless it is the only entry, so one such
+	 * parameter makes every other persistent value unrestorable. Owner-store
+	 * parameters are exempt: the restore skips them, because their owner
+	 * keeps them somewhere else.
+	 */
+	if ((definition->apply != NULL) &&
+	    ((definition->flags & KFSW_PARAM_FLAG_PERSISTENT) != 0U) &&
+	    ((definition->flags & KFSW_PARAM_FLAG_OWNER_STORE) == 0U)) {
+		kfsw_log_error("PARAM: %s is persistent and has an apply callback",
+			       definition->name);
+		return -EINVAL;
+	}
+
 	/* Strings and arrays declare their size; a missing or too large size is refused. */
 	if (definition->type == KFSW_PARAM_DATA) {
 		if ((definition->capacity == 0U) ||
