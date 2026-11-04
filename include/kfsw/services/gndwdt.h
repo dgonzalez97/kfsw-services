@@ -50,6 +50,13 @@ struct kfsw_gndwdt_status {
 	uint32_t contacts;
 	/** Times the timeout passed since start; saturates. */
 	uint32_t expiries;
+	/**
+	 * Times a check or reset could not be rescheduled; saturates.
+	 *
+	 * Non-zero means the countdown stopped being checked, so a lost ground
+	 * link would not be noticed. It is not expected to move.
+	 */
+	uint32_t reschedule_failures;
 	/** Source of the most recent valid feed, or zero. */
 	uint16_t last_node;
 	/** Whether expiry checks are enabled. */
