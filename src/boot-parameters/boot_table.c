@@ -130,14 +130,14 @@ static int validate_confirmed(const union kfsw_param_scalar *value)
 #endif
 }
 
-static void apply_confirmed(const union kfsw_param_scalar *value)
+/* Fallible, so a confirmation the bootloader refused fails the write. */
+static int apply_confirmed(const union kfsw_param_scalar *value)
 {
 #if CONFIG_BOOTLOADER_MCUBOOT && CONFIG_MCUBOOT_IMG_MANAGER
-	if (value->u8 == 1U) {
-		(void)kfsw_boot_confirm_image();
-	}
+	return (value->u8 == 1U) ? kfsw_boot_confirm_image() : 0;
 #else
 	ARG_UNUSED(value);
+	return 0;
 #endif
 }
 
@@ -299,7 +299,7 @@ static const struct kfsw_param_definition boot_param_definitions[] = {
 		.value = &boot_confirmed,
 		.default_value = {.u8 = 0U},
 		.validate = validate_confirmed,
-		.changed = apply_confirmed,
+		.apply = apply_confirmed,
 		.sample = sample_confirmed,
 	},
 };
