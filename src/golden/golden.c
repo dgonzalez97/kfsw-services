@@ -1,7 +1,9 @@
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_BOOT
 
 #include <errno.h>
+#include <string.h>
 
+#include <psa/crypto.h>
 #include <zephyr/devicetree.h>
 #include <zephyr/kernel.h>
 #include <bootutil/image.h>
@@ -30,6 +32,7 @@
 
 /* Read in pieces: the partition is larger than anything worth putting on a stack. */
 #define GOLDEN_CHUNK 256U
+#define GOLDEN_SHA256_SIZE 32U
 
 static K_MUTEX_DEFINE(install_lock);
 static struct kfsw_fwu_handle pending_cleanup;
@@ -71,6 +74,111 @@ static int abort_install(const struct kfsw_fwu_handle *handle, struct kfsw_fwu_s
 	return result;
 }
 
+/* Where the TLV area starts, after the header, the body and the protected TLVs
+   that the image's SHA-256 covers. */
+static int hashed_size(const struct flash_area *area, uint32_t *size)
+{
+	struct image_header header;
+	uint32_t total;
+	int result = flash_area_read(area, 0U, &header, sizeof(header));
+
+	if (result != 0) {
+		return result;
+	}
+	total = (uint32_t)sys_le16_to_cpu(header.ih_hdr_size) +
+		sys_le16_to_cpu(header.ih_protect_tlv_size);
+	if ((sys_le32_to_cpu(header.ih_magic) != IMAGE_MAGIC) || (total > GOLDEN_SIZE) ||
+	    (sys_le32_to_cpu(header.ih_img_size) > GOLDEN_SIZE - total)) {
+		return -EBADMSG;
+	}
+	*size = total + sys_le32_to_cpu(header.ih_img_size);
+	return 0;
+}
+
+static int expected_digest(const struct flash_area *area, uint32_t offset, uint8_t *digest)
+{
+	struct image_tlv_info info;
+	struct image_tlv tlv;
+	uint32_t end;
+	int result;
+
+	if (GOLDEN_SIZE - offset < sizeof(info)) {
+		return -EBADMSG;
+	}
+	result = flash_area_read(area, offset, &info, sizeof(info));
+	if (result != 0) {
+		return result;
+	}
+	if ((sys_le16_to_cpu(info.it_magic) != IMAGE_TLV_INFO_MAGIC) ||
+	    (sys_le16_to_cpu(info.it_tlv_tot) < sizeof(info)) ||
+	    (sys_le16_to_cpu(info.it_tlv_tot) > GOLDEN_SIZE - offset)) {
+		return -EBADMSG;
+	}
+	end = offset + sys_le16_to_cpu(info.it_tlv_tot);
+	offset += sizeof(info);
+	while (end - offset >= sizeof(tlv)) {
+		result = flash_area_read(area, offset, &tlv, sizeof(tlv));
+		if (result != 0) {
+			return result;
+		}
+		offset += sizeof(tlv);
+		if (sys_le16_to_cpu(tlv.it_len) > end - offset) {
+			return -EBADMSG;
+		}
+		if ((sys_le16_to_cpu(tlv.it_type) == IMAGE_TLV_SHA256) &&
+		    (sys_le16_to_cpu(tlv.it_len) == GOLDEN_SHA256_SIZE)) {
+			return flash_area_read(area, offset, digest, GOLDEN_SHA256_SIZE);
+		}
+		offset += sys_le16_to_cpu(tlv.it_len);
+	}
+	return -EBADMSG;
+}
+
+/* The bootloader checks the signature only after the secondary slot has been
+   erased and rewritten. A damaged recovery image found here costs nothing; one
+   found by the bootloader costs a slot erase and a restart on every attempt. */
+static int check_image(const struct flash_area *area, uint8_t *chunk)
+{
+	psa_hash_operation_t hash = PSA_HASH_OPERATION_INIT;
+	uint8_t expected[GOLDEN_SHA256_SIZE];
+	uint8_t actual[GOLDEN_SHA256_SIZE];
+	size_t actual_size;
+	uint32_t covered;
+	uint32_t offset;
+	int result = hashed_size(area, &covered);
+
+	if (result == 0) {
+		result = expected_digest(area, covered, expected);
+	}
+	if (result != 0) {
+		return result;
+	}
+	if ((psa_crypto_init() != PSA_SUCCESS) ||
+	    (psa_hash_setup(&hash, PSA_ALG_SHA_256) != PSA_SUCCESS)) {
+		return -EIO;
+	}
+	for (offset = 0U; offset < covered; offset += GOLDEN_CHUNK) {
+		size_t size = MIN(GOLDEN_CHUNK, covered - offset);
+
+		result = flash_area_read(area, offset, chunk, size);
+		if (result == 0 && psa_hash_update(&hash, chunk, size) != PSA_SUCCESS) {
+			result = -EIO;
+		}
+		if (result != 0) {
+			(void)psa_hash_abort(&hash);
+			return result;
+		}
+	}
+	if (psa_hash_finish(&hash, actual, sizeof(actual), &actual_size) != PSA_SUCCESS) {
+		(void)psa_hash_abort(&hash);
+		return -EIO;
+	}
+	if ((actual_size != sizeof(actual)) || (memcmp(actual, expected, sizeof(actual)) != 0)) {
+		return -EBADMSG;
+	}
+	return 0;
+}
+
 static int install_image(void)
 {
 	const struct flash_area *area;
@@ -89,6 +197,12 @@ static int install_image(void)
 
 	result = flash_area_open(GOLDEN_ID, &area);
 	if (result != 0) {
+		return result;
+	}
+	result = check_image(area, chunk);
+	if (result != 0) {
+		flash_area_close(area);
+		kfsw_log_error("Recovery image failed its own SHA-256 (%d); not installed", result);
 		return result;
 	}
 

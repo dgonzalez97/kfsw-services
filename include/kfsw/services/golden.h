@@ -30,8 +30,9 @@ enum kfsw_golden_outcome {
 /**
  * @brief Whether the golden partition holds something that looks like an image.
  *
- * Checks the bootloader's magic. The signature is checked by the bootloader
- * when it swaps, not here.
+ * Checks the bootloader's magic only. kfsw_golden_install() also checks the
+ * image against its SHA-256 TLV before it erases anything; the signature is
+ * checked by the bootloader when it swaps.
  */
 bool kfsw_golden_present(void);
 
@@ -45,6 +46,8 @@ bool kfsw_golden_present(void);
  *
  * @retval 0 on success.
  * @retval -ENOENT when the partition holds no image.
+ * @retval -EBADMSG when the image does not match its own SHA-256 TLV; the
+ *         secondary slot is left untouched.
  * @retval -ENODEV when this build has no golden partition.
  */
 int kfsw_golden_install(void);
