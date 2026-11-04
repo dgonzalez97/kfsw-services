@@ -11,9 +11,9 @@
 #include <kfsw/platform/storage.h>
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_PARAM
 #include <kfsw/services/log.h>
+#include <kfsw/services/snapshot.h>
 #include <kfsw/services/parameter.h>
 
-#include "../snapshot_file.h"
 #include "parameter_budget.h"
 #include "param_wire.h"
 #include "parameter_internal.h"

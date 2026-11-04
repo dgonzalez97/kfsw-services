@@ -11,7 +11,7 @@
 #include <kfsw/services/log.h>
 #if CONFIG_KFSW_STORAGE
 #include <kfsw/platform/storage.h>
-#include "snapshot_file.h"
+#include <kfsw/services/snapshot.h>
 #endif
 #if CONFIG_BOOTLOADER_MCUBOOT && CONFIG_MCUBOOT_IMG_MANAGER
 #include <bootutil/image.h>

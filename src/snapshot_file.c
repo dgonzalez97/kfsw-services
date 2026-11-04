@@ -6,7 +6,7 @@
 
 #include <kfsw/platform/storage.h>
 
-#include "snapshot_file.h"
+#include <kfsw/services/snapshot.h>
 
 /* fs_write is allowed to write less than it was given. */
 static int write_all(struct fs_file_t *file, const uint8_t *data, size_t size)

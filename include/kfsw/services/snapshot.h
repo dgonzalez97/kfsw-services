@@ -1,8 +1,12 @@
-#ifndef KFSW_SNAPSHOT_FILE_H
-#define KFSW_SNAPSHOT_FILE_H
+#ifndef KFSW_SERVICES_SNAPSHOT_H
+#define KFSW_SERVICES_SNAPSHOT_H
 
 #include <stddef.h>
 #include <stdint.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /**
  * @brief Replace a file's contents atomically.
@@ -21,4 +25,8 @@
 int kfsw_snapshot_write(const char *path, const char *temporary_path, const uint8_t *data,
 			size_t size);
 
-#endif /* KFSW_SNAPSHOT_FILE_H */
+#ifdef __cplusplus
+}
+#endif
+
+#endif
