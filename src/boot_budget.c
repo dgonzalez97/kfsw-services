@@ -162,6 +162,19 @@ int kfsw_boot_budget_refill(void)
  * paths, so unit coverage cannot reach it. What it decides is proved on the
  * bench by tests/hil/golden-auto-smoke.sh.
  */
+#if CONFIG_KFSW_GOLDEN && CONFIG_KFSW_LASTWORDS
+/* This startup took the note that says why the last run ended. Leave it again
+   for the recovery image, which otherwise reports a plain software reset. */
+static void leave_note_for_golden(void)
+{
+	const struct kfsw_lastwords *note = kfsw_boot_get_lastwords();
+
+	if (note->reason != KFSW_LASTWORDS_NONE) {
+		kfsw_lastwords_write(note->reason, note->detail, note->uptime_ms, note->boot_count);
+	}
+}
+#endif
+
 static int early_budget(void)
 {
 	bool commanded = false;
@@ -192,6 +205,9 @@ static int early_budget(void)
 		}
 		if (result == 0 && outcome == KFSW_GOLDEN_INSTALLED) {
 			kfsw_log_warning("Recovery image installed; restarting into it");
+#if CONFIG_KFSW_LASTWORDS
+			leave_note_for_golden();
+#endif
 			sys_reboot(SYS_REBOOT_COLD);
 		}
 		if (result != 0) {
