@@ -39,14 +39,20 @@ static int load_budget(void)
 		return result;
 	}
 	result = kfsw_boot_store_read(&left, &maximum);
-	if (result == -ENOENT) {
+	if ((result == 0) && (!valid_max(maximum) || (left > maximum))) {
+		result = -EBADMSG;
+	}
+	if (result == -EBADMSG) {
+		/* Refusing a damaged record would switch recovery off for the rest
+		   of the mission, and the ground and FWU could not rewrite it. */
+		kfsw_log_warning("Boot budget record damaged; restarting from %u",
+				 CONFIG_KFSW_BOOT_ATTEMPTS_MAX);
+	}
+	if ((result == -ENOENT) || (result == -EBADMSG)) {
 		left = CONFIG_KFSW_BOOT_ATTEMPTS_MAX;
 		maximum = CONFIG_KFSW_BOOT_ATTEMPTS_MAX;
 	} else if (result != 0) {
 		return result;
-	}
-	if (!valid_max(maximum) || left > maximum) {
-		return -EBADMSG;
 	}
 	attempts_left = left;
 	attempts_max = maximum;
