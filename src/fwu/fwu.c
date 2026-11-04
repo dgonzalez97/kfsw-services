@@ -61,6 +61,12 @@ BUILD_ASSERT(IS_ENABLED(CONFIG_MCUBOOT_BOOTLOADER_MODE_FIRMWARE_UPDATER) &&
 #endif
 #endif
 
+#if CONFIG_BOOTLOADER_MCUBOOT && CONFIG_KFSW_FWU_MCUBOOT &&                                        \
+	(CONFIG_KFSW_FWU_SLOT_OFFSET_SECTORS > 0)
+BUILD_ASSERT(IS_ENABLED(CONFIG_MCUBOOT_BOOTLOADER_MODE_SWAP_USING_OFFSET),
+	     "MCUboot swaps an image written past the slot start only in swap-using-offset mode");
+#endif
+
 /* Swap mode reserves the last sector for the bootloader trailer. */
 #define KFSW_FWU_TRAILER_SECTORS (IS_ENABLED(CONFIG_KFSW_FWU_RECOVERY) ? 0U : 1U)
 
