@@ -19,7 +19,13 @@ events, commands, health, firmware update and housekeeping.
 | Resource monitor | `KFSW_RESMON` | Thread stack use and alert events |
 | Firmware update | `KFSW_FWU` | Receives and checks an image and hands it to the bootloader |
 | Housekeeping | `KFSW_HK` | Collects a set of values together and keeps the samples |
-| File based operations | `KFSW_FBO` | Runs a list of commands from a file |
+| File based operations | `KFSW_FBO` | Runs a list of commands from a file, and a time-tagged queue |
+| Limits | `KFSW_LIMITS` | Watches numeric parameters and releases a command when one crosses a bound |
+| Tables | `KFSW_TABLE` | A whole table uploaded as a file, checked before any of it takes effect |
+| Remote execution | `KFSW_REMEXEC` | Runs commands a composition offers, for a caller on another node |
+| Boot budget | `KFSW_BOOT_BUDGET` | Spends an attempt on every unexplained reset, before `main()` |
+| Golden recovery | `KFSW_GOLDEN` | Installs the recovery image when the budget runs out |
+| Image scrub | `KFSW_SCRUB` | Re-reads the image slots against a learned CRC32 and reports a change |
 
 Kconfig selects each service and checks its dependencies. Local parameters,
 logging, events and health can run without CSP. Remote adapters and FTP need
@@ -83,6 +89,25 @@ version.
 It also reads the last words note the previous run left in `kfsw-platform`,
 logs it and records it as an event. A missing note means no valid record was
 retained; use the reset-cause flags to distinguish power loss from other resets.
+
+## Boot budget
+
+`CONFIG_KFSW_BOOT_BUDGET` spends one attempt for every reset that was not a
+commanded reboot, from a `SYS_INIT` at `POST_KERNEL` 52, before `main()`. The
+count lives in the platform boot store, not in the parameter snapshot, so
+restoring an old snapshot cannot hand back attempts already spent.
+
+When the count reaches zero the service installs the recovery image through the
+update service and restarts. A run that stays healthy for
+`CONFIG_KFSW_BOOT_BUDGET_STABLE_S` refills it, so only startups that never
+became stable accumulate.
+
+The option depends on `!KFSW_GOLDEN_IMAGE`: recovery neither spends attempts
+nor runs the stable check. Recovery instead refills the record once at its own
+startup, which retries an install-time refill that failed.
+
+A damaged record, meaning a maximum that is not 3, 5 or 10 or a remaining count
+above the maximum, restarts from the compiled maximum and is reported.
 
 ## Log
 
