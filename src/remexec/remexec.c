@@ -348,9 +348,8 @@ void kfsw_remexec_list_local(const char *prefix, struct kfsw_remexec_reply *repl
 		refuse(reply, KFSW_REMEXEC_UNAVAILABLE, "remote execution is not initialised");
 		return;
 	}
-	if (narrowed && (!printable(prefix) ||
-			 (strnlen(prefix, KFSW_REMEXEC_COMMAND_MAX + 1U) >
-			  KFSW_REMEXEC_COMMAND_MAX))) {
+	if (narrowed && (!printable(prefix) || (strnlen(prefix, KFSW_REMEXEC_COMMAND_MAX + 1U) >
+						KFSW_REMEXEC_COMMAND_MAX))) {
 		refuse(reply, KFSW_REMEXEC_INVALID, "the requested command is not a valid name");
 		return;
 	}
