@@ -883,8 +883,6 @@ int kfsw_param_set(const char *name, const struct kfsw_param_value *value)
 #if CONFIG_KFSW_PARAM_PERSISTENCE
 int kfsw_param_restore_defaults(void)
 {
-	size_t count = 0U;
-	bool fallible = false;
 	int result = 0;
 	struct kfsw_param_value value;
 
@@ -900,17 +898,11 @@ int kfsw_param_restore_defaults(void)
 		    ((entry->info.flags & KFSW_PARAM_FLAG_OWNER_STORE) != 0U)) {
 			continue;
 		}
-		count++;
-		fallible |= entry->definition->apply != NULL;
 		read_default(entry, &value);
 		result = kfsw_param_validate_entry(entry, &value);
 		if (result != 0) {
 			goto out;
 		}
-	}
-	if (fallible && (count != 1U)) {
-		result = -ENOTSUP;
-		goto out;
 	}
 	for (size_t index = 0U; index < parameter_count; index++) {
 		const struct kfsw_param_entry *entry = &parameter_table[index];
