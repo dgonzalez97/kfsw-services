@@ -12,6 +12,8 @@ int kfsw_boot_budget_set_left(uint8_t left);
 int kfsw_boot_budget_set_max(uint8_t maximum);
 /** Refill after FWU has installed an image. Returns a store error on failure. */
 int kfsw_boot_budget_refill(void);
+/** Refill after a stable run. Writes only when an attempt has been spent. */
+int kfsw_boot_budget_mark_stable(void);
 /** Consume one early startup. Commanded must already be backed by reset evidence. */
 int kfsw_boot_budget_start(bool commanded);
 /** Whether the last startup found the budget already empty and owes Golden. */

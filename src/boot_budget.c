@@ -11,6 +11,9 @@
 #if CONFIG_KFSW_GOLDEN
 #include <kfsw/services/golden.h>
 #endif
+#if CONFIG_KFSW_HEALTH
+#include <kfsw/services/health.h>
+#endif
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_BOOT
 #include <kfsw/services/log.h>
 
@@ -156,6 +159,19 @@ int kfsw_boot_budget_refill(void)
 	return result;
 }
 
+int kfsw_boot_budget_mark_stable(void)
+{
+	int result;
+
+	k_mutex_lock(&budget_lock, K_FOREVER);
+	result = attempts_max == UINT8_MAX ? load_budget() : 0;
+	if (result == 0 && attempts_left < attempts_max) {
+		result = save_budget(attempts_max, attempts_max);
+	}
+	k_mutex_unlock(&budget_lock);
+	return result;
+}
+
 #if CONFIG_KFSW_BOOT_BUDGET
 /* GCOVR_EXCL_START
  * A SYS_INIT handler that runs before any test and reboots on two of its
@@ -175,6 +191,52 @@ static void leave_note_for_golden(void)
 }
 #endif
 
+#if CONFIG_KFSW_BOOT_BUDGET_STABLE_S > 0
+static void stable_check(struct k_work *work);
+static K_WORK_DELAYABLE_DEFINE(stable_work, stable_check);
+#if CONFIG_KFSW_HEALTH
+static uint32_t faults_seen;
+#endif
+
+/* Supervision that never started, is faulted now, or faulted at any time in
+   the window leaves the run unproven until a whole window passes cleanly. */
+static bool window_was_healthy(void)
+{
+#if CONFIG_KFSW_HEALTH
+	struct kfsw_health_status status = {0};
+	bool healthy = kfsw_health_get_status(&status) == 0 && status.state == KFSW_HEALTH_OK &&
+		       status.faults == faults_seen;
+
+	faults_seen = status.faults;
+	return healthy;
+#else
+	return true;
+#endif
+}
+
+static void stable_check(struct k_work *work)
+{
+	uint8_t left;
+	uint8_t maximum;
+	int result = -EAGAIN;
+
+	ARG_UNUSED(work);
+	if (window_was_healthy()) {
+		result = kfsw_boot_budget_mark_stable();
+	}
+	if (result != 0) {
+		if (result != -EAGAIN) {
+			kfsw_log_warning("Boot budget not refilled after a stable run: %d", result);
+		}
+		(void)k_work_schedule(&stable_work, K_SECONDS(CONFIG_KFSW_BOOT_BUDGET_STABLE_S));
+		return;
+	}
+	kfsw_boot_budget_get(&left, &maximum);
+	kfsw_log_info("Stable for %d s; boot budget left=%u max=%u",
+		      CONFIG_KFSW_BOOT_BUDGET_STABLE_S, left, maximum);
+}
+#endif
+
 static int early_budget(void)
 {
 	bool commanded = false;
@@ -191,6 +253,9 @@ static int early_budget(void)
 	}
 	kfsw_log_info("Boot budget: left=%u max=%u commanded=%u", attempts_left, attempts_max,
 		      commanded);
+#if CONFIG_KFSW_BOOT_BUDGET_STABLE_S > 0
+	(void)k_work_schedule(&stable_work, K_SECONDS(CONFIG_KFSW_BOOT_BUDGET_STABLE_S));
+#endif
 	if (kfsw_boot_budget_spent()) {
 		/* left=0 is printed by both the startup that spends the last attempt
 		   and the one after it. Only this one acts, so say which it is. */

@@ -540,7 +540,21 @@ config KFSW_BOOT_ATTEMPTS_MAX
 	range 3 10
 	help
 	  Default for the live boot_attempts_max parameter. Only 3, 5 and 10
-	  are accepted. A healthy boot or MCUboot revert never refills it.
+	  are accepted. An MCUboot revert never refills it; a stable run does
+	  when KFSW_BOOT_BUDGET_STABLE_S is set.
+
+config KFSW_BOOT_BUDGET_STABLE_S
+	int "Stable run that refills the boot budget, in seconds"
+	depends on KFSW_BOOT_BUDGET
+	default 600
+	range 0 86400
+	help
+	  Refill the budget once the image has run this long. With
+	  KFSW_HEALTH the window must also pass with supervision running and
+	  no deadline fault, or the check waits for another whole window. The
+	  budget then counts startups that never became stable, not every
+	  reset of a healthy image. 0 leaves refills to an update and to the
+	  ground.
 
 config KFSW_BOOT_CONFIRM_AT_START
 	bool "Confirm the running image once it has started"
