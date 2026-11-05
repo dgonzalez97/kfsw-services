@@ -288,3 +288,28 @@ static int early_budget(void)
 SYS_INIT(early_budget, POST_KERNEL, 52);
 /* GCOVR_EXCL_STOP */
 #endif
+
+#if CONFIG_KFSW_GOLDEN_IMAGE
+/* GCOVR_EXCL_START
+ * Compiled only into the recovery image, which the unit suites do not build.
+ * tests/boot-budget-smoke.sh proves it in the hosted bootloader model.
+ */
+/* Recovery spends no attempts and compiles none of the startup above, so
+   nothing in this image would return the record to a usable count. The install
+   that brought recovery in does refill it, but that write may fail without
+   failing the install, and no later path retries it. This is that retry, and
+   it puts the count among the first things recovery sets.
+ */
+static int golden_budget(void)
+{
+	int result = kfsw_boot_budget_refill();
+
+	if (result != 0) {
+		kfsw_log_warning("Boot budget not refilled in recovery: %d", result);
+	}
+	return 0;
+}
+
+SYS_INIT(golden_budget, POST_KERNEL, 52);
+/* GCOVR_EXCL_STOP */
+#endif
