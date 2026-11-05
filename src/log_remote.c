@@ -289,7 +289,7 @@ static void log_server(void *arg1, void *arg2, void *arg3)
 }
 
 K_THREAD_DEFINE(kfsw_log_remote_thread, CONFIG_KFSW_LOG_REMOTE_STACK_SIZE, log_server, NULL, NULL,
-		NULL, 8, 0, SYS_FOREVER_MS);
+		NULL, CONFIG_KFSW_LOG_REMOTE_PRIORITY, 0, SYS_FOREVER_MS);
 
 int kfsw_log_remote_server_start(void)
 {

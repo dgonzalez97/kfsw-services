@@ -100,6 +100,14 @@ config KFSW_LOG_REMOTE_STACK_SIZE
 	help
 	  Formats one record at a time, so text needs a record and its package.
 
+config KFSW_LOG_REMOTE_PRIORITY
+	int "Remote log server thread priority"
+	depends on KFSW_LOG_REMOTE
+	range 0 15
+	default 8
+	help
+	  The lowest of the CSP servers: a log query waits for everything else.
+
 config KFSW_LOG_REMOTE_TIMEOUT_MS
 	int "Wait for each remote log reply, in milliseconds"
 	depends on KFSW_LOG_REMOTE
@@ -389,6 +397,14 @@ config KFSW_JOURNAL_STACK_SIZE
 	depends on KFSW_JOURNAL
 	range 2048 8192
 	default 3072
+
+config KFSW_JOURNAL_PRIORITY
+	int "Journal writer thread priority"
+	depends on KFSW_JOURNAL
+	range 0 15
+	default 6
+	help
+	  Below the router, the servers and the procedure thread.
 
 endif # KFSW_EVENT
 
