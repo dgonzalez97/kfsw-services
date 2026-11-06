@@ -69,11 +69,18 @@ jobs:
       - name: Unit tests
         run: ./k-fsw/tools/ci/unit.sh
 
+      # The reports and the per-test logs only. The whole tree is some 900k
+      # files of build output, enough to run the upload action out of heap.
       - name: Keep the test output
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: twister-output
-          path: build/twister/
+          path: |
+            build/twister/twister.log
+            build/twister/twister.json
+            build/twister/testplan.json
+            build/twister/**/build.log
+            build/twister/**/handler.log
           if-no-files-found: ignore
           retention-days: 7
