@@ -896,7 +896,7 @@ static void count_read_resend(bool resend)
 	uint32_t count = kfsw_param_csp_read_resends();
 
 	if (resend && count != UINT32_MAX) {
-		atomic_set(&read_resends, (atomic_val_t)(count + 1U));
+		atomic_set(&read_resends, (atomic_val_t)count + 1);
 	}
 }
 
