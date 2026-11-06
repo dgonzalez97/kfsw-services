@@ -140,6 +140,13 @@ records through the command service.
 A command has a name, up to four typed arguments and a typed result. Handlers
 run to completion, and commands that change something are marked as mutating.
 
+The registry is a static array of `CONFIG_KFSW_COMMAND_MAX_COMMANDS` entries
+and is fixed once startup ends, so a composition whose definition sets exceed
+that count fails startup with `-ENOSPC`. It is reached by ID over CSP, by name
+from a shell group, and by name from file procedures and from limits. The
+Zephyr shell is a separate list of its own: a shell group either reaches a
+registered command or calls a service API directly.
+
 Legacy calls send one request and wait for one result. Resending is a new
 operation, so inspect the node after a timeout before trying again.
 
