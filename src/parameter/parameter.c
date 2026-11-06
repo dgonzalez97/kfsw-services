@@ -576,11 +576,11 @@ static int add_definition(const struct kfsw_param_definition_set *set,
 		return -EINVAL;
 	}
 
-	/* A snapshot is restored as a whole, and a restored parameter with an
-	 * apply callback is refused unless it is the only entry, so one such
-	 * parameter makes every other persistent value unrestorable. Owner-store
-	 * parameters are exempt: the restore skips them, because their owner
-	 * keeps them somewhere else.
+	/* A snapshot is restored as a whole, so one persistent parameter with an
+	 * apply callback would make every other persistent value unrestorable.
+	 * The combination is refused here, at registration, rather than left to
+	 * fail half way through a restore. Owner-store parameters are exempt:
+	 * the restore skips them, because their owner keeps them elsewhere.
 	 */
 	if ((definition->apply != NULL) &&
 	    ((definition->flags & KFSW_PARAM_FLAG_PERSISTENT) != 0U) &&

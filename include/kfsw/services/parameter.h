@@ -398,8 +398,9 @@ int kfsw_param_persist_save(void);
 
 /**
  * Load a valid snapshot, ignoring unknown names and incompatible entries.
- * A fallible scalar must be the snapshot's only value; mixed snapshots return
- * -ENOTSUP before any change. Application errors are returned to the caller.
+ * A snapshot holds only persistent values, and registration refuses a
+ * persistent parameter with an apply callback, so no entry applies a fallible
+ * scalar. Application errors are returned to the caller.
  */
 int kfsw_param_persist_load(void);
 
@@ -425,8 +426,9 @@ uint32_t kfsw_param_persist_max_bytes(void);
 
 /**
  * Restore snapshot parameters to compiled defaults in RAM; owner stores stay.
- * A fallible scalar must be the only persistent value; mixed resets return
- * -ENOTSUP before any change. Application errors are returned to the caller.
+ * Registration refuses a persistent parameter with an apply callback, so the
+ * reset applies no fallible scalar. Application errors are returned to the
+ * caller.
  */
 int kfsw_param_restore_defaults(void);
 #endif

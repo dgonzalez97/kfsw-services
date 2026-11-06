@@ -311,9 +311,6 @@ static int walk_snapshot(size_t size, uint16_t entry_count, bool apply)
 			kfsw_log_warning("Ignoring incompatible persistent parameter '%s'", name);
 			continue;
 		}
-		if ((param_entry->definition->apply != NULL) && (entry_count != 1U)) {
-			return -ENOTSUP;
-		}
 		struct kfsw_param_value value;
 
 		if (kfsw_param_wire_decode(param_entry, entry.type, entry.value, entry.value_size,
