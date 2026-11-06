@@ -29,7 +29,7 @@ jobs:
 
     steps:
       - name: Check out K-FSW
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: dgonzalez97/k-fsw
           ref: develop
@@ -43,7 +43,7 @@ jobs:
       # After the workspace exists, so this overwrites the pinned revision west
       # just fetched. The pin is what k-fsw releases; this is what is proposed.
       - name: Put this commit in place of the pinned revision
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           path: ${{ env.KFSW_MODULE_PATH }}
 
@@ -56,6 +56,21 @@ jobs:
         run: |
           echo "k-fsw:    $(git -C k-fsw rev-parse --short HEAD) (develop)"
           echo "$KFSW_MODULE_PATH: $(git -C "$KFSW_MODULE_PATH" rev-parse --short HEAD)"
+
+      # This job tests the module against k-fsw develop as it stands now, and
+      # not waiting for the pin to move is the point of it. But a k-fsw develop
+      # much older than the commit under test is the shape of a failure that has
+      # nothing to do with the module, so say so before the suites run rather
+      # than leaving it to be found in a build log.
+      - name: Say how old the k-fsw checkout is
+        run: |
+          kfsw_at="$(git -C k-fsw log -1 --format=%ct)"
+          module_at="$(git -C "$KFSW_MODULE_PATH" log -1 --format=%ct)"
+          behind=$(( (module_at - kfsw_at) / 3600 ))
+          echo "k-fsw develop is ${behind}h older than this commit"
+          if [ "$behind" -gt 24 ]; then
+            echo "::warning::k-fsw develop is ${behind}h older than the commit under test. If a suite fails on a symbol or header that does not exist, push the k-fsw [DEPS] pin and its companion changes first, then re-run this job."
+          fi
 
       - name: Validate west manifest
         run: west manifest --validate
@@ -73,7 +88,7 @@ jobs:
       # files of build output, enough to run the upload action out of heap.
       - name: Keep the test output
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: twister-output
           path: |
