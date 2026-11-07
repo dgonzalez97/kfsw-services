@@ -1,10 +1,16 @@
 #include <errno.h>
+#include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
 
 #include <zephyr/sys/util.h>
 
 #include <kfsw/services/health.h>
 #include <kfsw/services/parameter.h>
+
+#if CONFIG_KFSW_HEALTH_SLOTS
+#include CONFIG_KFSW_HEALTH_SLOTS_HEADER
+#endif
 
 static char health_faulted_by[KFSW_HEALTH_NAME_SIZE];
 static uint32_t health_faults;
@@ -69,6 +75,118 @@ static void apply_interval(const union kfsw_param_scalar *value)
 {
 	(void)kfsw_health_set_interval_ms(value->u16);
 }
+
+#if CONFIG_KFSW_HEALTH_SLOTS
+/* The parameters the table carried before the slots, and two per slot. */
+#define HEALTH_AGGREGATES 7U
+#define HEALTH_PER_SLOT 2U
+#define HEALTH_PARAMETERS_MAX (KFSW_PARAM_TABLE_WIRE_MAX / KFSW_PARAM_WIRE_BYTES)
+#define HEALTH_SLOT_MAX ((HEALTH_PARAMETERS_MAX - HEALTH_AGGREGATES) / HEALTH_PER_SLOT)
+
+/* A slot's offsets follow from its index alone, so adding or removing another
+ * slot never moves it.
+ */
+#define HEALTH_SLOT_BASE 0x20U
+#define HEALTH_SLOT_STRIDE 0x08U
+#define HEALTH_SLOT_SINCE_OFFSET 0x04U
+#define HEALTH_SLOT_OFFSET(index) (HEALTH_SLOT_BASE + ((index) * HEALTH_SLOT_STRIDE))
+
+#define HEALTH_SLOT_COUNT_ONE(slot, index) +1U
+#define HEALTH_SLOT_COUNT (0U KFSW_HEALTH_SLOTS(HEALTH_SLOT_COUNT_ONE))
+#define HEALTH_SLOT_PARAMETERS (HEALTH_PER_SLOT * HEALTH_SLOT_COUNT)
+
+BUILD_ASSERT(HEALTH_SLOT_COUNT <= HEALTH_SLOT_MAX,
+	     "table 31 carries at most 14 health slots on a 4800 baud link");
+
+#define HEALTH_SLOT_CHECKS(slot, index)                                                            \
+	BUILD_ASSERT(sizeof(#slot) <= KFSW_HEALTH_NAME_SIZE, "a health slot name is too long");    \
+	BUILD_ASSERT((index) < HEALTH_SLOT_MAX, "a health slot index is 0 to 13");
+
+KFSW_HEALTH_SLOTS(HEALTH_SLOT_CHECKS)
+
+/* Each index and each name appears once here, so a repeat is a build error. */
+#define HEALTH_SLOT_IDS(slot, index) HEALTH_SLOT_INDEX_##index, HEALTH_SLOT_NAME_##slot,
+
+enum health_slot_ids { KFSW_HEALTH_SLOTS(HEALTH_SLOT_IDS) };
+
+struct health_slot {
+	const char *name;
+	uint32_t since_ms;
+	uint8_t state;
+};
+
+#define HEALTH_SLOT_STORAGE(slot, index) [index] = {.name = #slot},
+
+static struct health_slot health_slots[HEALTH_SLOT_MAX] = {KFSW_HEALTH_SLOTS(HEALTH_SLOT_STORAGE)};
+
+/* By name, so the order components registered in never decides the slot. */
+static bool find_component(const char *name, struct kfsw_health_component *component)
+{
+	for (uint8_t index = 0U; index < KFSW_HEALTH_MAX_COMPONENTS; index++) {
+		if (kfsw_health_get_component(index, component) != 0) {
+			continue;
+		}
+		if (strncmp(component->name, name, KFSW_HEALTH_NAME_SIZE) == 0) {
+			return true;
+		}
+	}
+	return false;
+}
+
+static void sample_slot(struct health_slot *slot)
+{
+	struct kfsw_health_component component;
+
+	if (!find_component(slot->name, &component)) {
+		slot->state = (uint8_t)KFSW_HEALTH_SLOT_ABSENT;
+		slot->since_ms = KFSW_HEALTH_SLOT_SINCE_ABSENT;
+		return;
+	}
+	slot->since_ms = component.since_report_ms;
+	if (component.overdue) {
+		slot->state = (uint8_t)KFSW_HEALTH_SLOT_OVERDUE;
+	} else {
+		slot->state = (uint8_t)KFSW_HEALTH_SLOT_OK;
+	}
+}
+
+/* The table samples into the value it publishes; the slot is the struct holding it. */
+static void sample_slot_state(void *value)
+{
+	sample_slot(CONTAINER_OF(value, struct health_slot, state));
+}
+
+static void sample_slot_since(void *value)
+{
+	sample_slot(CONTAINER_OF(value, struct health_slot, since_ms));
+}
+
+#define HEALTH_SLOT_STATE(slot, index)                                                             \
+	{                                                                                          \
+		.offset = HEALTH_SLOT_OFFSET(index),                                               \
+		.type = KFSW_PARAM_U8,                                                             \
+		.flags = KFSW_PARAM_FLAG_READ_ONLY,                                                \
+		.name = "health_" #slot "_state",                                                  \
+		.description = "0 ok, 1 overdue, 2 absent",                                        \
+		.value = &health_slots[index].state,                                               \
+		.sample = sample_slot_state,                                                       \
+	}
+
+#define HEALTH_SLOT_SINCE(slot, index)                                                             \
+	{                                                                                          \
+		.offset = HEALTH_SLOT_OFFSET(index) + HEALTH_SLOT_SINCE_OFFSET,                    \
+		.type = KFSW_PARAM_U32,                                                            \
+		.flags = KFSW_PARAM_FLAG_READ_ONLY,                                                \
+		.name = "health_" #slot "_since_ms",                                               \
+		.unit = "ms",                                                                      \
+		.description = "Since it last reported; 4294967295 when absent",                   \
+		.value = &health_slots[index].since_ms,                                            \
+		.sample = sample_slot_since,                                                       \
+	}
+
+#define HEALTH_SLOT_ROWS(slot, index)                                                              \
+	HEALTH_SLOT_STATE(slot, index), HEALTH_SLOT_SINCE(slot, index),
+#endif
 
 static const struct kfsw_param_definition health_param_definitions[] = {
 	{
@@ -139,9 +257,17 @@ static const struct kfsw_param_definition health_param_definitions[] = {
 		.value = &health_count,
 		.sample = sample_count,
 	},
+#if CONFIG_KFSW_HEALTH_SLOTS
+	KFSW_HEALTH_SLOTS(HEALTH_SLOT_ROWS)
+#endif
 };
 
 KFSW_PARAM_TABLE_FITS_THE_LINK(health_param_definitions);
+
+#if CONFIG_KFSW_HEALTH_SLOTS
+BUILD_ASSERT(ARRAY_SIZE(health_param_definitions) == HEALTH_AGGREGATES + HEALTH_SLOT_PARAMETERS,
+	     "HEALTH_AGGREGATES must count the parameters ahead of the slots");
+#endif
 
 const struct kfsw_param_definition_set kfsw_health_param_definitions = {
 	.table = KFSW_HEALTH_PARAM_TABLE_ID,

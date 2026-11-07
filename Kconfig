@@ -632,6 +632,24 @@ config KFSW_HEALTH_INTERVAL_MS
 	  Must be well below the watchdog feed interval; a slower check resets
 	  the board even when nothing is wrong.
 
+config KFSW_HEALTH_SLOTS
+	bool "Per-component health parameters"
+	depends on KFSW_HEALTH && KFSW_PARAM
+	help
+	  Publish a state and the time since the last report for each
+	  component the composition names, in table 31. Only observation:
+	  when the watchdog is fed does not change.
+
+config KFSW_HEALTH_SLOTS_HEADER
+	string "Header naming the health slots"
+	depends on KFSW_HEALTH_SLOTS
+	help
+	  Include path of a composition header defining
+	  KFSW_HEALTH_SLOTS(SLOT) as a list of SLOT(name, index). The name is
+	  the one the component registers with. The index, 0 to 13, fixes
+	  the slot's offsets on the wire, so it is never reused or
+	  renumbered.
+
 config KFSW_FWU_LITE
 	bool "K-FSW lightweight firmware upload"
 	depends on KFSW_FWU
