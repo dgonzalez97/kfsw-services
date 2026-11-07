@@ -1182,7 +1182,7 @@ config KFSW_HK_BEACON_FLOOR_MS
 config KFSW_HK_BEACON_PORT
 	int "CSP port a beacon is addressed to"
 	depends on KFSW_HK_BEACON
-	range 1 16
+	range 1 CSP_PORT_MAX_BIND
 	default 15
 	help
 	  Destination port of beacons. Nothing binds it, so a beacon can't reach
@@ -1250,8 +1250,9 @@ config KFSW_REMEXEC_CSP_PORT
 	  Ports in use: 9 file transfer, 10 parameter transactions, 11
 	  commands, 12 parameter list, 13 firmware upload, 14 housekeeping,
 	  15 housekeeping beacons, 16 remote log. libcsp keeps 0 to 6 for its
-	  own services and CSP_PORT_MAX_BIND is 16, so 8 is the free port
-	  below the block rather than one past the top of it.
+	  own services, and 8 is the free port below the block rather than one
+	  past the top of it. The composition raises CSP_PORT_MAX_BIND to 32,
+	  so 17 upwards are free for a new service.
 
 config KFSW_REMEXEC_OUTPUT_MAX
 	int "Largest output carried back, in bytes"
