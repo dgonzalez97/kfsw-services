@@ -12,6 +12,11 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/util.h>
 
+#if CONFIG_KFSW_PARAM_CSP
+#include <csp/csp_iflist.h>
+#include <kfsw/comms/csp.h>
+#endif
+
 #include <kfsw/platform/storage.h>
 #include <kfsw/platform/time.h>
 #include <kfsw/services/command.h>
@@ -23,7 +28,7 @@
 #include <kfsw/services/log.h>
 
 /* Parameter, comparison, bound, dwell, node and a 79 character action with its
- * separators come to about 150 bytes.
+ * separators come to about 150 bytes; a read-node prefix adds at most 6.
  */
 #define LIMITS_LINE_BYTES 192U
 #define LIMITS_FIELDS 5U
@@ -59,6 +64,22 @@ static K_MUTEX_DEFINE(rules_lock);
 static struct kfsw_limits_rule rules[CONFIG_KFSW_LIMITS_MAX_RULES];
 static struct kfsw_limits_rule staged[CONFIG_KFSW_LIMITS_MAX_RULES];
 static size_t rule_count;
+#if CONFIG_KFSW_PARAM_CSP
+#define LIMITS_REMOTE_GROUP_MAX 16U
+/* Remote I/O gets half the interval, capped at 5 s (also for manual sweeps).
+ * Each group has its own deadline and at most 16 names. Name resolution can
+ * exchange once per cache miss, retry reads or walk the list; the one-node
+ * cache can be evicted between groups. The deadline bounds that work, not a
+ * promise of one wire exchange per node. Defer when less than 10 ms remains.
+ */
+#define LIMITS_REMOTE_BUDGET_MS 5000U
+#define LIMITS_REMOTE_MIN_MS 10U
+static const char *names[LIMITS_REMOTE_GROUP_MAX];
+static size_t members[LIMITS_REMOTE_GROUP_MAX];
+static struct kfsw_param_value values[LIMITS_REMOTE_GROUP_MAX];
+static bool done[CONFIG_KFSW_LIMITS_MAX_RULES];
+static size_t remote_resume;
+#endif
 static char line[LIMITS_LINE_BYTES];
 
 static K_MUTEX_DEFINE(state_lock);
@@ -70,6 +91,8 @@ static bool initialized;
 
 static void work_handler(struct k_work *work);
 static K_WORK_DELAYABLE_DEFINE(limits_work, work_handler);
+static struct k_work_q limits_queue;
+static K_THREAD_STACK_DEFINE(limits_stack, CONFIG_KFSW_LIMITS_STACK_SIZE);
 
 static const struct {
 	const char *text;
@@ -296,13 +319,76 @@ static const char *parse_comparison(const char *text, struct kfsw_limits_rule *r
 	return "unknown comparison";
 }
 
+static const char *parse_read_node(char **name, uint16_t *node)
+{
+	char *colon = strchr(*name, ':');
+	unsigned long number;
+	unsigned long maximum = UINT16_MAX;
+
+	if (colon == NULL) {
+		return NULL;
+	}
+	*colon = '\0';
+#if CONFIG_KFSW_PARAM_CSP
+	maximum = KFSW_CSP_BROADCAST_ADDRESS - 1U;
+#endif
+	if (!parse_unsigned(*name, maximum, &number) || (colon[1] == '\0') ||
+	    (strchr(colon + 1, ':') != NULL)) {
+		return "invalid parameter node prefix";
+	}
+	*name = colon + 1;
+#if CONFIG_KFSW_PARAM_CSP
+	if (csp_iflist_get_by_addr((uint16_t)number) != NULL) {
+		number = 0U;
+	}
+#else
+	if (number != 0U) {
+		return "this build has no remote parameters";
+	}
+#endif
+	*node = (uint16_t)number;
+	return NULL;
+}
+
+static const char *parse_bound(const char *text, struct kfsw_limits_rule *rule)
+{
+	struct kfsw_param_value value = {.type = rule->type};
+
+	if (is_float(rule->type) &&
+	    ((rule->cmp == KFSW_LIMITS_EQ) || (rule->cmp == KFSW_LIMITS_NE))) {
+		return "equality is refused for a float parameter";
+	}
+	if (strlen(text) >= sizeof(rule->bound_text)) {
+		return "bound is too long";
+	}
+	if (rule->read_node != 0U) {
+		const enum kfsw_param_type types[] = {KFSW_PARAM_I64, KFSW_PARAM_U64,
+						      KFSW_PARAM_DOUBLE};
+		for (size_t i = 0U; i < ARRAY_SIZE(types); i++) {
+			value.type = types[i];
+			if (kfsw_param_parse_text(text, &value) == 0) {
+				break;
+			}
+		}
+	}
+	if (kfsw_param_parse_text(text, &value) != 0) {
+		return "bound does not fit the type of the parameter";
+	}
+	if (is_float(value.type) &&
+	    ((rule->cmp == KFSW_LIMITS_EQ) || (rule->cmp == KFSW_LIMITS_NE))) {
+		return "equality is refused for a float parameter";
+	}
+	rule->bound = value.scalar;
+	strcpy(rule->bound_text, text);
+	return NULL;
+}
+
 /* Returns what is wrong with a line, or NULL once @p rule is filled in. */
 static const char *parse_line(char *text, struct kfsw_limits_rule *rule)
 {
 	static const char *const missing =
 		"expected parameter, comparison, bound, dwell, node and an action";
 	struct kfsw_param_info info;
-	struct kfsw_param_value value;
 	unsigned long number;
 	char *cursor = text;
 	char *fields[LIMITS_FIELDS];
@@ -329,37 +415,33 @@ static const char *parse_line(char *text, struct kfsw_limits_rule *rule)
 		return missing;
 	}
 
+	reason = parse_read_node(&fields[0], &rule->read_node);
+	if (reason != NULL) {
+		return reason;
+	}
 	if (strlen(fields[0]) > KFSW_PARAM_NAME_MAX) {
 		return "parameter name is too long";
 	}
-	if (kfsw_param_get_info(fields[0], &info) != 0) {
-		return "unknown parameter";
-	}
-	if (!is_numeric(info.type)) {
-		return "parameter is not a number";
+	rule->type = KFSW_PARAM_INVALID;
+	if (rule->read_node == 0U) {
+		if (kfsw_param_get_info(fields[0], &info) != 0) {
+			return "unknown parameter";
+		}
+		if (!is_numeric(info.type)) {
+			return "parameter is not a number";
+		}
+		rule->type = info.type;
 	}
 	strcpy(rule->parameter, fields[0]);
-	rule->type = info.type;
 
 	reason = parse_comparison(fields[1], rule);
 	if (reason != NULL) {
 		return reason;
 	}
-	if (is_float(rule->type) &&
-	    ((rule->cmp == KFSW_LIMITS_EQ) || (rule->cmp == KFSW_LIMITS_NE))) {
-		return "equality is refused for a float parameter";
+	reason = parse_bound(fields[2], rule);
+	if (reason != NULL) {
+		return reason;
 	}
-
-	if (strlen(fields[2]) >= sizeof(rule->bound_text)) {
-		return "bound is too long";
-	}
-	memset(&value, 0, sizeof(value));
-	value.type = rule->type;
-	if (kfsw_param_parse_text(fields[2], &value) != 0) {
-		return "bound does not fit the type of the parameter";
-	}
-	rule->bound = value.scalar;
-	strcpy(rule->bound_text, fields[2]);
 
 	if (!parse_unsigned(fields[3], KFSW_LIMITS_DWELL_MAX, &number) || (number == 0U)) {
 		return "dwell must be 1 to 255";
@@ -496,6 +578,12 @@ int kfsw_limits_load(const char *name)
 	if (result == 0) {
 		memcpy(rules, staged, count * sizeof(rules[0]));
 		rule_count = count;
+#if CONFIG_KFSW_PARAM_CSP
+		remote_resume = 0U;
+#endif
+		k_mutex_lock(&state_lock, K_FOREVER);
+		state.failed_by = 0U;
+		k_mutex_unlock(&state_lock);
 	}
 	k_mutex_unlock(&rules_lock);
 
@@ -551,22 +639,12 @@ static bool release(const struct kfsw_limits_rule *rule)
 	return true;
 }
 
-static void evaluate(struct kfsw_limits_rule *rule)
+static void apply_reading(struct kfsw_limits_rule *rule, const struct kfsw_param_value *value)
 {
-	struct kfsw_param_value value;
 	struct wide current;
 	struct wide bound;
-	int result = kfsw_param_get(rule->parameter, &value);
 
-	/* No reading says nothing about the comparison, so streak and latch stay. */
-	if (result != 0) {
-		note_failure();
-		kfsw_log_warning("Limits: rule %u cannot read %s (%d)", rule->index,
-				 rule->parameter, result);
-		return;
-	}
-
-	widen(rule->type, &value.scalar, &current);
+	widen(rule->type, &value->scalar, &current);
 	widen(rule->type, &rule->bound, &bound);
 	if (!holds(rule->cmp, order(&current, &bound))) {
 		rule->streak = 0U;
@@ -582,9 +660,142 @@ static void evaluate(struct kfsw_limits_rule *rule)
 	}
 }
 
+static void evaluate(struct kfsw_limits_rule *rule)
+{
+	struct kfsw_param_value value;
+	int result = kfsw_param_get(rule->parameter, &value);
+
+	/* No local reading says nothing about the comparison, so streak and latch stay. */
+	if (result != 0) {
+		note_failure();
+		kfsw_log_warning("Limits: rule %u cannot read %s (%d)", rule->index,
+				 rule->parameter, result);
+		return;
+	}
+	apply_reading(rule, &value);
+}
+
+#if CONFIG_KFSW_PARAM_CSP
+static void apply_remote_reading(struct kfsw_limits_rule *rule,
+				 const struct kfsw_param_value *value)
+{
+	struct kfsw_param_value bound = {.type = value->type};
+
+	if ((rule->type != value->type) || !is_numeric(value->type)) {
+		rule->type = KFSW_PARAM_INVALID;
+		if (!is_numeric(value->type) ||
+		    (is_float(value->type) &&
+		     ((rule->cmp == KFSW_LIMITS_EQ) || (rule->cmp == KFSW_LIMITS_NE))) ||
+		    (kfsw_param_parse_text(rule->bound_text, &bound) != 0)) {
+			rule->streak = 0U;
+			note_failure();
+			kfsw_log_warning("Limits: rule %u cannot bind %u:%s to bound %s",
+					 rule->index, rule->read_node, rule->parameter,
+					 rule->bound_text);
+			return;
+		}
+		rule->bound = bound.scalar;
+		rule->type = value->type;
+	}
+	apply_reading(rule, value);
+}
+
+static size_t pending_groups(void)
+{
+	size_t groups = 0U;
+
+	for (size_t i = 0U; i < rule_count; i++) {
+		if (done[i]) {
+			continue;
+		}
+		size_t preceding = 0U;
+		for (size_t j = 0U; j < i; j++) {
+			if (!done[j] && (rules[j].read_node == rules[i].read_node)) {
+				preceding++;
+			}
+		}
+		if ((preceding % LIMITS_REMOTE_GROUP_MAX) == 0U) {
+			groups++;
+		}
+	}
+	return groups;
+}
+
+static void read_group(uint16_t node, size_t count, int64_t deadline)
+{
+	int result = kfsw_param_remote_get_many_until(node, names, count, values, deadline);
+
+	k_mutex_lock(&state_lock, K_FOREVER);
+	if (result != 0) {
+		state.failed_by = node;
+		for (size_t i = 0U; i < count; i++) {
+			saturating_increment(&state.failures);
+			saturating_increment(&state.remote_failures);
+		}
+	} else if (state.failed_by == node) {
+		state.failed_by = 0U;
+	}
+	k_mutex_unlock(&state_lock);
+	if (result != 0) {
+		kfsw_log_warning("Limits: cannot read node %u, %u rules (%d)", node,
+				 (unsigned int)count, result);
+	}
+	for (size_t i = 0U; i < count; i++) {
+		struct kfsw_limits_rule *rule = &rules[members[i]];
+
+		if (result != 0) {
+			rule->streak = 0U;
+		} else {
+			apply_remote_reading(rule, &values[i]);
+		}
+	}
+}
+
+/* rules_lock protects the scratch buffers and resume position across blocking reads. */
+static size_t evaluate_remote(void)
+{
+	uint32_t interval = kfsw_limits_interval_ms;
+	uint32_t budget = (interval == 0U) ? LIMITS_REMOTE_BUDGET_MS
+					   : MIN(interval / 2U, LIMITS_REMOTE_BUDGET_MS);
+	int64_t deadline = k_uptime_get() + budget;
+	size_t evaluated = 0U;
+	size_t groups;
+
+	while ((groups = pending_groups()) != 0U) {
+		int64_t now = k_uptime_get();
+		int64_t left = deadline - now;
+		size_t first = remote_resume;
+		size_t count = 0U;
+
+		while (done[first]) {
+			first = (first + 1U) % rule_count;
+		}
+		remote_resume = first;
+		if (left < LIMITS_REMOTE_MIN_MS) {
+			kfsw_log_warning("Limits: remote budget exhausted, deferring rules");
+			break;
+		}
+		uint16_t node = rules[first].read_node;
+		for (size_t i = 0U; (i < rule_count) && (count < ARRAY_SIZE(names)); i++) {
+			size_t index = (first + i) % rule_count;
+
+			if (!done[index] && (rules[index].read_node == node)) {
+				names[count] = rules[index].parameter;
+				members[count++] = index;
+				done[index] = true;
+			}
+		}
+		int64_t share = MAX(left / (int64_t)groups, LIMITS_REMOTE_MIN_MS);
+		read_group(node, count, now + share);
+		evaluated += count;
+	}
+	return evaluated;
+}
+#endif
+
 int kfsw_limits_sweep(void)
 {
-	size_t evaluated;
+	size_t evaluated = 0U;
 
 	k_mutex_lock(&rules_lock, K_FOREVER);
 	if (!kfsw_limits_enabled) {
@@ -596,9 +807,17 @@ int kfsw_limits_sweep(void)
 		return -EACCES;
 	}
 	for (size_t index = 0U; index < rule_count; index++) {
-		evaluate(&rules[index]);
+#if CONFIG_KFSW_PARAM_CSP
+		done[index] = (rules[index].read_node == 0U);
+#endif
+		if (rules[index].read_node == 0U) {
+			evaluate(&rules[index]);
+			evaluated++;
+		}
 	}
-	evaluated = rule_count;
+#if CONFIG_KFSW_PARAM_CSP
+	evaluated += evaluate_remote();
+#endif
 	k_mutex_unlock(&rules_lock);
 
 	k_mutex_lock(&state_lock, K_FOREVER);
@@ -619,7 +838,8 @@ static void work_handler(struct k_work *work)
 	again = state.running;
 	k_mutex_unlock(&state_lock);
 	if (again) {
-		(void)k_work_reschedule(&limits_work, K_MSEC(kfsw_limits_interval_ms));
+		(void)k_work_reschedule_for_queue(&limits_queue, &limits_work,
+						  K_MSEC(kfsw_limits_interval_ms));
 	}
 }
 
@@ -644,7 +864,7 @@ int kfsw_limits_set_interval_ms(uint32_t interval_ms)
 		return 0;
 	}
 	if (interval_ms != 0U) {
-		(void)k_work_reschedule(&limits_work, K_MSEC(interval_ms));
+		(void)k_work_reschedule_for_queue(&limits_queue, &limits_work, K_MSEC(interval_ms));
 	} else {
 		(void)k_work_cancel_delayable(&limits_work);
 	}
@@ -658,7 +878,11 @@ int kfsw_limits_init(void)
 
 	k_mutex_lock(&state_lock, K_FOREVER);
 	first = !initialized;
-	initialized = true;
+	if (first) {
+		k_work_queue_start(&limits_queue, limits_stack, K_THREAD_STACK_SIZEOF(limits_stack),
+				   CONFIG_KFSW_LIMITS_PRIORITY, NULL);
+		initialized = true;
+	}
 	k_mutex_unlock(&state_lock);
 	if (!first) {
 		return 0;

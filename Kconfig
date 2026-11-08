@@ -956,10 +956,12 @@ config KFSW_LIMITS
 	depends on KFSW_PARAM
 	depends on KFSW_FBO
 	help
-	  Watch local parameters against bounds read from a text file under the
+	  Watch local or remote parameters against bounds read from a text file under the
 	  FTP root, and release a command when one is crossed. The command goes
 	  through the file based operations scheduler, so the release is
-	  recorded and may be addressed to another node.
+	  recorded and may be addressed to another node. A parameter name may
+	  have a node: prefix with KFSW_PARAM_CSP. Remote reads use a dedicated
+	  queue and at most half the interval, capped at 5000 ms per sweep.
 
 if KFSW_LIMITS
 
@@ -978,6 +980,20 @@ config KFSW_LIMITS_INTERVAL_MS
 	  Zero turns the periodic sweep off, leaving the limits sweep command.
 	  A nonzero value must be at least 100 ms. The limits_interval_ms
 	  parameter changes it at run time.
+
+config KFSW_LIMITS_STACK_SIZE
+	int "Limits workqueue stack size"
+	default 2560
+	range 1024 16384
+	help
+	  The limits queue can block on remote parameter reads. Size its stack
+	  for the remote PARAM path, as for housekeeping collection.
+
+config KFSW_LIMITS_PRIORITY
+	int "Limits workqueue priority"
+	default 4
+	help
+	  Below the router and the servers so remote reads let them progress.
 
 config KFSW_LIMITS_FILE
 	string "Rule file read at boot"

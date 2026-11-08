@@ -16,7 +16,7 @@ extern "C" {
  * @defgroup kfsw_services_limits Parameter limits
  * @ingroup kfsw_services
  *
- * Watches local parameters against a bound and releases a command when one is
+ * Watches local or remote numeric parameters against a bound and releases a command when one is
  * crossed. The rules live in one text file under the FTP root, uploaded as a
  * procedure is, and read at boot and on command:
  *
@@ -28,7 +28,11 @@ extern "C" {
  * The first five whitespace separated fields are the parameter, comparison,
  * bound, dwell and node. Everything after them is the action, a registered
  * command with its arguments, kept as written. A line starting with `#` is a
- * comment.
+ * comment. The parameter may be prefixed with `<node>:` to read remotely;
+ * `0:` and this node's own address read locally. The node column still names
+ * the action destination. Nonzero prefixes require PARAM_CSP. Remote types
+ * and bounds are bound on reading, so the peer may be absent at load.
+ * Failed remote reads break the dwell, preserve the latch and release nothing.
  *
  * A file with any bad line is refused whole and the previous rule set stays in
  * force, so a rule set is never half loaded.
@@ -85,9 +89,11 @@ enum kfsw_limits_cmp {
 struct kfsw_limits_rule {
 	/** Position in the file among the rules, from 0. */
 	uint8_t index;
-	/** Local parameter watched. */
+	/** Parameter name without the optional node prefix. */
 	char parameter[KFSW_PARAM_NAME_MAX + 1U];
-	/** Type of the parameter, which is also the type of the bound. */
+	/** Node read from; 0 is local. */
+	uint16_t read_node;
+	/** Type of the parameter and bound; INVALID until a remote type is bound. */
 	enum kfsw_param_type type;
 	/** enum kfsw_limits_cmp */
 	uint8_t cmp;
@@ -117,6 +123,10 @@ struct kfsw_limits_status {
 	uint32_t fires;
 	/** Parameter reads and releases that failed. */
 	uint32_t failures;
+	/** Remote reads that failed, counted per rule. */
+	uint32_t remote_failures;
+	/** Last node whose read failed; 0 on its recovery or a successful load. */
+	uint16_t failed_by;
 	/** Files refused for a bad line. */
 	uint32_t parse_errors;
 	/** Rule that fired last, or @ref KFSW_LIMITS_NO_RULE. */
@@ -165,9 +175,13 @@ int kfsw_limits_init(void);
 int kfsw_limits_load(const char *name);
 
 /**
- * @brief Evaluate every rule once.
+ * @brief Evaluate local rules, then remote groups within a bounded time share.
  *
- * @return Rules evaluated.
+ * Remote reads may block for half the interval, capped at 5000 ms; a manual
+ * sweep with interval zero uses 5000 ms. Deferred remote rules retain their
+ * streak and latch and resume next sweep. Do not call from the system workqueue.
+ *
+ * @return Rules attempted, excluding deferred remote rules.
  * @retval -EACCES The service is disabled; streaks restart.
  */
 int kfsw_limits_sweep(void);
