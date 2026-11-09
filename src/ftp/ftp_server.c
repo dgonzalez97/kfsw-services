@@ -31,6 +31,8 @@ static uint8_t response_opcode(uint8_t request_opcode)
 	switch (request_opcode) {
 	case KFSW_FTP_OP_MKDIR_REQUEST:
 		return KFSW_FTP_OP_MKDIR_RESPONSE;
+	case KFSW_FTP_OP_REMOVE_REQUEST:
+		return KFSW_FTP_OP_REMOVE_RESPONSE;
 	case KFSW_FTP_OP_LIST_REQUEST:
 		return KFSW_FTP_OP_LIST_END;
 	case KFSW_FTP_OP_STAT_REQUEST:
@@ -122,6 +124,18 @@ static int serve_mkdir(struct kfsw_ftp_link *link, const struct kfsw_ftp_message
 		result = kfsw_ftp_local_mkdir(virtual_path, &server_workspace);
 	}
 	return send_status(link, KFSW_FTP_OP_MKDIR_RESPONSE, request->request_id,
+			   wire_status(result), 0U, 0U);
+}
+
+static int serve_remove(struct kfsw_ftp_link *link, const struct kfsw_ftp_message *request)
+{
+	char virtual_path[KFSW_FTP_MAX_PATH_SIZE + 1U];
+	int result = copy_request_path(request, virtual_path, sizeof(virtual_path));
+
+	if (result == 0) {
+		result = kfsw_ftp_local_remove(virtual_path, &server_workspace);
+	}
+	return send_status(link, KFSW_FTP_OP_REMOVE_RESPONSE, request->request_id,
 			   wire_status(result), 0U, 0U);
 }
 
@@ -383,6 +397,7 @@ void kfsw_ftp_serve_connection(struct kfsw_ftp_link *link)
 	}
 	/* The read-only root is checked before anything opens a file. */
 	if ((frame.message.opcode == KFSW_FTP_OP_MKDIR_REQUEST) ||
+	    (frame.message.opcode == KFSW_FTP_OP_REMOVE_REQUEST) ||
 	    (frame.message.opcode == KFSW_FTP_OP_PUT_REQUEST)) {
 		char path[KFSW_FTP_MAX_PATH_SIZE + 1U];
 
@@ -399,6 +414,9 @@ void kfsw_ftp_serve_connection(struct kfsw_ftp_link *link)
 	switch (frame.message.opcode) {
 	case KFSW_FTP_OP_MKDIR_REQUEST:
 		(void)serve_mkdir(link, &frame.message);
+		break;
+	case KFSW_FTP_OP_REMOVE_REQUEST:
+		(void)serve_remove(link, &frame.message);
 		break;
 	case KFSW_FTP_OP_LIST_REQUEST:
 		(void)serve_list(link, &frame.message);

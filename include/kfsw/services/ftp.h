@@ -156,6 +156,13 @@ int kfsw_ftp_stat(uint16_t node, const char *path, struct kfsw_ftp_stat *info);
 int kfsw_ftp_mkdir(uint16_t node, const char *path);
 
 /**
+ * Remove one file or empty directory. Directories with entries are refused.
+ *
+ * A request addressed to this node's own CSP address is served locally.
+ */
+int kfsw_ftp_remove(uint16_t node, const char *path);
+
+/**
  * Stream a local FTP-root file to a remote FTP-root path.
  *
  * Transfers are between two nodes; this node's own CSP address returns
