@@ -37,15 +37,23 @@ enum kfsw_command_type {
 #define KFSW_COMMAND_TIMEOUT_MIN_MS 1000U
 #define KFSW_COMMAND_TIMEOUT_MAX_MS 120000U
 
-/** Lifetime totals for the service. Counters saturate and are never reset. */
+/**
+ * Command service statistics.
+ *
+ * The four outcome counters start at zero each boot and are not persisted.
+ * Their exported uint32_t values wrap modulo 2^32; they do not saturate.
+ * Only recorded dispatch outcomes count. Calls refused before dispatch and
+ * dispatches before registry initialization do not count.
+ * Classification follows the final status, regardless of whether a handler ran.
+ */
 struct kfsw_command_stats {
-	/** Invocations that reached a handler or were refused before one. */
+	/** Recorded dispatch outcomes, including pre-handler refusals. */
 	uint32_t invoked;
-	/** Invocations whose handler reported a failure. */
+	/** Outcomes with a status other than OK, UNKNOWN or DENIED. */
 	uint32_t failed;
-	/** Invocations naming a command that is not registered. */
+	/** Outcomes with KFSW_COMMAND_UNKNOWN status. */
 	uint32_t unknown;
-	/** Invocations refused before the handler ran. */
+	/** Outcomes with KFSW_COMMAND_DENIED status. */
 	uint32_t rejected;
 	/** Commands in the frozen registry. */
 	uint16_t registered;
@@ -259,7 +267,7 @@ int kfsw_command_claim_get(struct kfsw_command_claim_state *state);
 /** Human-readable name for a status, for shell output and logs. */
 const char *kfsw_command_status_name(enum kfsw_command_status status);
 
-/** Read the lifetime totals. Returns -EINVAL for a NULL destination. */
+/** Read service statistics. Returns -EINVAL for a NULL destination. */
 int kfsw_command_get_stats(struct kfsw_command_stats *stats);
 
 #if CONFIG_KFSW_COMMAND_CSP
