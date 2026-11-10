@@ -57,7 +57,7 @@ static int decode(const uint8_t *bytes, struct kfsw_journal_record *record)
 	    (sys_get_be16(bytes + 6) != KFSW_JOURNAL_RECORD_SIZE) ||
 	    (sys_get_be32(bytes + 68) != crc32_ieee(bytes, 68)) ||
 	    (sys_get_be16(bytes + 44) < KFSW_EVENT_SOURCE_BOOT) ||
-	    (sys_get_be16(bytes + 44) > KFSW_EVENT_SOURCE_RESMON) ||
+	    (sys_get_be16(bytes + 44) > KFSW_EVENT_SOURCE_LIMITS) ||
 	    (bytes[48] > KFSW_EVENT_CRITICAL) || (bytes[49] > KFSW_EVENT_MAX_PAYLOAD_SIZE) ||
 	    (bytes[50] != 0U) || (bytes[51] != 0U)) {
 		return -EBADMSG;

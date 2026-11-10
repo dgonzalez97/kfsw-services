@@ -50,7 +50,7 @@ void kfsw_journal_submit(const struct kfsw_event_record *event)
 	}
 	if ((event->payload_size > KFSW_EVENT_MAX_PAYLOAD_SIZE) ||
 	    (event->severity > KFSW_EVENT_CRITICAL) || (event->source < KFSW_EVENT_SOURCE_BOOT) ||
-	    (event->source > KFSW_EVENT_SOURCE_RESMON)) {
+	    (event->source > KFSW_EVENT_SOURCE_LIMITS)) {
 		atomic_inc(&dropped);
 		return;
 	}
