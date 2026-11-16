@@ -943,6 +943,7 @@ int kfsw_param_visit(kfsw_param_visitor_t visitor, void *context)
 
 static atomic_t param_saves;
 static atomic_t param_load_failures;
+static atomic_t param_save_failures;
 
 void kfsw_param_count_save(void)
 {
@@ -952,6 +953,11 @@ void kfsw_param_count_save(void)
 void kfsw_param_count_load_failure(void)
 {
 	(void)atomic_inc(&param_load_failures);
+}
+
+void kfsw_param_count_save_failure(void)
+{
+	(void)atomic_inc(&param_save_failures);
 }
 
 int kfsw_param_get_stats(struct kfsw_param_stats *stats)
@@ -973,6 +979,7 @@ int kfsw_param_get_stats(struct kfsw_param_stats *stats)
 
 	stats->saves = (uint32_t)atomic_get(&param_saves);
 	stats->load_failures = (uint32_t)atomic_get(&param_load_failures);
+	stats->save_failures = (uint32_t)atomic_get(&param_save_failures);
 	stats->requests_dropped = 0U;
 	stats->read_resends = 0U;
 #if CONFIG_KFSW_PARAM_CSP

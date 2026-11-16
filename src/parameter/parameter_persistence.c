@@ -465,7 +465,13 @@ static void warn_about_wear(void)
 }
 
 /*
- * Count load failures at one exit each.
+ * Count saves and the failures at one exit each.
+ *
+ * The failure needs its own counter and its own log line because one caller,
+ * the autosave in kfsw_param_set, cannot pass the error on: the value is
+ * already applied and live, so failing the set would be wrong. Without this the
+ * node would report a persistent parameter as set and lose it at the next
+ * reset, with nothing said anywhere.
  */
 int kfsw_param_persist_save(void)
 {
@@ -474,6 +480,11 @@ int kfsw_param_persist_save(void)
 	if (result == 0) {
 		kfsw_param_count_save();
 		warn_about_wear();
+	} else {
+		kfsw_param_count_save_failure();
+		kfsw_log_warning("PARAM: the snapshot was not written: %d; "
+				 "persistent values will not survive a reset",
+				 result);
 	}
 	return result;
 }

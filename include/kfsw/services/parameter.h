@@ -346,6 +346,8 @@ struct kfsw_param_stats {
 	uint32_t saves;
 	/** Snapshot loads that failed for a reason other than absence. */
 	uint32_t load_failures;
+	/** Snapshot writes that failed, since boot. */
+	uint32_t save_failures;
 	/** Incoming CSP value requests dropped before the worker could accept them. */
 	uint32_t requests_dropped;
 	/** Extra outgoing read request packets after timeouts; saturates at UINT32_MAX since boot.
