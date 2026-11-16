@@ -483,7 +483,8 @@ int kfsw_param_persist_save(void)
 	} else {
 		kfsw_param_count_save_failure();
 		kfsw_log_warning("PARAM: the snapshot was not written: %d; "
-				 "persistent values will not survive a reset", result);
+				 "persistent values will not survive a reset",
+				 result);
 	}
 	return result;
 }
