@@ -7,7 +7,8 @@ in the [contributing guide](https://dgonzalez97.github.io/k-fsw/development.html
 In short:
 
 - branch from `develop` and open the pull request against it;
-- write commit subjects as `[AREA][TOPIC] Imperative summary`;
+- write commit subjects as `[AREA][TOPIC] The thing that changed`, a noun
+  phrase and not an instruction, and let the subject be the whole message;
 - run the checks the change needs, `./k-fsw/tools/ci/all.sh` for all of them,
   from the workspace root.
 
