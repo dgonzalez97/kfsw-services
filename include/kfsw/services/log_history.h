@@ -1,6 +1,11 @@
 #ifndef KFSW_SERVICES_LOG_HISTORY_H
 #define KFSW_SERVICES_LOG_HISTORY_H
 
+/**
+ * @addtogroup kfsw_services_logging
+ * @{
+ */
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -67,5 +72,7 @@ void kfsw_log_history_format(const struct kfsw_log_encoded *encoded,
 #ifdef __cplusplus
 }
 #endif
+
+/** @} */
 
 #endif

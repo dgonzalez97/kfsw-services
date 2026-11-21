@@ -1,6 +1,11 @@
 #ifndef KFSW_SERVICES_PARAMETER_H
 #define KFSW_SERVICES_PARAMETER_H
 
+/**
+ * @addtogroup kfsw_services_param
+ * @{
+ */
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -493,5 +498,7 @@ const char *kfsw_param_type_name(enum kfsw_param_type type);
 #ifdef __cplusplus
 }
 #endif
+
+/** @} */
 
 #endif

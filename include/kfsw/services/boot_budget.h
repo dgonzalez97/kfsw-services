@@ -1,6 +1,12 @@
 #ifndef KFSW_SERVICES_BOOT_BUDGET_H
 #define KFSW_SERVICES_BOOT_BUDGET_H
 
+/**
+ * @defgroup kfsw_services_boot_budget Early boot budget
+ * @ingroup kfsw_services
+ * @{
+ */
+
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -20,5 +26,7 @@ int kfsw_boot_budget_start(bool commanded);
 bool kfsw_boot_budget_spent(void);
 /** Whether the reset mask and CRC-validated retained note justify an exemption. */
 bool kfsw_boot_budget_commanded(uint32_t cause, bool valid_commanded_note);
+
+/** @} */
 
 #endif

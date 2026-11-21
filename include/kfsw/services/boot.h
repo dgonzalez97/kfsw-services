@@ -1,6 +1,11 @@
 #ifndef KFSW_SERVICES_BOOT_H
 #define KFSW_SERVICES_BOOT_H
 
+/**
+ * @addtogroup kfsw_services_boot
+ * @{
+ */
+
 #include <stdint.h>
 #include <stdbool.h>
 
@@ -127,5 +132,7 @@ uint32_t kfsw_boot_get_count(void);
 #ifdef __cplusplus
 }
 #endif
+
+/** @} */
 
 #endif

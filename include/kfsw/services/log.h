@@ -1,6 +1,11 @@
 #ifndef KFSW_SERVICES_LOG_H
 #define KFSW_SERVICES_LOG_H
 
+/**
+ * @addtogroup kfsw_services_logging
+ * @{
+ */
+
 #include <stdint.h>
 
 #if CONFIG_KFSW_PARAM
@@ -191,5 +196,7 @@ void kfsw_log_debug(const char *format, ...) KFSW_LOG_PRINTF_LIKE(1, 2);
 #endif
 
 #undef KFSW_LOG_PRINTF_LIKE
+
+/** @} */
 
 #endif

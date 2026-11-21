@@ -1,6 +1,12 @@
 #ifndef KFSW_SERVICES_HK_H
 #define KFSW_SERVICES_HK_H
 
+/**
+ * @defgroup kfsw_services_hk Housekeeping
+ * @ingroup kfsw_services
+ * @{
+ */
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -361,5 +367,7 @@ extern const struct kfsw_param_definition_set kfsw_hk_param_definitions;
 #ifdef __cplusplus
 }
 #endif
+
+/** @} */
 
 #endif /* KFSW_SERVICES_HK_H */

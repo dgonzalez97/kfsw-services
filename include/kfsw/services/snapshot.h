@@ -1,6 +1,12 @@
 #ifndef KFSW_SERVICES_SNAPSHOT_H
 #define KFSW_SERVICES_SNAPSHOT_H
 
+/**
+ * @defgroup kfsw_services_snapshot Atomic file replacement
+ * @ingroup kfsw_services
+ * @{
+ */
+
 #include <stddef.h>
 #include <stdint.h>
 
@@ -28,5 +34,7 @@ int kfsw_snapshot_write(const char *path, const char *temporary_path, const uint
 #ifdef __cplusplus
 }
 #endif
+
+/** @} */
 
 #endif

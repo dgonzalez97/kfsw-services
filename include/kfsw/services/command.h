@@ -1,6 +1,11 @@
 #ifndef KFSW_SERVICES_COMMAND_H
 #define KFSW_SERVICES_COMMAND_H
 
+/**
+ * @addtogroup kfsw_services_command
+ * @{
+ */
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -340,5 +345,7 @@ extern const struct kfsw_param_definition_set kfsw_command_param_definitions;
 #ifdef __cplusplus
 }
 #endif
+
+/** @} */
 
 #endif
