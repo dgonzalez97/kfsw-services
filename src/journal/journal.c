@@ -50,7 +50,7 @@ void kfsw_journal_submit(const struct kfsw_event_record *event)
 	}
 	if ((event->payload_size > KFSW_EVENT_MAX_PAYLOAD_SIZE) ||
 	    (event->severity > KFSW_EVENT_CRITICAL) || (event->source < KFSW_EVENT_SOURCE_BOOT) ||
-	    (event->source > KFSW_EVENT_SOURCE_RESMON)) {
+	    (event->source > KFSW_EVENT_SOURCE_LIMITS)) {
 		atomic_inc(&dropped);
 		return;
 	}
@@ -133,8 +133,8 @@ static void writer(void *a, void *b, void *c)
 	}
 }
 
-K_THREAD_DEFINE(journal_thread, CONFIG_KFSW_JOURNAL_STACK_SIZE, writer, NULL, NULL, NULL, 6, 0,
-		SYS_FOREVER_MS);
+K_THREAD_DEFINE(kfsw_journal_thread, CONFIG_KFSW_JOURNAL_STACK_SIZE, writer, NULL, NULL, NULL,
+		CONFIG_KFSW_JOURNAL_PRIORITY, 0, SYS_FOREVER_MS);
 
 int kfsw_journal_start(void)
 {
@@ -150,7 +150,7 @@ int kfsw_journal_start(void)
 		if (result != 0) {
 			errors++;
 		}
-		k_thread_start(journal_thread);
+		k_thread_start(kfsw_journal_thread);
 	}
 	k_mutex_unlock(&journal_lock);
 	return result;

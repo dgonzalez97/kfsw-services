@@ -63,8 +63,7 @@ static void say(struct kfsw_command_result *result, int outcome, const char *rea
 		break;
 	case -EALREADY:
 		result->status = KFSW_COMMAND_BUSY;
-		(void)snprintf(result->detail, sizeof(result->detail),
-			       "the entry has already run");
+		(void)snprintf(result->detail, sizeof(result->detail), "the entry has already run");
 		break;
 	case -ENOENT:
 		result->status = KFSW_COMMAND_INVALID_ARGUMENT;
@@ -98,8 +97,7 @@ static int command_fbo_run(const struct kfsw_command_arg *args, size_t count,
 		return outcome;
 	}
 	result->status = KFSW_COMMAND_OK;
-	(void)snprintf(result->detail, sizeof(result->detail), "started=%s",
-		       args[0].value.text);
+	(void)snprintf(result->detail, sizeof(result->detail), "started=%s", args[0].value.text);
 	return 0;
 }
 
@@ -124,8 +122,8 @@ static int command_sched_add(const struct kfsw_command_arg *args, size_t count,
 		result->status = KFSW_COMMAND_INVALID_ARGUMENT;
 		return -EINVAL;
 	}
-	outcome = kfsw_fbo_schedule_add(kind, when, (uint16_t)args[1].value.u32,
-					args[2].value.text, &index);
+	outcome = kfsw_fbo_schedule_add(kind, when, (uint16_t)args[1].value.u32, args[2].value.text,
+					&index);
 	if (outcome == -EEXIST) {
 		/* The same content is already queued, so the upload was a repeat
 		 * and the entry it names is the one that will run.
@@ -165,8 +163,7 @@ static int command_sched_cancel(const struct kfsw_command_arg *args, size_t coun
 		return outcome;
 	}
 	result->status = KFSW_COMMAND_OK;
-	(void)snprintf(result->detail, sizeof(result->detail), "cancelled=%u",
-		       args[0].value.u32);
+	(void)snprintf(result->detail, sizeof(result->detail), "cancelled=%u", args[0].value.u32);
 	return 0;
 }
 

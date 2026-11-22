@@ -1,6 +1,11 @@
 #ifndef KFSW_SERVICES_PARAMETER_H
 #define KFSW_SERVICES_PARAMETER_H
 
+/**
+ * @addtogroup kfsw_services_param
+ * @{
+ */
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -162,8 +167,10 @@ struct kfsw_param_table_info {
 #define KFSW_PARAM_FLAG_SYSTEM_INFO 0x00000040UL
 /** Parameter exists for diagnostic or test behavior. */
 #define KFSW_PARAM_FLAG_DEBUG 0x00000200UL
-/** User flag: the value is saved in the snapshot. */
+/** User flag: the value survives reset. Uses the snapshot unless OWNER_STORE. */
 #define KFSW_PARAM_FLAG_PERSISTENT 0x00010000UL
+/** Owner persists writes; exclude from snapshot save/load and RAM defaults. */
+#define KFSW_PARAM_FLAG_OWNER_STORE 0x00080000UL
 /**
  * User flag: a write takes effect immediately. Set for every definition with a
  * change callback; a definition that reads its value every cycle can set it too.
@@ -344,8 +351,13 @@ struct kfsw_param_stats {
 	uint32_t saves;
 	/** Snapshot loads that failed for a reason other than absence. */
 	uint32_t load_failures;
+	/** Snapshot writes that failed, since boot. */
+	uint32_t save_failures;
 	/** Incoming CSP value requests dropped before the worker could accept them. */
 	uint32_t requests_dropped;
+	/** Extra outgoing read request packets after timeouts; saturates at UINT32_MAX since boot.
+	 */
+	uint32_t read_resends;
 };
 
 /** Read service counters. Returns -EINVAL for a NULL destination. */
@@ -393,8 +405,9 @@ int kfsw_param_persist_save(void);
 
 /**
  * Load a valid snapshot, ignoring unknown names and incompatible entries.
- * A fallible scalar must be the snapshot's only value; mixed snapshots return
- * -ENOTSUP before any change. Application errors are returned to the caller.
+ * A snapshot holds only persistent values, and registration refuses a
+ * persistent parameter with an apply callback, so no entry applies a fallible
+ * scalar. Application errors are returned to the caller.
  */
 int kfsw_param_persist_load(void);
 
@@ -419,9 +432,10 @@ uint32_t kfsw_param_persist_bytes(void);
 uint32_t kfsw_param_persist_max_bytes(void);
 
 /**
- * Restore persistent parameters to their compiled defaults in RAM only.
- * A fallible scalar must be the only persistent value; mixed resets return
- * -ENOTSUP before any change. Application errors are returned to the caller.
+ * Restore snapshot parameters to compiled defaults in RAM; owner stores stay.
+ * Registration refuses a persistent parameter with an apply callback, so the
+ * reset applies no fallible scalar. Application errors are returned to the
+ * caller.
  */
 int kfsw_param_restore_defaults(void);
 #endif
@@ -433,7 +447,7 @@ int kfsw_param_server_start(void);
 /** Refresh a node's indexed v4 list; publish it only after count and CRC verification. */
 int kfsw_param_remote_refresh(uint16_t node);
 
-/** Read a scalar parameter from a selected CSP node. */
+/** Read a scalar parameter with the bounded retry policy of kfsw_param_remote_get_many(). */
 int kfsw_param_remote_get(uint16_t node, const char *name, struct kfsw_param_value *value);
 
 /**
@@ -443,6 +457,8 @@ int kfsw_param_remote_get(uint16_t node, const char *name, struct kfsw_param_val
  * by CONFIG_KFSW_PARAM_TIMEOUT_MS. @p values must hold @p count entries. All
  * names are resolved before anything is requested. Returns 0 with every value
  * filled, or an errno if any value is missing.
+ * Only -ETIMEDOUT is retried, with at most three total read attempts within
+ * the original budget. Earlier batches may be read again; this is not a snapshot.
  */
 int kfsw_param_remote_get_many(uint16_t node, const char *const *names, size_t count,
 			       struct kfsw_param_value *values);
@@ -482,5 +498,7 @@ const char *kfsw_param_type_name(enum kfsw_param_type type);
 #ifdef __cplusplus
 }
 #endif
+
+/** @} */
 
 #endif

@@ -13,6 +13,8 @@ static uint16_t limits_error_line;
 static uint32_t limits_sweeps;
 static uint32_t limits_fires;
 static uint32_t limits_failures;
+static uint32_t limits_remote_failures;
+static uint16_t limits_failed_by;
 static uint32_t limits_parse_errors;
 static uint32_t limits_last_ms;
 
@@ -28,6 +30,8 @@ static void sample_state(void)
 	limits_sweeps = status.sweeps;
 	limits_fires = status.fires;
 	limits_failures = status.failures;
+	limits_remote_failures = status.remote_failures;
+	limits_failed_by = status.failed_by;
 	limits_parse_errors = status.parse_errors;
 	limits_last_ms = status.last_fired_ms;
 }
@@ -84,6 +88,18 @@ static void sample_last_ms(void *value)
 {
 	sample_state();
 	*(uint32_t *)value = limits_last_ms;
+}
+
+static void sample_remote_failures(void *value)
+{
+	sample_state();
+	*(uint32_t *)value = limits_remote_failures;
+}
+
+static void sample_failed_by(void *value)
+{
+	sample_state();
+	*(uint16_t *)value = limits_failed_by;
 }
 
 static int validate_enabled(const union kfsw_param_scalar *value)
@@ -218,6 +234,26 @@ static const struct kfsw_param_definition limits_param_definitions[] = {
 		.value = &limits_error_line,
 		.default_value = {.u16 = 0U},
 		.sample = sample_error_line,
+	},
+	{
+		.offset = 0x20U,
+		.type = KFSW_PARAM_U32,
+		.flags = KFSW_PARAM_FLAG_READ_ONLY,
+		.name = "limits_remote_failures",
+		.description = "Remote reads that failed, counted per rule",
+		.value = &limits_remote_failures,
+		.default_value = {.u32 = 0U},
+		.sample = sample_remote_failures,
+	},
+	{
+		.offset = 0x24U,
+		.type = KFSW_PARAM_U16,
+		.flags = KFSW_PARAM_FLAG_READ_ONLY,
+		.name = "limits_failed_by",
+		.description = "Last node whose read failed; 0 on recovery or load",
+		.value = &limits_failed_by,
+		.default_value = {.u16 = 0U},
+		.sample = sample_failed_by,
 	},
 };
 

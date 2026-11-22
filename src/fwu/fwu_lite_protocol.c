@@ -1,107 +1,178 @@
 #include <errno.h>
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
 #include <string.h>
-
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/crc.h>
-#include <zephyr/sys/util.h>
-
-#include <kfsw/services/fwu.h>
 #include <kfsw/services/fwu_lite.h>
 
-/*
- * Wire layout, big-endian, twelve bytes then the payload:
- *
- *   0      opcode
- *   1      status          (zero in a request)
- *   2..3   block index
- *   4..7   argument        BEGIN: image size. BLOCK: this block's checksum.
- *   8..11  extra           BEGIN: whole-image checksum. Replies: bytes held.
- *   12..   payload         BLOCK only
- */
-
-#define OFFSET_OPCODE 0U
-#define OFFSET_STATUS 1U
-#define OFFSET_BLOCK_INDEX 2U
-#define OFFSET_ARGUMENT 4U
-#define OFFSET_EXTRA 8U
-
-static bool opcode_is_known(uint8_t opcode)
+static int message_shape(const struct kfsw_fwu_lite_message *m)
 {
-	switch (opcode) {
-	case KFSW_FWU_LITE_OP_BEGIN:
-	case KFSW_FWU_LITE_OP_BLOCK:
-	case KFSW_FWU_LITE_OP_STATUS:
-	case KFSW_FWU_LITE_OP_VERIFY:
-	case KFSW_FWU_LITE_OP_START_FLASHING:
-	case KFSW_FWU_LITE_OP_ABORT:
-		return true;
-	default:
-		return false;
+	if ((m->data_size > KFSW_FWU_LITE_MAX_PAYLOAD_SIZE) || (m->data_size > UINT16_MAX)) {
+		return -EMSGSIZE;
 	}
+	if ((m->version != KFSW_FWU_LITE_VERSION) || (m->direction > KFSW_FWU_LITE_REPLY) ||
+	    (m->opcode < KFSW_FWU_LITE_OP_BEGIN) || (m->opcode > KFSW_FWU_LITE_OP_ABORT) ||
+	    (m->request_id == 0U) || ((m->data_size != 0U) && (m->data == NULL))) {
+		return -EBADMSG;
+	}
+	if (m->direction == KFSW_FWU_LITE_REPLY) {
+		return (m->data_size == KFSW_FWU_LITE_RECEIPT_SIZE &&
+			m->status <= KFSW_FWU_LITE_STATUS_NOT_FOUND)
+			       ? 0
+			       : -EBADMSG;
+	}
+	if (m->status != 0U) {
+		return -EBADMSG;
+	}
+	if (m->opcode == KFSW_FWU_LITE_OP_BEGIN) {
+		return (m->transfer_id != 0U && m->generation == 0U && m->offset == 0U &&
+			m->crc32 == 0U && m->data_size == KFSW_FWU_LITE_DESCRIPTOR_SIZE)
+			       ? 0
+			       : -EBADMSG;
+	}
+	if (m->opcode == KFSW_FWU_LITE_OP_STATUS && m->transfer_id == 0U && m->generation == 0U) {
+		return (m->offset == 0U && m->crc32 == 0U && m->data_size == 0U) ? 0 : -EBADMSG;
+	}
+	if (m->transfer_id == 0U || m->generation == 0U) {
+		return -EBADMSG;
+	}
+	if (m->opcode == KFSW_FWU_LITE_OP_BLOCK) {
+		return m->data_size != 0U && m->data_size <= KFSW_FWU_LITE_MAX_BLOCK_SIZE
+			       ? 0
+			       : -EBADMSG;
+	}
+	return (m->offset == 0U && m->crc32 == 0U && m->data_size == 0U) ? 0 : -EBADMSG;
 }
 
-int kfsw_fwu_lite_encode(const struct kfsw_fwu_lite_message *message, uint8_t *buffer,
-			 size_t buffer_size, size_t *encoded_size)
+int kfsw_fwu_lite_encode(const struct kfsw_fwu_lite_message *m, uint8_t *buffer, size_t capacity,
+			 size_t *encoded)
 {
-	size_t total;
-
-	if ((message == NULL) || (buffer == NULL) || (encoded_size == NULL)) {
+	int result;
+	if (m == NULL || buffer == NULL || encoded == NULL) {
 		return -EINVAL;
 	}
-	if ((message->data_size > 0U) && (message->data == NULL)) {
-		return -EINVAL;
+	result = message_shape(m);
+	if (result != 0) {
+		return result;
 	}
-	if (message->data_size > KFSW_FWU_LITE_MAX_BLOCK_SIZE) {
+	if (capacity < KFSW_FWU_LITE_HEADER_SIZE + m->data_size) {
 		return -EMSGSIZE;
 	}
-
-	total = KFSW_FWU_LITE_HEADER_SIZE + message->data_size;
-	if (total > buffer_size) {
-		return -EMSGSIZE;
+	buffer[0] = m->version;
+	buffer[1] = m->direction;
+	buffer[2] = m->opcode;
+	buffer[3] = m->status;
+	sys_put_be32(m->request_id, buffer + 4);
+	sys_put_be32(m->transfer_id, buffer + 8);
+	sys_put_be32(m->generation, buffer + 12);
+	sys_put_be32(m->offset, buffer + 16);
+	sys_put_be32(m->crc32, buffer + 20);
+	sys_put_be16((uint16_t)m->data_size, buffer + 24);
+	sys_put_be16(0U, buffer + 26);
+	if (m->data_size != 0U) {
+		memcpy(buffer + KFSW_FWU_LITE_HEADER_SIZE, m->data, m->data_size);
 	}
-
-	buffer[OFFSET_OPCODE] = message->opcode;
-	buffer[OFFSET_STATUS] = message->status;
-	sys_put_be16(message->block_index, &buffer[OFFSET_BLOCK_INDEX]);
-	sys_put_be32(message->argument, &buffer[OFFSET_ARGUMENT]);
-	sys_put_be32(message->extra, &buffer[OFFSET_EXTRA]);
-
-	if (message->data_size > 0U) {
-		memcpy(&buffer[KFSW_FWU_LITE_HEADER_SIZE], message->data, message->data_size);
-	}
-
-	*encoded_size = total;
+	*encoded = KFSW_FWU_LITE_HEADER_SIZE + m->data_size;
 	return 0;
 }
 
-int kfsw_fwu_lite_decode(const uint8_t *buffer, size_t size, struct kfsw_fwu_lite_message *message)
+int kfsw_fwu_lite_decode(const uint8_t *buffer, size_t size, struct kfsw_fwu_lite_message *m)
 {
-	if ((buffer == NULL) || (message == NULL)) {
+	if (buffer == NULL || m == NULL) {
 		return -EINVAL;
 	}
 	if (size < KFSW_FWU_LITE_HEADER_SIZE) {
 		return -EBADMSG;
 	}
-
-	memset(message, 0, sizeof(*message));
-	message->opcode = buffer[OFFSET_OPCODE];
-	message->status = buffer[OFFSET_STATUS];
-	message->block_index = sys_get_be16(&buffer[OFFSET_BLOCK_INDEX]);
-	message->argument = sys_get_be32(&buffer[OFFSET_ARGUMENT]);
-	message->extra = sys_get_be32(&buffer[OFFSET_EXTRA]);
-	message->data_size = (uint16_t)(size - KFSW_FWU_LITE_HEADER_SIZE);
-
-	if (!opcode_is_known(message->opcode)) {
-		return -EBADMSG;
-	}
-	if (message->data_size > KFSW_FWU_LITE_MAX_BLOCK_SIZE) {
+	if (size - KFSW_FWU_LITE_HEADER_SIZE > KFSW_FWU_LITE_MAX_PAYLOAD_SIZE) {
 		return -EMSGSIZE;
 	}
+	if (sys_get_be16(buffer + 26) != 0U ||
+	    sys_get_be16(buffer + 24) != size - KFSW_FWU_LITE_HEADER_SIZE) {
+		return -EBADMSG;
+	}
+	*m = (struct kfsw_fwu_lite_message){
+		.version = buffer[0],
+		.direction = buffer[1],
+		.opcode = buffer[2],
+		.status = buffer[3],
+		.request_id = sys_get_be32(buffer + 4),
+		.transfer_id = sys_get_be32(buffer + 8),
+		.generation = sys_get_be32(buffer + 12),
+		.offset = sys_get_be32(buffer + 16),
+		.crc32 = sys_get_be32(buffer + 20),
+		.data_size = size - KFSW_FWU_LITE_HEADER_SIZE,
+		.data = buffer + KFSW_FWU_LITE_HEADER_SIZE,
+	};
+	return message_shape(m);
+}
 
-	message->data = (message->data_size > 0U) ? &buffer[KFSW_FWU_LITE_HEADER_SIZE] : NULL;
+void kfsw_fwu_lite_pack_image(const struct kfsw_fwu_image *image, uint8_t *data)
+{
+	sys_put_be32(image->size, data);
+	sys_put_be32(image->crc32, data + 4);
+	sys_put_be16(image->block_size, data + 8);
+	memcpy(data + 10, image->sha256, KFSW_FWU_SHA256_SIZE);
+}
+
+int kfsw_fwu_lite_unpack_image(const uint8_t *data, size_t size, struct kfsw_fwu_image *image)
+{
+	if (data == NULL || image == NULL || size != KFSW_FWU_LITE_DESCRIPTOR_SIZE) {
+		return -EBADMSG;
+	}
+	*image = (struct kfsw_fwu_image){.size = sys_get_be32(data),
+					 .crc32 = sys_get_be32(data + 4),
+					 .block_size = sys_get_be16(data + 8),
+					 .digest_present = true};
+	memcpy(image->sha256, data + 10, KFSW_FWU_SHA256_SIZE);
+	return image->size != 0U && image->block_size == KFSW_FWU_LITE_MAX_BLOCK_SIZE ? 0
+										      : -EBADMSG;
+}
+
+bool kfsw_fwu_lite_same_image(const struct kfsw_fwu_image *a, const struct kfsw_fwu_image *b)
+{
+	return a->digest_present && b->digest_present && a->size == b->size &&
+	       a->crc32 == b->crc32 && a->block_size == b->block_size &&
+	       memcmp(a->sha256, b->sha256, KFSW_FWU_SHA256_SIZE) == 0;
+}
+
+static void pack_receipt(const struct kfsw_fwu_status *s, uint8_t *data)
+{
+	data[0] = s->state;
+	data[1] = (s->swap_scheduled ? 1U : 0U) | (s->aborted ? 2U : 0U) |
+		  (s->image.digest_present ? 4U : 0U);
+	sys_put_be32(s->received, data + 2);
+	sys_put_be32(s->committed, data + 6);
+	sys_put_be32(s->actual_crc32, data + 10);
+	kfsw_fwu_lite_pack_image(&s->image, data + 14);
+}
+
+int kfsw_fwu_lite_receipt(const struct kfsw_fwu_lite_message *reply, struct kfsw_fwu_status *s)
+{
+	if (reply == NULL || s == NULL || message_shape(reply) != 0 ||
+	    reply->direction != KFSW_FWU_LITE_REPLY || reply->data[0] > KFSW_FWU_VERIFIED ||
+	    (reply->data[1] & ~7U) != 0U) {
+		return -EBADMSG;
+	}
+	memset(s, 0, sizeof(*s));
+	s->state = reply->data[0];
+	s->swap_scheduled = (reply->data[1] & 1U) != 0U;
+	s->aborted = (reply->data[1] & 2U) != 0U;
+	s->received = sys_get_be32(reply->data + 2);
+	s->committed = sys_get_be32(reply->data + 6);
+	s->actual_crc32 = sys_get_be32(reply->data + 10);
+	/* An empty/error snapshot need not carry a valid lite descriptor. */
+	(void)kfsw_fwu_lite_unpack_image(reply->data + 14, KFSW_FWU_LITE_DESCRIPTOR_SIZE,
+					 &s->image);
+	s->image.digest_present = (reply->data[1] & 4U) != 0U;
+	s->total_size = s->image.size;
+	s->expected_crc32 = s->image.crc32;
+	s->handle.transfer_id = reply->transfer_id;
+	s->handle.generation = reply->generation;
+	if (s->committed > s->total_size || s->received > s->total_size ||
+	    (s->state != KFSW_FWU_FAILED && s->committed > s->received) ||
+	    reply->offset != s->received || reply->crc32 != s->actual_crc32) {
+		return -EBADMSG;
+	}
 	return 0;
 }
 
@@ -112,12 +183,19 @@ static uint8_t status_for_errno(int result)
 		return KFSW_FWU_LITE_STATUS_OK;
 	case -EBUSY:
 		return KFSW_FWU_LITE_STATUS_BUSY;
+	case -EACCES:
+		return KFSW_FWU_LITE_STATUS_OWNER;
+	case -ESTALE:
+		return KFSW_FWU_LITE_STATUS_STALE;
+	case -ENOENT:
+		return KFSW_FWU_LITE_STATUS_NOT_FOUND;
 	case -EFBIG:
 		return KFSW_FWU_LITE_STATUS_TOO_LARGE;
 	case -ESPIPE:
 		return KFSW_FWU_LITE_STATUS_OUT_OF_ORDER;
 	case -EILSEQ:
 		return KFSW_FWU_LITE_STATUS_BAD_IMAGE;
+	case -EBADMSG:
 	case -EINVAL:
 	case -EAGAIN:
 		return KFSW_FWU_LITE_STATUS_INVALID;
@@ -126,142 +204,80 @@ static uint8_t status_for_errno(int result)
 	}
 }
 
-/* Fill in the fields every reply carries, so no path can answer without them. */
-static void describe_state(struct kfsw_fwu_lite_message *reply)
+int kfsw_fwu_lite_handle_peer(uint16_t peer, const struct kfsw_fwu_lite_message *request,
+			      struct kfsw_fwu_lite_message *reply, uint8_t *receipt_data)
 {
-	struct kfsw_fwu_status status;
+	struct kfsw_fwu_status snapshot = {0};
+	struct kfsw_fwu_handle handle;
+	struct kfsw_fwu_image image;
+	int result;
 
-	if (kfsw_fwu_get_status(&status) != 0) {
-		return;
-	}
-
-	reply->block_index = (uint16_t)(status.received / KFSW_FWU_LITE_MAX_BLOCK_SIZE);
-	reply->argument = status.actual_crc32;
-	reply->extra = status.received;
-}
-
-static void handle_begin(const struct kfsw_fwu_lite_message *request,
-			 struct kfsw_fwu_lite_message *reply)
-{
-	reply->status = status_for_errno(kfsw_fwu_begin(request->argument, request->extra));
-}
-
-static void handle_block(const struct kfsw_fwu_lite_message *request,
-			 struct kfsw_fwu_lite_message *reply)
-{
-	struct kfsw_fwu_status status;
-	uint32_t expected_index;
-	uint32_t computed;
-
-	if ((request->data == NULL) || (request->data_size == 0U)) {
-		reply->status = KFSW_FWU_LITE_STATUS_INVALID;
-		return;
-	}
-	if (kfsw_fwu_get_status(&status) != 0) {
-		reply->status = KFSW_FWU_LITE_STATUS_FAILED;
-		return;
-	}
-	if (status.state != KFSW_FWU_RECEIVING) {
-		reply->status = KFSW_FWU_LITE_STATUS_INVALID;
-		return;
-	}
-
-	/* Blocks have a fixed size except the last, so the expected index follows
-	 * from the bytes already held.
-	 */
-	expected_index = status.received / KFSW_FWU_LITE_MAX_BLOCK_SIZE;
-	if (request->block_index != expected_index) {
-		reply->status = KFSW_FWU_LITE_STATUS_OUT_OF_ORDER;
-		return;
-	}
-
-	/* Only the last block may be short. */
-	if (((status.received + request->data_size) < status.total_size) &&
-	    (request->data_size != KFSW_FWU_LITE_MAX_BLOCK_SIZE)) {
-		reply->status = KFSW_FWU_LITE_STATUS_INVALID;
-		return;
-	}
-
-	/* A block that fails its checksum isn't written, so it can be sent again. */
-	computed = crc32_ieee(request->data, request->data_size);
-	if (computed != request->argument) {
-		reply->status = KFSW_FWU_LITE_STATUS_BAD_BLOCK;
-		return;
-	}
-
-	reply->status = status_for_errno(
-		kfsw_fwu_write(status.received, request->data, request->data_size));
-}
-
-static void handle_verify(struct kfsw_fwu_lite_message *reply)
-{
-	reply->status = status_for_errno(kfsw_fwu_verify());
-}
-
-static void handle_start_flashing(struct kfsw_fwu_lite_message *reply)
-{
-	/* Verify the image and fail if no swap was scheduled. */
-	reply->status = status_for_errno(kfsw_fwu_finish());
-}
-
-int kfsw_fwu_lite_handle(const struct kfsw_fwu_lite_message *request,
-			 struct kfsw_fwu_lite_message *reply)
-{
-	if ((request == NULL) || (reply == NULL)) {
+	if (request == NULL || reply == NULL || receipt_data == NULL) {
 		return -EINVAL;
 	}
-
-	memset(reply, 0, sizeof(*reply));
-	reply->opcode = request->opcode;
-
+	*reply = *request;
+	reply->direction = KFSW_FWU_LITE_REPLY;
+	reply->data = receipt_data;
+	reply->data_size = KFSW_FWU_LITE_RECEIPT_SIZE;
+	handle = (struct kfsw_fwu_handle){.owner = {.kind = KFSW_FWU_OWNER_LITE, .peer = peer},
+					  .transfer_id = request->transfer_id,
+					  .generation = request->generation};
+	result = message_shape(request);
+	if (result != 0 || request->direction != KFSW_FWU_LITE_REQUEST) {
+		reply->status = KFSW_FWU_LITE_STATUS_INVALID;
+		goto done;
+	}
 	switch (request->opcode) {
 	case KFSW_FWU_LITE_OP_BEGIN:
-		handle_begin(request, reply);
+		result = kfsw_fwu_lite_unpack_image(request->data, request->data_size, &image);
+		if (result == 0) {
+			result = kfsw_fwu_session_begin(&handle.owner, &image, request->transfer_id,
+							&handle, &snapshot);
+		}
 		break;
 	case KFSW_FWU_LITE_OP_BLOCK:
-		handle_block(request, reply);
+		if (crc32_ieee(request->data, request->data_size) != request->crc32) {
+			reply->status = KFSW_FWU_LITE_STATUS_BAD_BLOCK;
+			goto done;
+		}
+		result = kfsw_fwu_session_write(&handle, request->offset, request->data,
+						request->data_size, &snapshot);
 		break;
 	case KFSW_FWU_LITE_OP_STATUS:
-		reply->status = KFSW_FWU_LITE_STATUS_OK;
+		result = request->generation == 0U
+				 ? kfsw_fwu_session_lookup(&handle.owner, &snapshot)
+				 : kfsw_fwu_session_status(&handle, &snapshot);
 		break;
 	case KFSW_FWU_LITE_OP_VERIFY:
-		handle_verify(reply);
+		result = kfsw_fwu_session_verify(&handle, &snapshot);
 		break;
 	case KFSW_FWU_LITE_OP_START_FLASHING:
-		handle_start_flashing(reply);
+		result = kfsw_fwu_session_activate(&handle, &snapshot);
 		break;
 	case KFSW_FWU_LITE_OP_ABORT:
-		reply->status = status_for_errno(kfsw_fwu_abort());
+		result = kfsw_fwu_session_abort(&handle, &snapshot);
 		break;
 	default:
-		reply->status = KFSW_FWU_LITE_STATUS_INVALID;
-		break;
+		result = -EINVAL;
 	}
-
-	describe_state(reply);
+	reply->status = status_for_errno(result);
+	if (result == 0) {
+		reply->transfer_id = snapshot.handle.transfer_id;
+		reply->generation = snapshot.handle.generation;
+	} else if (result == -EACCES || result == -ESTALE || result == -ENOENT) {
+		memset(&snapshot, 0, sizeof(snapshot));
+	}
+done:
+	reply->offset = snapshot.received;
+	reply->crc32 = snapshot.actual_crc32;
+	pack_receipt(&snapshot, receipt_data);
 	return 0;
 }
 
 const char *kfsw_fwu_lite_status_name(uint8_t status)
 {
-	switch (status) {
-	case KFSW_FWU_LITE_STATUS_OK:
-		return "ok";
-	case KFSW_FWU_LITE_STATUS_INVALID:
-		return "invalid";
-	case KFSW_FWU_LITE_STATUS_OUT_OF_ORDER:
-		return "out-of-order";
-	case KFSW_FWU_LITE_STATUS_BAD_BLOCK:
-		return "bad-block";
-	case KFSW_FWU_LITE_STATUS_BAD_IMAGE:
-		return "bad-image";
-	case KFSW_FWU_LITE_STATUS_TOO_LARGE:
-		return "too-large";
-	case KFSW_FWU_LITE_STATUS_BUSY:
-		return "busy";
-	case KFSW_FWU_LITE_STATUS_FAILED:
-		return "failed";
-	default:
-		return "unknown";
-	}
+	static const char *const names[] = {"ok",        "invalid",   "out-of-order", "bad-block",
+					    "bad-image", "too-large", "busy",         "failed",
+					    "owner",     "stale",     "not-found"};
+	return status < sizeof(names) / sizeof(names[0]) ? names[status] : "unknown";
 }

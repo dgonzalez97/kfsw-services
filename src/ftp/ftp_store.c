@@ -306,6 +306,25 @@ int kfsw_ftp_local_mkdir(const char *virtual_path, struct kfsw_ftp_workspace *wo
 	return fs_mkdir(workspace->path);
 }
 
+int kfsw_ftp_local_remove(const char *virtual_path, struct kfsw_ftp_workspace *workspace)
+{
+	int result;
+
+	if (workspace == NULL) {
+		return -EINVAL;
+	}
+	result =
+		kfsw_ftp_resolve_write_path(virtual_path, workspace->path, sizeof(workspace->path));
+	if (result != 0) {
+		return result;
+	}
+	result = kfsw_ftp_validate_path(virtual_path, false);
+	if (result != 0) {
+		return result;
+	}
+	return fs_unlink(workspace->path);
+}
+
 int kfsw_ftp_local_stat(const char *virtual_path, struct kfsw_ftp_workspace *workspace,
 			struct kfsw_ftp_stat *info)
 {

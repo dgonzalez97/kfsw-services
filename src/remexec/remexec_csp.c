@@ -160,7 +160,8 @@ static int exchange(uint16_t node, enum kfsw_remexec_opcode opcode, const char *
 		return result;
 	}
 	connection = csp_connect(CSP_PRIO_NORM, node, CONFIG_KFSW_REMEXEC_CSP_PORT,
-				 CONFIG_KFSW_REMEXEC_TIMEOUT_MS, (CSP_O_CRC32 | KFSW_CSP_AUTHENTICATED_CONNECTION));
+				 CONFIG_KFSW_REMEXEC_TIMEOUT_MS,
+				 (CSP_O_CRC32 | KFSW_CSP_AUTHENTICATED_CONNECTION));
 	if (connection == NULL) {
 		return -ECONNREFUSED;
 	}

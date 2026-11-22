@@ -35,6 +35,9 @@ static bool source_is_known(enum kfsw_event_source source)
 	case KFSW_EVENT_SOURCE_FBO:
 	case KFSW_EVENT_SOURCE_GNDWDT:
 	case KFSW_EVENT_SOURCE_RESMON:
+	case KFSW_EVENT_SOURCE_TABLE:
+	case KFSW_EVENT_SOURCE_SCRUB:
+	case KFSW_EVENT_SOURCE_LIMITS:
 		return true;
 	default:
 		return false;
@@ -197,6 +200,12 @@ const char *kfsw_event_source_name(enum kfsw_event_source source)
 		return "gndwdt";
 	case KFSW_EVENT_SOURCE_RESMON:
 		return "resmon";
+	case KFSW_EVENT_SOURCE_TABLE:
+		return "table";
+	case KFSW_EVENT_SOURCE_SCRUB:
+		return "scrub";
+	case KFSW_EVENT_SOURCE_LIMITS:
+		return "limits";
 	default:
 		return "unknown";
 	}

@@ -19,7 +19,7 @@ int kfsw_ftp_protocol_encode(uint8_t *buffer, size_t capacity,
 
 	if ((buffer == NULL) || (message == NULL) || (encoded_size == NULL) ||
 	    (message->opcode < KFSW_FTP_OP_MKDIR_REQUEST) ||
-	    (message->opcode > KFSW_FTP_OP_GET_RESULT) ||
+	    (message->opcode > KFSW_FTP_OP_REMOVE_RESPONSE) ||
 	    (message->path_size > KFSW_FTP_MAX_PATH_SIZE) ||
 	    (message->data_size > KFSW_FTP_CHUNK_SIZE) ||
 	    ((message->path_size != 0U) && (message->path == NULL)) ||
@@ -63,7 +63,7 @@ int kfsw_ftp_protocol_decode(const uint8_t *buffer, size_t size, struct kfsw_ftp
 	if (buffer[0] != KFSW_FTP_PROTOCOL_VERSION) {
 		return -EPROTONOSUPPORT;
 	}
-	if ((buffer[1] < KFSW_FTP_OP_MKDIR_REQUEST) || (buffer[1] > KFSW_FTP_OP_GET_RESULT)) {
+	if ((buffer[1] < KFSW_FTP_OP_MKDIR_REQUEST) || (buffer[1] > KFSW_FTP_OP_REMOVE_RESPONSE)) {
 		return -ENOTSUP;
 	}
 
@@ -285,6 +285,8 @@ int kfsw_ftp_wire_status_to_errno(uint8_t status)
 		return -ENOTDIR;
 	case KFSW_FTP_STATUS_READ_ONLY:
 		return -EROFS;
+	case KFSW_FTP_STATUS_NOT_EMPTY:
+		return -ENOTEMPTY;
 	case KFSW_FTP_STATUS_IO_ERROR:
 	default:
 		return -EIO;
@@ -307,6 +309,8 @@ uint8_t kfsw_ftp_errno_to_wire_status(int error)
 		return KFSW_FTP_STATUS_ALREADY_EXISTS;
 	case EROFS:
 		return KFSW_FTP_STATUS_READ_ONLY;
+	case ENOTEMPTY:
+		return KFSW_FTP_STATUS_NOT_EMPTY;
 	case ENOSPC:
 		return KFSW_FTP_STATUS_NO_SPACE;
 	case EILSEQ:

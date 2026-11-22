@@ -1,6 +1,12 @@
 #ifndef KFSW_SERVICES_LOG_REMOTE_H
 #define KFSW_SERVICES_LOG_REMOTE_H
 
+/**
+ * @defgroup kfsw_services_log_remote Remote log reads
+ * @ingroup kfsw_services
+ * @{
+ */
+
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -71,8 +77,12 @@ int kfsw_log_remote_set_format(uint8_t format);
  *
  * Records arrive oldest first. Nothing is removed on the serving node.
  *
+ * @param node Remote CSP node address.
+ * @param stream Log messages or journal records to read.
  * @param count Records to consider, 1 to KFSW_LOG_HISTORY_MAX_READ.
  * @param min_level Lowest severity sent for log messages, 0 to 3.
+ * @param visitor Callbacks receiving the reply and its records.
+ * @param context Caller data passed to the callbacks.
  *
  * @retval 0 Every record arrived, or a callback stopped the read.
  * @retval -EINVAL A bad argument, or @p node is 0 or broadcast or above.
@@ -88,5 +98,7 @@ int kfsw_log_remote_read(uint16_t node, enum kfsw_log_remote_stream stream, uint
 #ifdef __cplusplus
 }
 #endif
+
+/** @} */
 
 #endif

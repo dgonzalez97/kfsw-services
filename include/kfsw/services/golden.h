@@ -12,10 +12,9 @@ extern "C" {
  * @defgroup kfsw_services_golden Recovery image
  * @ingroup kfsw_services
  *
- * Installs the image held in the golden partition once the running one has
- * booted unconfirmed more times than its retry budget allows. The bootloader
- * only boots the slots, so installing means copying the image into the
- * secondary slot and asking for a permanent swap.
+ * Installs the image held in the golden partition when the early flash boot
+ * budget reaches zero. The bootloader only boots the slots, so installing means
+ * copying the image into the secondary slot and asking for a trial swap.
  *
  * @{
  */
@@ -31,8 +30,9 @@ enum kfsw_golden_outcome {
 /**
  * @brief Whether the golden partition holds something that looks like an image.
  *
- * Checks the bootloader's magic. The signature is checked by the bootloader
- * when it swaps, not here.
+ * Checks the bootloader's magic only. kfsw_golden_install() also checks the
+ * image against its SHA-256 TLV before it erases anything; the signature is
+ * checked by the bootloader when it swaps.
  */
 bool kfsw_golden_present(void);
 
@@ -41,16 +41,19 @@ bool kfsw_golden_present(void);
  *
  * The caller restarts the node. Refused with -EBUSY while the bootloader still
  * needs the secondary slot to revert, because that revert is the cheaper
- * recovery and it comes first.
+ * recovery and it comes first. If cleanup fails, a later explicit install retries
+ * only the exact acquired transfer before beginning another copy.
  *
  * @retval 0 on success.
  * @retval -ENOENT when the partition holds no image.
+ * @retval -EBADMSG when the image does not match its own SHA-256 TLV; the
+ *         secondary slot is left untouched.
  * @retval -ENODEV when this build has no golden partition.
  */
 int kfsw_golden_install(void);
 
 /**
- * @brief Decide whether the running image has run out of attempts, and act.
+ * @brief Install Golden at zero budget; MCUboot revert takes priority (-EBUSY).
  *
  * @param outcome Filled with the decision. Must not be NULL.
  * @retval 0 on success, a negative errno when the decision could not be made.

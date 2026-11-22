@@ -11,9 +11,9 @@
 #include <kfsw/platform/storage.h>
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_PARAM
 #include <kfsw/services/log.h>
+#include <kfsw/services/snapshot.h>
 #include <kfsw/services/parameter.h>
 
-#include "../snapshot_file.h"
 #include "parameter_budget.h"
 #include "param_wire.h"
 #include "parameter_internal.h"
@@ -75,7 +75,8 @@ static int build_snapshot(size_t *snapshot_size)
 
 		/* Read-only values can still be saved, like the boot counter. */
 		if ((entry->info.node != 0U) ||
-		    ((entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) == 0U)) {
+		    ((entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) == 0U) ||
+		    ((entry->info.flags & KFSW_PARAM_FLAG_OWNER_STORE) != 0U)) {
 			continue;
 		}
 
@@ -87,10 +88,6 @@ static int build_snapshot(size_t *snapshot_size)
 		}
 		result = kfsw_param_wire_type_of(entry, &type, &value_size);
 		if (result != 0) {
-			/* One value the format cannot hold is not worth losing
-			 * the snapshot over: the boot counter and the recovery
-			 * budget live in it too.
-			 */
 			kfsw_log_warning("PARAM: '%s' cannot be saved (%d); snapshot continues",
 					 entry->info.name, result);
 			result = 0;
@@ -305,16 +302,14 @@ static int walk_snapshot(size_t size, uint16_t entry_count, bool apply)
 		name[entry.name_size] = '\0';
 		param_entry = kfsw_param_find_name(name);
 		if ((param_entry == NULL) ||
-		    ((param_entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) == 0U)) {
-			kfsw_log_warning("Ignoring unknown persistent parameter '%s'", name);
+		    ((param_entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) == 0U) ||
+		    ((param_entry->info.flags & KFSW_PARAM_FLAG_OWNER_STORE) != 0U)) {
+			kfsw_log_warning("Ignoring '%s' from the snapshot", name);
 			continue;
 		}
 		if (!entry_matches(param_entry, &entry)) {
 			kfsw_log_warning("Ignoring incompatible persistent parameter '%s'", name);
 			continue;
-		}
-		if ((param_entry->definition->apply != NULL) && (entry_count != 1U)) {
-			return -ENOTSUP;
 		}
 		struct kfsw_param_value value;
 
@@ -470,7 +465,13 @@ static void warn_about_wear(void)
 }
 
 /*
- * Count load failures at one exit each.
+ * Count saves and the failures at one exit each.
+ *
+ * The failure needs its own counter and its own log line because one caller,
+ * the autosave in kfsw_param_set, cannot pass the error on: the value is
+ * already applied and live, so failing the set would be wrong. Without this the
+ * node would report a persistent parameter as set and lose it at the next
+ * reset, with nothing said anywhere.
  */
 int kfsw_param_persist_save(void)
 {
@@ -479,6 +480,11 @@ int kfsw_param_persist_save(void)
 	if (result == 0) {
 		kfsw_param_count_save();
 		warn_about_wear();
+	} else {
+		kfsw_param_count_save_failure();
+		kfsw_log_warning("PARAM: the snapshot was not written: %d; "
+				 "persistent values will not survive a reset",
+				 result);
 	}
 	return result;
 }

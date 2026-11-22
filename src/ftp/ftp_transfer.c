@@ -8,7 +8,7 @@
 #include <zephyr/sys/crc.h>
 #include <zephyr/sys/util.h>
 
-#if CONFIG_KFSW_FWU
+#if CONFIG_KFSW_FWU_STANDARD
 #include <kfsw/services/fwu.h>
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_FTP
 #include <kfsw/services/log.h>
@@ -135,7 +135,37 @@ int kfsw_ftp_transfer_open_sink(struct kfsw_ftp_transfer *transfer, const char *
 	return result;
 }
 
-#if CONFIG_KFSW_FWU
+#if CONFIG_KFSW_FWU_STANDARD
+/* The single FTP server keeps failed cleanup alive after its connection ends. */
+static struct kfsw_fwu_handle pending_firmware_cleanup;
+
+static int abort_firmware(const struct kfsw_fwu_handle *handle, struct kfsw_fwu_status *status)
+{
+	int result = kfsw_fwu_session_abort(handle, status);
+
+	if (result == 0 || result == -ESTALE || result == -EACCES) {
+		if (pending_firmware_cleanup.generation == handle->generation) {
+			pending_firmware_cleanup.generation = 0U;
+		}
+	} else {
+		pending_firmware_cleanup = *handle;
+	}
+	return result;
+}
+
+static int retry_firmware_cleanup(uint16_t peer)
+{
+	struct kfsw_fwu_status status;
+	const struct kfsw_fwu_handle handle = pending_firmware_cleanup;
+	int result;
+
+	if (handle.generation == 0U || handle.owner.peer != peer) {
+		return 0;
+	}
+	result = abort_firmware(&handle, &status);
+	return result == -ESTALE || result == -EACCES ? 0 : result;
+}
+
 bool kfsw_ftp_path_is_firmware(const uint8_t *path, uint16_t path_size)
 {
 	static const char reserved[] = CONFIG_KFSW_FTP_FIRMWARE_PATH;
@@ -162,21 +192,43 @@ bool kfsw_ftp_path_is_firmware(const uint8_t *path, uint16_t path_size)
 
 int kfsw_ftp_transfer_open_firmware_sink(struct kfsw_ftp_transfer *transfer)
 {
+	struct kfsw_fwu_status status;
+	struct kfsw_fwu_handle acquired = {0};
+	struct kfsw_fwu_image image = {0};
+	struct kfsw_fwu_owner owner = {.kind = KFSW_FWU_OWNER_FTP};
 	int result;
 
 	if (transfer == NULL) {
 		return -EINVAL;
 	}
 
-	result = kfsw_fwu_begin(transfer->total_size, transfer->crc32);
+	if (transfer->link == NULL) {
+		return -EINVAL;
+	}
+	owner.peer = transfer->link->peer;
+	result = retry_firmware_cleanup(owner.peer);
 	if (result != 0) {
 		return result;
 	}
+	image.size = transfer->total_size;
+	image.crc32 = transfer->crc32;
+	result = kfsw_fwu_session_begin(&owner, &image, 0U, &acquired, &status);
+	if (result != 0) {
+		if (acquired.generation != 0U) {
+			int cleanup = abort_firmware(&acquired, &status);
 
+			if (cleanup != 0) {
+				kfsw_log_error("Firmware upload cleanup failed (%d)", cleanup);
+			}
+		}
+		return result;
+	}
+
+	transfer->firmware_handle = acquired;
 	transfer->firmware = true;
 	return 0;
 }
-#endif /* CONFIG_KFSW_FWU */
+#endif /* CONFIG_KFSW_FWU_STANDARD */
 
 int kfsw_ftp_transfer_receive(struct kfsw_ftp_transfer *transfer)
 {
@@ -194,10 +246,13 @@ int kfsw_ftp_transfer_receive(struct kfsw_ftp_transfer *transfer)
 		}
 		if (!data_message_is_valid(transfer, &frame.message)) {
 			result = -EBADMSG;
-#if CONFIG_KFSW_FWU
+#if CONFIG_KFSW_FWU_STANDARD
 		} else if (transfer->firmware) {
-			result = kfsw_fwu_write(transfer->offset, frame.message.data,
-						frame.message.data_size);
+			struct kfsw_fwu_status status;
+
+			result = kfsw_fwu_session_write(&transfer->firmware_handle,
+							transfer->offset, frame.message.data,
+							frame.message.data_size, &status);
 #endif
 		} else {
 			result = write_all(&transfer->file, frame.message.data,
@@ -224,14 +279,20 @@ int kfsw_ftp_transfer_finish(struct kfsw_ftp_transfer *transfer, const char *tar
 		return -EINVAL;
 	}
 
-#if CONFIG_KFSW_FWU
+#if CONFIG_KFSW_FWU_STANDARD
 	if (transfer->firmware) {
+		struct kfsw_fwu_status status;
+
 		/* No file was opened; the update service handles a rejected image. */
 		if (result == 0) {
-			result = kfsw_fwu_finish();
+			result = kfsw_fwu_session_verify(&transfer->firmware_handle, &status);
+			if (result == 0) {
+				result = kfsw_fwu_session_activate(&transfer->firmware_handle,
+								   &status);
+			}
 		}
 		if (result != 0) {
-			int cleanup = kfsw_fwu_abort();
+			int cleanup = abort_firmware(&transfer->firmware_handle, &status);
 
 			if (cleanup != 0) {
 				kfsw_log_error("Firmware upload cleanup failed (%d)", cleanup);

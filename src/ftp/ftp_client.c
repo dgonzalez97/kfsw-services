@@ -154,6 +154,24 @@ int kfsw_ftp_mkdir(uint16_t node, const char *path)
 	return result;
 }
 
+int kfsw_ftp_remove(uint16_t node, const char *path)
+{
+	int result;
+
+	k_mutex_lock(&kfsw_ftp_client_lock, K_FOREVER);
+	if (is_local_node(node)) {
+		result = validate_local();
+		if (result == 0) {
+			result = kfsw_ftp_local_remove(path, &client_workspace);
+		}
+	} else {
+		result = simple_path_request(node, path, false, KFSW_FTP_OP_REMOVE_REQUEST,
+					     KFSW_FTP_OP_REMOVE_RESPONSE, NULL);
+	}
+	k_mutex_unlock(&kfsw_ftp_client_lock);
+	return result;
+}
+
 static int remote_stat(uint16_t node, const char *path, struct kfsw_ftp_stat *info)
 {
 	struct kfsw_ftp_message response;

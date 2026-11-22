@@ -201,6 +201,22 @@ int kfsw_health_set_interval_ms(uint32_t interval_ms);
 /** Parameter table name. */
 #define KFSW_HEALTH_PARAM_TABLE_NAME "health"
 
+/**
+ * What a component slot of the table reads. Ok is zero, as it is for the
+ * service state, so a limit above zero means the component is not well.
+ */
+enum kfsw_health_slot_state {
+	/** Registered and within its deadline. */
+	KFSW_HEALTH_SLOT_OK = 0,
+	/** Registered and past its deadline. */
+	KFSW_HEALTH_SLOT_OVERDUE = 1,
+	/** No component of the slot's name is registered. */
+	KFSW_HEALTH_SLOT_ABSENT = 2,
+};
+
+/** Milliseconds since the last report that an absent slot reads. */
+#define KFSW_HEALTH_SLOT_SINCE_ABSENT UINT32_MAX
+
 /** Health supervision state and the live check interval. */
 extern const struct kfsw_param_definition_set kfsw_health_param_definitions;
 #endif

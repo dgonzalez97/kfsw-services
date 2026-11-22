@@ -2,6 +2,7 @@
 #include <stdint.h>
 
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/init.h>
 
 #include <kfsw/platform/hardware.h>
 #include <kfsw/platform/reset.h>
@@ -21,6 +22,21 @@ static struct kfsw_lastwords boot_lastwords;
 static int boot_reset_rc = -EAGAIN;
 /* Read once and shared by the boot marker, the shell and the board table. */
 static char boot_hardware_id[KFSW_HARDWARE_ID_TEXT_SIZE];
+
+static int capture_reset(void)
+{
+#if CONFIG_KFSW_LASTWORDS
+	(void)kfsw_lastwords_take(&boot_lastwords);
+#endif
+#if CONFIG_HWINFO
+	boot_reset_rc = kfsw_platform_get_reset_cause(&boot_reset_cause);
+#else
+	boot_reset_rc = -ENOTSUP;
+#endif
+	return 0;
+}
+
+SYS_INIT(capture_reset, POST_KERNEL, 51);
 
 const char *kfsw_boot_get_hardware_id(void)
 {
@@ -44,21 +60,12 @@ const char *kfsw_boot_get_revisions(void)
 
 void kfsw_boot_service_start(void)
 {
-	uint32_t reset_cause = 0U;
-	int reset_rc;
-
-#if CONFIG_KFSW_LASTWORDS
-	/* Take the note before anything can write a new one. */
-	(void)kfsw_lastwords_take(&boot_lastwords);
-#endif
+	uint32_t reset_cause = boot_reset_cause;
+	int reset_rc = boot_reset_rc;
 
 	if (kfsw_platform_get_hardware_id(boot_hardware_id, sizeof(boot_hardware_id)) != 0) {
 		boot_hardware_id[0] = '\0';
 	}
-
-	reset_rc = kfsw_platform_get_reset_cause(&reset_cause);
-	boot_reset_cause = reset_cause;
-	boot_reset_rc = reset_rc;
 
 	if (reset_rc != 0) {
 		kfsw_log_warning("Reset cause unavailable: %d", reset_rc);
@@ -67,8 +74,10 @@ void kfsw_boot_service_start(void)
 	/* CI and HIL tests parse these markers. The raw mask is kept because several
 	 * causes can be latched at once.
 	 */
-	kfsw_log_marker("@BOOT sw=%s board=%s unit=%s reset=0x%08x reset_rc=%d reset_cause=%s",
+	kfsw_log_marker("@BOOT sw=%s board=%s image=%s unit=%s reset=0x%08x reset_rc=%d "
+			"reset_cause=%s",
 			KFSW_IMAGE_VERSION, CONFIG_BOARD_TARGET,
+			IS_ENABLED(CONFIG_KFSW_GOLDEN_IMAGE) ? "golden" : "application",
 			(boot_hardware_id[0] != '\0') ? boot_hardware_id : "unknown",
 			(unsigned int)reset_cause, reset_rc,
 			kfsw_platform_reset_cause_name(reset_cause));

@@ -13,12 +13,12 @@
 #include <kfsw/services/hk.h>
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_HK
 #include <kfsw/services/log.h>
+#include <kfsw/services/snapshot.h>
 
 #if CONFIG_KFSW_HK_BEACON
 #include <kfsw/comms/csp.h>
 #endif
 
-#include "../snapshot_file.h"
 #include "hk_internal.h"
 
 #if CONFIG_KFSW_HK_PERSISTENCE

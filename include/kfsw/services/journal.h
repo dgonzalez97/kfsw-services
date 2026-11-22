@@ -1,6 +1,12 @@
 #ifndef KFSW_SERVICES_JOURNAL_H
 #define KFSW_SERVICES_JOURNAL_H
 
+/**
+ * @defgroup kfsw_services_journal Persistent event journal
+ * @ingroup kfsw_services
+ * @{
+ */
+
 #include <kfsw/services/event.h>
 
 /** A durable event. UTC is sampled when the worker writes, not in the emitter. */
@@ -37,5 +43,7 @@ int kfsw_journal_get(uint16_t age, struct kfsw_journal_record *record);
 
 /** Copy the current status. */
 void kfsw_journal_get_stats(struct kfsw_journal_stats *stats);
+
+/** @} */
 
 #endif

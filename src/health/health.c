@@ -146,6 +146,7 @@ int kfsw_health_report(uint8_t handle)
 int kfsw_health_evaluate(void)
 {
 	struct health_entry *overdue = NULL;
+	char faulted_by[KFSW_HEALTH_NAME_SIZE];
 	uint64_t now;
 	uint32_t elapsed;
 	bool was_ok;
@@ -209,6 +210,7 @@ int kfsw_health_evaluate(void)
 	health_state.feeding = false;
 	(void)strncpy(health_state.faulted_by, overdue->name, KFSW_HEALTH_NAME_SIZE - 1U);
 	health_state.faulted_by[KFSW_HEALTH_NAME_SIZE - 1U] = '\0';
+	memcpy(faulted_by, health_state.faulted_by, sizeof(faulted_by));
 	if (was_ok) {
 		health_state.faults++;
 	}
@@ -217,16 +219,14 @@ int kfsw_health_evaluate(void)
 	/* Logged once per fault. */
 	if (was_ok) {
 		kfsw_log_error("Health: %s is overdue; the watchdog will no longer be fed",
-			       overdue->name);
+			       faulted_by);
 #if CONFIG_KFSW_LASTWORDS
 		/* Write the note now; the detail is how long the component was silent. */
-		kfsw_lastwords_write(KFSW_LASTWORDS_STARVED,
-				     (uint32_t)(now - overdue->last_report_ms), (uint32_t)now, 0U);
+		kfsw_lastwords_write(KFSW_LASTWORDS_STARVED, elapsed, (uint32_t)now, 0U);
 #endif
 #if CONFIG_KFSW_EVENT
 		kfsw_event_emit(KFSW_EVENT_SOURCE_APP, KFSW_EVENT_HEALTH_FAULT, KFSW_EVENT_CRITICAL,
-				(const uint8_t *)overdue->name,
-				(uint8_t)strnlen(overdue->name, KFSW_HEALTH_NAME_SIZE - 1U));
+				(const uint8_t *)faulted_by, (uint8_t)strlen(faulted_by));
 #endif
 	}
 

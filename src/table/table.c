@@ -17,11 +17,11 @@
 #endif
 #define KFSW_LOG_MODULE KFSW_LOG_MODULE_TABLE
 #include <kfsw/services/log.h>
+#include <kfsw/services/snapshot.h>
 #include <kfsw/services/table.h>
 
 #include "../parameter/param_wire.h"
 #include "../parameter/parameter_internal.h"
-#include "../snapshot_file.h"
 
 /*
  * File layout, the same shape as the parameter snapshot so one decoder reads

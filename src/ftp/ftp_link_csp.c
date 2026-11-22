@@ -54,6 +54,7 @@ int kfsw_ftp_link_connect(struct kfsw_ftp_link *link, uint16_t node)
 	if (link == NULL) {
 		return -EINVAL;
 	}
+	link->peer = node;
 	link->connection = csp_connect(
 		CSP_PRIO_NORM, node, CONFIG_KFSW_FTP_CSP_PORT, kfsw_ftp_get_timeout_ms(),
 		CSP_O_RDP | (CSP_O_CRC32 | KFSW_CSP_AUTHENTICATED_CONNECTION));
@@ -169,6 +170,9 @@ int kfsw_ftp_link_accept(struct kfsw_ftp_listener *listener, struct kfsw_ftp_lin
 		return -EINVAL;
 	}
 	link->connection = csp_accept(listener->socket, timeout_ms);
+	if (link->connection != NULL) {
+		link->peer = (uint16_t)csp_conn_src(link->connection);
+	}
 	return (link->connection != NULL) ? 0 : -EAGAIN;
 }
 

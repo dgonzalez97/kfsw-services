@@ -36,6 +36,7 @@ static uint16_t last_node;
 static K_MUTEX_DEFINE(gndwdt_lock);
 static uint32_t timeout_s = CONFIG_KFSW_GNDWDT_TIMEOUT_S;
 static uint32_t expiries;
+static uint32_t reschedule_failures;
 static bool enabled = IS_ENABLED(CONFIG_KFSW_GNDWDT_ENABLED_AT_START);
 static bool running;
 static bool resetting;
@@ -50,6 +51,23 @@ static void restart_countdown(void)
 	last_contact_ms = kfsw_time_monotonic_ms();
 }
 
+/* A reschedule that fails leaves the countdown unchecked, which is the one
+ * thing this service exists to do, so it is counted and said out loud instead
+ * of discarded. The lock is taken here as well: it is held at one of the three
+ * call sites, and a Zephyr mutex may be locked again by the thread owning it.
+ */
+static void reschedule(struct k_work_delayable *work, k_timeout_t delay)
+{
+	if (k_work_reschedule(work, delay) < 0) {
+		k_mutex_lock(&gndwdt_lock, K_FOREVER);
+		if (reschedule_failures < UINT32_MAX) {
+			reschedule_failures++;
+		}
+		k_mutex_unlock(&gndwdt_lock);
+		kfsw_log_error("Ground watchdog could not reschedule its check");
+	}
+}
+
 int kfsw_gndwdt_start(void)
 {
 	k_mutex_lock(&gndwdt_lock, K_FOREVER);
@@ -61,7 +79,7 @@ int kfsw_gndwdt_start(void)
 	restart_countdown();
 	k_mutex_unlock(&gndwdt_lock);
 
-	(void)k_work_reschedule(&gndwdt_work, K_MSEC(CONFIG_KFSW_GNDWDT_CHECK_MS));
+	reschedule(&gndwdt_work, K_MSEC(CONFIG_KFSW_GNDWDT_CHECK_MS));
 	kfsw_log_info("Ground watchdog started, timeout %u s, %s", timeout_s,
 		      enabled ? "armed" : "disarmed");
 	return 0;
@@ -214,6 +232,7 @@ void kfsw_gndwdt_get_status(struct kfsw_gndwdt_status *status)
 	elapsed_ms = kfsw_time_monotonic_ms() - last_contact_ms;
 	status->timeout_s = timeout_s;
 	status->expiries = expiries;
+	status->reschedule_failures = reschedule_failures;
 	status->enabled = enabled;
 	status->running = running;
 	status->since_contact_s = MIN(elapsed_ms / MSEC_PER_SEC, UINT32_MAX);
@@ -262,8 +281,7 @@ static void gndwdt_work_handler(struct k_work *work)
 			resetting = true;
 			k_mutex_unlock(&gndwdt_lock);
 			/* Delayed so the log line and the event record leave first. */
-			(void)k_work_reschedule(&gndwdt_reset_work,
-						K_MSEC(CONFIG_KFSW_GNDWDT_RESET_DELAY_MS));
+			reschedule(&gndwdt_reset_work, K_MSEC(CONFIG_KFSW_GNDWDT_RESET_DELAY_MS));
 		} else {
 			k_mutex_unlock(&gndwdt_lock);
 		}
@@ -271,7 +289,7 @@ static void gndwdt_work_handler(struct k_work *work)
 
 	k_mutex_lock(&gndwdt_lock, K_FOREVER);
 	if (running) {
-		(void)k_work_reschedule(&gndwdt_work, K_MSEC(CONFIG_KFSW_GNDWDT_CHECK_MS));
+		reschedule(&gndwdt_work, K_MSEC(CONFIG_KFSW_GNDWDT_CHECK_MS));
 	}
 	k_mutex_unlock(&gndwdt_lock);
 }

@@ -20,6 +20,14 @@ if(CONFIG_KFSW_PARAM)
     list(APPEND kfsw_services_sources src/boot-parameters/boot_table.c)
 endif()
 
+if(CONFIG_KFSW_BOOT_STORE)
+    list(APPEND kfsw_services_sources src/boot_budget.c)
+endif()
+
+if(CONFIG_KFSW_CSP)
+    list(APPEND kfsw_services_sources src/csp_ports.c)
+endif()
+
 # Image version from git describe of the k-fsw repository. The fallback keeps
 # a source tarball buildable.
 zephyr_get(KFSW_IMAGE_VERSION SYSBUILD LOCAL)
@@ -198,7 +206,10 @@ if(CONFIG_KFSW_FWU)
     if(CONFIG_KFSW_FWU_LITE)
         list(APPEND kfsw_services_sources src/fwu/fwu_lite_protocol.c)
         if(CONFIG_KFSW_FWU_LITE_CSP)
-            list(APPEND kfsw_services_sources src/fwu/fwu_lite_csp.c)
+            list(APPEND kfsw_services_sources
+                src/fwu/fwu_lite_csp.c
+                src/fwu/fwu_lite_client.c
+            )
         endif()
     endif()
 endif()

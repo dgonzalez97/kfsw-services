@@ -201,8 +201,7 @@ int kfsw_remexec_server_start(void);
  * @retval -ETIMEDOUT No reply inside CONFIG_KFSW_REMEXEC_TIMEOUT_MS.
  * @retval -EBADMSG The reply did not match the request.
  */
-int kfsw_remexec_list_remote(uint16_t node, const char *prefix,
-			     struct kfsw_remexec_reply *reply);
+int kfsw_remexec_list_remote(uint16_t node, const char *prefix, struct kfsw_remexec_reply *reply);
 
 /**
  * @brief Ask @p node to run @p line and return what it printed.

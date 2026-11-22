@@ -18,6 +18,8 @@
 struct kfsw_ftp_link {
 	/** Backend-private connection handle. Only the backend dereferences it. */
 	void *connection;
+	/** Stable transport peer node, independent of connection lifetime. */
+	uint16_t peer;
 };
 
 /** One listening endpoint. Only the backend uses the handle. */

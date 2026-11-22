@@ -1,0 +1,315 @@
+#include <errno.h>
+
+#include <zephyr/drivers/hwinfo.h>
+#include <zephyr/init.h>
+#include <zephyr/kernel.h>
+#include <zephyr/sys/reboot.h>
+
+#include <kfsw/platform/boot_store.h>
+#include <kfsw/services/boot.h>
+#include <kfsw/services/boot_budget.h>
+#if CONFIG_KFSW_GOLDEN
+#include <kfsw/services/golden.h>
+#endif
+#if CONFIG_KFSW_HEALTH
+#include <kfsw/services/health.h>
+#endif
+#define KFSW_LOG_MODULE KFSW_LOG_MODULE_BOOT
+#include <kfsw/services/log.h>
+
+BUILD_ASSERT(CONFIG_KFSW_BOOT_ATTEMPTS_MAX == 3 || CONFIG_KFSW_BOOT_ATTEMPTS_MAX == 5 ||
+		     CONFIG_KFSW_BOOT_ATTEMPTS_MAX == 10,
+	     "boot attempt limit must be 3, 5 or 10");
+
+static uint8_t attempts_left = UINT8_MAX;
+static uint8_t attempts_max = UINT8_MAX;
+static bool attempts_spent;
+/* Parameter writes and FWU installation share the same durable record. */
+K_MUTEX_DEFINE(budget_lock);
+
+static bool valid_max(uint8_t maximum)
+{
+	return maximum == 3U || maximum == 5U || maximum == 10U;
+}
+
+static int load_budget(void)
+{
+	int result = kfsw_boot_store_open();
+	uint8_t left;
+	uint8_t maximum;
+
+	if (result != 0) {
+		return result;
+	}
+	result = kfsw_boot_store_read(&left, &maximum);
+	if ((result == 0) && (!valid_max(maximum) || (left > maximum))) {
+		result = -EBADMSG;
+	}
+	if (result == -EBADMSG) {
+		/* Refusing a damaged record would switch recovery off for the rest
+		   of the mission, and the ground and FWU could not rewrite it. */
+		kfsw_log_warning("Boot budget record damaged; restarting from %u",
+				 CONFIG_KFSW_BOOT_ATTEMPTS_MAX);
+	}
+	if ((result == -ENOENT) || (result == -EBADMSG)) {
+		left = CONFIG_KFSW_BOOT_ATTEMPTS_MAX;
+		maximum = CONFIG_KFSW_BOOT_ATTEMPTS_MAX;
+	} else if (result != 0) {
+		return result;
+	}
+	attempts_left = left;
+	attempts_max = maximum;
+	return 0;
+}
+
+static int save_budget(uint8_t left, uint8_t maximum)
+{
+	int result = kfsw_boot_store_write(left, maximum);
+
+	if (result == 0) {
+		attempts_left = left;
+		attempts_max = maximum;
+	}
+	return result;
+}
+
+bool kfsw_boot_budget_commanded(uint32_t cause, bool valid_commanded_note)
+{
+	/* PIN can accompany a software reset on STM32. Any stronger cause wins. */
+	return valid_commanded_note && (cause & RESET_SOFTWARE) != 0U &&
+	       (cause & ~(RESET_SOFTWARE | RESET_PIN)) == 0U;
+}
+
+int kfsw_boot_budget_start(bool commanded)
+{
+	int result;
+
+	k_mutex_lock(&budget_lock, K_FOREVER);
+	attempts_left = attempts_max = UINT8_MAX;
+	result = load_budget();
+	/* A budget of three is three startups, so the startup that spends the
+	   last one still runs the application; the next one finds nothing left. */
+	attempts_spent = result == 0 && attempts_left == 0U;
+	if (result == 0 && !commanded && attempts_left > 0U) {
+		/* Keep the in-memory decision even when the flash write fails. */
+		attempts_left--;
+		result = kfsw_boot_store_write(attempts_left, attempts_max);
+	}
+	k_mutex_unlock(&budget_lock);
+	return result;
+}
+
+bool kfsw_boot_budget_spent(void)
+{
+	return attempts_spent;
+}
+
+void kfsw_boot_budget_get(uint8_t *left, uint8_t *maximum)
+{
+	k_mutex_lock(&budget_lock, K_FOREVER);
+	if (attempts_max == UINT8_MAX) {
+		/* Recovery never consumes, so this is the first read of the
+		   record in that image, and the ground is asking for it. */
+		(void)load_budget();
+	}
+	*left = attempts_left;
+	*maximum = attempts_max;
+	k_mutex_unlock(&budget_lock);
+}
+
+int kfsw_boot_budget_set_left(uint8_t left)
+{
+	int result;
+
+	k_mutex_lock(&budget_lock, K_FOREVER);
+	result = attempts_max == UINT8_MAX ? load_budget() : 0;
+	if (result == 0) {
+		result = left <= attempts_max ? save_budget(left, attempts_max) : -ERANGE;
+	}
+	k_mutex_unlock(&budget_lock);
+	return result;
+}
+
+int kfsw_boot_budget_set_max(uint8_t maximum)
+{
+	int result;
+
+	if (!valid_max(maximum)) {
+		return -EINVAL;
+	}
+	k_mutex_lock(&budget_lock, K_FOREVER);
+	result = attempts_max == UINT8_MAX ? load_budget() : 0;
+	if (result == 0) {
+		result = save_budget(MIN(attempts_left, maximum), maximum);
+	}
+	k_mutex_unlock(&budget_lock);
+	return result;
+}
+
+int kfsw_boot_budget_refill(void)
+{
+	int result;
+
+	k_mutex_lock(&budget_lock, K_FOREVER);
+	result = attempts_max == UINT8_MAX ? load_budget() : 0;
+	if (result == 0) {
+		result = save_budget(attempts_max, attempts_max);
+	}
+	k_mutex_unlock(&budget_lock);
+	return result;
+}
+
+int kfsw_boot_budget_mark_stable(void)
+{
+	int result;
+
+	k_mutex_lock(&budget_lock, K_FOREVER);
+	result = attempts_max == UINT8_MAX ? load_budget() : 0;
+	if (result == 0 && attempts_left < attempts_max) {
+		result = save_budget(attempts_max, attempts_max);
+	}
+	k_mutex_unlock(&budget_lock);
+	return result;
+}
+
+#if CONFIG_KFSW_BOOT_BUDGET
+/* GCOVR_EXCL_START
+ * A SYS_INIT handler that runs before any test and reboots on two of its
+ * paths, so unit coverage cannot reach it. What it decides is proved on the
+ * bench by tests/hil/golden-auto-smoke.sh.
+ */
+#if CONFIG_KFSW_GOLDEN && CONFIG_KFSW_LASTWORDS
+/* This startup took the note that says why the last run ended. Leave it again
+   for the recovery image, which otherwise reports a plain software reset. */
+static void leave_note_for_golden(void)
+{
+	const struct kfsw_lastwords *note = kfsw_boot_get_lastwords();
+
+	if (note->reason != KFSW_LASTWORDS_NONE) {
+		kfsw_lastwords_write(note->reason, note->detail, note->uptime_ms, note->boot_count);
+	}
+}
+#endif
+
+#if CONFIG_KFSW_BOOT_BUDGET_STABLE_S > 0
+static void stable_check(struct k_work *work);
+static K_WORK_DELAYABLE_DEFINE(stable_work, stable_check);
+#if CONFIG_KFSW_HEALTH
+static uint32_t faults_seen;
+#endif
+
+/* Supervision that never started, is faulted now, or faulted at any time in
+   the window leaves the run unproven until a whole window passes cleanly. */
+static bool window_was_healthy(void)
+{
+#if CONFIG_KFSW_HEALTH
+	struct kfsw_health_status status = {0};
+	bool healthy = kfsw_health_get_status(&status) == 0 && status.state == KFSW_HEALTH_OK &&
+		       status.faults == faults_seen;
+
+	faults_seen = status.faults;
+	return healthy;
+#else
+	return true;
+#endif
+}
+
+static void stable_check(struct k_work *work)
+{
+	uint8_t left;
+	uint8_t maximum;
+	int result = -EAGAIN;
+
+	ARG_UNUSED(work);
+	if (window_was_healthy()) {
+		result = kfsw_boot_budget_mark_stable();
+	}
+	if (result != 0) {
+		if (result != -EAGAIN) {
+			kfsw_log_warning("Boot budget not refilled after a stable run: %d", result);
+		}
+		(void)k_work_schedule(&stable_work, K_SECONDS(CONFIG_KFSW_BOOT_BUDGET_STABLE_S));
+		return;
+	}
+	kfsw_boot_budget_get(&left, &maximum);
+	kfsw_log_info("Stable for %d s; boot budget left=%u max=%u",
+		      CONFIG_KFSW_BOOT_BUDGET_STABLE_S, left, maximum);
+}
+#endif
+
+static int early_budget(void)
+{
+	bool commanded = false;
+	int result;
+
+#if CONFIG_KFSW_LASTWORDS && !CONFIG_ARCH_POSIX
+	commanded = kfsw_boot_budget_commanded(kfsw_boot_get_reset_cause(),
+					       kfsw_boot_get_lastwords()->reason ==
+						       KFSW_LASTWORDS_COMMANDED);
+#endif
+	result = kfsw_boot_budget_start(commanded);
+	if (result != 0) {
+		kfsw_log_warning("Boot budget store unavailable: %d; startup continues", result);
+	}
+	kfsw_log_info("Boot budget: left=%u max=%u commanded=%u", attempts_left, attempts_max,
+		      commanded);
+#if CONFIG_KFSW_BOOT_BUDGET_STABLE_S > 0
+	(void)k_work_schedule(&stable_work, K_SECONDS(CONFIG_KFSW_BOOT_BUDGET_STABLE_S));
+#endif
+	if (kfsw_boot_budget_spent()) {
+		/* left=0 is printed by both the startup that spends the last attempt
+		   and the one after it. Only this one acts, so say which it is. */
+		kfsw_log_warning("Boot attempts exhausted; recovering");
+#if CONFIG_KFSW_GOLDEN
+		enum kfsw_golden_outcome outcome;
+
+		result = kfsw_golden_check(&outcome);
+		if (result == -EBUSY) {
+			kfsw_log_warning("Recovery deferred to a pending revert; restarting");
+			sys_reboot(SYS_REBOOT_COLD);
+		}
+		if (result == 0 && outcome == KFSW_GOLDEN_INSTALLED) {
+			kfsw_log_warning("Recovery image installed; restarting into it");
+#if CONFIG_KFSW_LASTWORDS
+			leave_note_for_golden();
+#endif
+			sys_reboot(SYS_REBOOT_COLD);
+		}
+		if (result != 0) {
+			kfsw_log_warning("Golden unavailable: %d; startup continues", result);
+		}
+#else
+		kfsw_log_warning("Boot budget exhausted; no Golden support; startup continues");
+#endif
+	}
+	return 0;
+}
+
+SYS_INIT(early_budget, POST_KERNEL, 52);
+/* GCOVR_EXCL_STOP */
+#endif
+
+#if CONFIG_KFSW_GOLDEN_IMAGE
+/* GCOVR_EXCL_START
+ * Compiled only into the recovery image, which the unit suites do not build.
+ * tests/boot-budget-smoke.sh proves it in the hosted bootloader model.
+ */
+/* Recovery spends no attempts and compiles none of the startup above, so
+   nothing in this image would return the record to a usable count. The install
+   that brought recovery in does refill it, but that write may fail without
+   failing the install, and no later path retries it. This is that retry, and
+   it puts the count among the first things recovery sets.
+ */
+static int golden_budget(void)
+{
+	int result = kfsw_boot_budget_refill();
+
+	if (result != 0) {
+		kfsw_log_warning("Boot budget not refilled in recovery: %d", result);
+	}
+	return 0;
+}
+
+SYS_INIT(golden_budget, POST_KERNEL, 52);
+/* GCOVR_EXCL_STOP */
+#endif

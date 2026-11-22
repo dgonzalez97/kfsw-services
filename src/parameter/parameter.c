@@ -576,6 +576,20 @@ static int add_definition(const struct kfsw_param_definition_set *set,
 		return -EINVAL;
 	}
 
+	/* A snapshot is restored as a whole, so one persistent parameter with an
+	 * apply callback would make every other persistent value unrestorable.
+	 * The combination is refused here, at registration, rather than left to
+	 * fail half way through a restore. Owner-store parameters are exempt:
+	 * the restore skips them, because their owner keeps them elsewhere.
+	 */
+	if ((definition->apply != NULL) &&
+	    ((definition->flags & KFSW_PARAM_FLAG_PERSISTENT) != 0U) &&
+	    ((definition->flags & KFSW_PARAM_FLAG_OWNER_STORE) == 0U)) {
+		kfsw_log_error("PARAM: %s is persistent and has an apply callback",
+			       definition->name);
+		return -EINVAL;
+	}
+
 	/* Strings and arrays declare their size; a missing or too large size is refused. */
 	if (definition->type == KFSW_PARAM_DATA) {
 		if ((definition->capacity == 0U) ||
@@ -869,8 +883,6 @@ int kfsw_param_set(const char *name, const struct kfsw_param_value *value)
 #if CONFIG_KFSW_PARAM_PERSISTENCE
 int kfsw_param_restore_defaults(void)
 {
-	size_t count = 0U;
-	bool fallible = false;
 	int result = 0;
 	struct kfsw_param_value value;
 
@@ -882,25 +894,21 @@ int kfsw_param_restore_defaults(void)
 	for (size_t index = 0U; index < parameter_count; index++) {
 		const struct kfsw_param_entry *entry = &parameter_table[index];
 
-		if ((entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) == 0U) {
+		if (((entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) == 0U) ||
+		    ((entry->info.flags & KFSW_PARAM_FLAG_OWNER_STORE) != 0U)) {
 			continue;
 		}
-		count++;
-		fallible |= entry->definition->apply != NULL;
 		read_default(entry, &value);
 		result = kfsw_param_validate_entry(entry, &value);
 		if (result != 0) {
 			goto out;
 		}
 	}
-	if (fallible && (count != 1U)) {
-		result = -ENOTSUP;
-		goto out;
-	}
 	for (size_t index = 0U; index < parameter_count; index++) {
 		const struct kfsw_param_entry *entry = &parameter_table[index];
 
-		if ((entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) != 0U) {
+		if (((entry->info.flags & KFSW_PARAM_FLAG_PERSISTENT) != 0U) &&
+		    ((entry->info.flags & KFSW_PARAM_FLAG_OWNER_STORE) == 0U)) {
 			read_default(entry, &value);
 			result = kfsw_param_wire_apply(entry, &value);
 			if (result != 0) {
@@ -935,6 +943,7 @@ int kfsw_param_visit(kfsw_param_visitor_t visitor, void *context)
 
 static atomic_t param_saves;
 static atomic_t param_load_failures;
+static atomic_t param_save_failures;
 
 void kfsw_param_count_save(void)
 {
@@ -944,6 +953,11 @@ void kfsw_param_count_save(void)
 void kfsw_param_count_load_failure(void)
 {
 	(void)atomic_inc(&param_load_failures);
+}
+
+void kfsw_param_count_save_failure(void)
+{
+	(void)atomic_inc(&param_save_failures);
 }
 
 int kfsw_param_get_stats(struct kfsw_param_stats *stats)
@@ -965,9 +979,12 @@ int kfsw_param_get_stats(struct kfsw_param_stats *stats)
 
 	stats->saves = (uint32_t)atomic_get(&param_saves);
 	stats->load_failures = (uint32_t)atomic_get(&param_load_failures);
+	stats->save_failures = (uint32_t)atomic_get(&param_save_failures);
 	stats->requests_dropped = 0U;
+	stats->read_resends = 0U;
 #if CONFIG_KFSW_PARAM_CSP
 	stats->requests_dropped = kfsw_param_csp_dropped_requests();
+	stats->read_resends = kfsw_param_csp_read_resends();
 #endif
 	return 0;
 }

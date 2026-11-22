@@ -1,6 +1,8 @@
 #ifndef KFSW_SERVICES_FTP_INTERNAL_H
 #define KFSW_SERVICES_FTP_INTERNAL_H
 
+#include <kfsw/services/fwu.h>
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -38,6 +40,8 @@ enum kfsw_ftp_opcode {
 	KFSW_FTP_OP_GET_INFO = 13,
 	KFSW_FTP_OP_GET_DATA = 14,
 	KFSW_FTP_OP_GET_RESULT = 15,
+	KFSW_FTP_OP_REMOVE_REQUEST = 16,
+	KFSW_FTP_OP_REMOVE_RESPONSE = 17,
 };
 
 enum kfsw_ftp_wire_status {
@@ -55,6 +59,11 @@ enum kfsw_ftp_wire_status {
 	KFSW_FTP_STATUS_CONNECTION_ERROR = 11,
 	KFSW_FTP_STATUS_NOT_DIRECTORY = 12,
 	KFSW_FTP_STATUS_READ_ONLY = 13,
+	/* A directory still holds entries. Removal never recurses, so this is a
+	 * refusal and not a fault: without it the caller reads IO_ERROR and
+	 * cannot tell a full directory from a failing filesystem.
+	 */
+	KFSW_FTP_STATUS_NOT_EMPTY = 14,
 };
 
 /*
@@ -109,6 +118,7 @@ struct kfsw_ftp_transfer {
 	/* True when this upload goes to the firmware update slot instead of a file.
 	 */
 	bool firmware;
+	struct kfsw_fwu_handle firmware_handle;
 };
 
 /* Wire codec, path policy and status mapping. */
@@ -179,6 +189,7 @@ int kfsw_ftp_commit_temporary(const char *path, const char *temporary_path, uint
 			      uint32_t actual_crc32, uint32_t expected_size,
 			      uint32_t expected_crc32);
 int kfsw_ftp_local_mkdir(const char *virtual_path, struct kfsw_ftp_workspace *workspace);
+int kfsw_ftp_local_remove(const char *virtual_path, struct kfsw_ftp_workspace *workspace);
 int kfsw_ftp_local_stat(const char *virtual_path, struct kfsw_ftp_workspace *workspace,
 			struct kfsw_ftp_stat *info);
 int kfsw_ftp_local_list(const char *virtual_path, struct kfsw_ftp_workspace *workspace,
@@ -191,7 +202,7 @@ int kfsw_ftp_transfer_open_source(struct kfsw_ftp_transfer *transfer, const char
 int kfsw_ftp_transfer_send(struct kfsw_ftp_transfer *transfer);
 int kfsw_ftp_transfer_open_sink(struct kfsw_ftp_transfer *transfer, const char *temporary_path);
 
-#if CONFIG_KFSW_FWU
+#if CONFIG_KFSW_FWU_STANDARD
 /**
  * Send this upload to the firmware update slot instead of a file. The PUT
  * request already has the size and CRC32 the update service needs.

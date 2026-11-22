@@ -5,6 +5,9 @@
 #include <zephyr/sys/util.h>
 
 #include <kfsw/services/boot.h>
+#if CONFIG_KFSW_BOOT_STORE
+#include <kfsw/services/boot_budget.h>
+#endif
 #include <kfsw/services/parameter.h>
 
 #if CONFIG_BOOTLOADER_MCUBOOT && CONFIG_MCUBOOT_IMG_MANAGER
@@ -44,34 +47,32 @@ static void sample_last_uptime_ms(void *value)
 static uint32_t boot_count;
 static uint32_t boot_reset_cause;
 static uint8_t boot_confirmed;
-#if CONFIG_KFSW_GOLDEN
-/*
- * The budget has to outlive the boots it counts. Without a snapshot it restarts
- * at the compiled default every boot and the node never reaches it.
- */
-#if !CONFIG_KFSW_PARAM_PERSISTENCE
-#warning "KFSW_GOLDEN without KFSW_PARAM_PERSISTENCE: boot_retries cannot be saved, \
-so the retry budget restarts at every boot and recovery never triggers"
-#endif
-BUILD_ASSERT(CONFIG_KFSW_GOLDEN_RETRIES <= KFSW_BOOT_RETRIES_MAX,
-	     "the compiled retry budget must be one an operator could also set");
-static uint8_t boot_retries = CONFIG_KFSW_GOLDEN_RETRIES;
+#if CONFIG_KFSW_BOOT_STORE
+static uint8_t boot_attempts_left;
+static uint8_t boot_attempts_max;
 
-uint8_t kfsw_boot_get_retry_budget(void)
+static void sample_left(void *value)
 {
-	/* A budget outside the range would come from a corrupt snapshot. */
-	if ((boot_retries == 0U) || (boot_retries > KFSW_BOOT_RETRIES_MAX)) {
-		return CONFIG_KFSW_GOLDEN_RETRIES;
-	}
-	return boot_retries;
+	uint8_t maximum;
+
+	kfsw_boot_budget_get(value, &maximum);
 }
 
-static int validate_retries(const union kfsw_param_scalar *value)
+static void sample_max(void *value)
 {
-	if ((value->u8 == 0U) || (value->u8 > KFSW_BOOT_RETRIES_MAX)) {
-		return -EINVAL;
-	}
-	return 0;
+	uint8_t left;
+
+	kfsw_boot_budget_get(&left, value);
+}
+
+static int apply_left(const union kfsw_param_scalar *value)
+{
+	return kfsw_boot_budget_set_left(value->u8);
+}
+
+static int apply_max(const union kfsw_param_scalar *value)
+{
+	return kfsw_boot_budget_set_max(value->u8);
 }
 #endif
 
@@ -129,20 +130,21 @@ static int validate_confirmed(const union kfsw_param_scalar *value)
 #endif
 }
 
-static void apply_confirmed(const union kfsw_param_scalar *value)
+/* Fallible, so a confirmation the bootloader refused fails the write. */
+static int apply_confirmed(const union kfsw_param_scalar *value)
 {
 #if CONFIG_BOOTLOADER_MCUBOOT && CONFIG_MCUBOOT_IMG_MANAGER
-	if (value->u8 == 1U) {
-		(void)kfsw_boot_confirm_image();
-	}
+	return (value->u8 == 1U) ? kfsw_boot_confirm_image() : 0;
 #else
 	ARG_UNUSED(value);
+	return 0;
 #endif
 }
 
 static uint32_t boot_attempts;
 static uint8_t boot_revert_reason;
 static uint8_t boot_trial_valid;
+static uint8_t boot_trial_quarantined;
 
 static void sample_attempts(void *value)
 {
@@ -168,17 +170,37 @@ static void sample_trial_valid(void *value)
 	*(uint8_t *)value = diagnostic.valid ? 1U : 0U;
 }
 
+static void sample_trial_quarantined(void *value)
+{
+	struct kfsw_boot_diagnostics diagnostic;
+
+	kfsw_boot_get_diagnostics(&diagnostic);
+	*(uint8_t *)value = diagnostic.quarantined;
+}
+
 static const struct kfsw_param_definition boot_param_definitions[] = {
-#if CONFIG_KFSW_GOLDEN
+#if CONFIG_KFSW_BOOT_STORE
 	{
 		.offset = 0x2bU,
 		.type = KFSW_PARAM_U8,
-		.flags = KFSW_PARAM_FLAG_PERSISTENT,
-		.name = "boot_retries",
-		.description = "Unconfirmed boots before the recovery image goes in; 1 to 10",
-		.value = &boot_retries,
-		.default_value = {.u8 = CONFIG_KFSW_GOLDEN_RETRIES},
-		.validate = validate_retries,
+		.flags = KFSW_PARAM_FLAG_PERSISTENT | KFSW_PARAM_FLAG_OWNER_STORE,
+		.name = "boot_attempts_left",
+		.description = "Attempts remaining; ground writes persist in early flash",
+		.value = &boot_attempts_left,
+		.default_value = {.u8 = CONFIG_KFSW_BOOT_ATTEMPTS_MAX},
+		.apply = apply_left,
+		.sample = sample_left,
+	},
+	{
+		.offset = 0x3cU,
+		.type = KFSW_PARAM_U8,
+		.flags = KFSW_PARAM_FLAG_PERSISTENT | KFSW_PARAM_FLAG_OWNER_STORE,
+		.name = "boot_attempts_max",
+		.description = "Boot attempt limit: 3, 5 or 10; raising never refills",
+		.value = &boot_attempts_max,
+		.default_value = {.u8 = CONFIG_KFSW_BOOT_ATTEMPTS_MAX},
+		.apply = apply_max,
+		.sample = sample_max,
 	},
 #endif
 	{
@@ -207,6 +229,15 @@ static const struct kfsw_param_definition boot_param_definitions[] = {
 		.description = "Trial diagnostics were recovered and saved successfully",
 		.value = &boot_trial_valid,
 		.sample = sample_trial_valid,
+	},
+	{
+		.offset = 0x3dU,
+		.type = KFSW_PARAM_U8,
+		.flags = KFSW_PARAM_FLAG_READ_ONLY,
+		.name = "boot_trial_quarantined",
+		.description = "Rejected trial records moved to boot-trial.bad since startup",
+		.value = &boot_trial_quarantined,
+		.sample = sample_trial_quarantined,
 	},
 	{
 		.offset = 0x00U,
@@ -286,7 +317,7 @@ static const struct kfsw_param_definition boot_param_definitions[] = {
 		.value = &boot_confirmed,
 		.default_value = {.u8 = 0U},
 		.validate = validate_confirmed,
-		.changed = apply_confirmed,
+		.apply = apply_confirmed,
 		.sample = sample_confirmed,
 	},
 };
