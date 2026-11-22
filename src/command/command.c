@@ -427,7 +427,7 @@ static int dispatch(const struct kfsw_command_definition *definition,
 		result->status = KFSW_COMMAND_FAILED;
 	}
 	record_outcome(KFSW_EVENT_COMMAND_INVOKED, definition->id, source, result->status);
-	return handler_result;
+	return (handler_result == -EBUSY) ? -EIO : handler_result;
 }
 
 int kfsw_command_invoke(const char *name, const struct kfsw_command_arg *args, size_t arg_count,

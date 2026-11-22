@@ -234,14 +234,20 @@ int kfsw_command_find(const char *name, struct kfsw_command_info *info);
 
 /**
  * Invoke a command on this node by name.
- * @retval -EBUSY An exclusive claim refused the call or the admission wait expired.
+ * Handler results are preserved. A handler return of -EBUSY is mapped to -EIO
+ * so callers can distinguish execution from refusal.
+ * @retval -EBUSY An exclusive claim refused the call or the admission wait expired;
+ * the handler did not run.
  */
 int kfsw_command_invoke(const char *name, const struct kfsw_command_arg *args, size_t arg_count,
 			struct kfsw_command_result *result);
 
 /**
  * Invoke a command on this node by wire identifier.
- * @retval -EBUSY An exclusive claim refused the call or the admission wait expired.
+ * Handler results are preserved. A handler return of -EBUSY is mapped to -EIO
+ * so callers can distinguish execution from refusal.
+ * @retval -EBUSY An exclusive claim refused the call or the admission wait expired;
+ * the handler did not run.
  */
 int kfsw_command_invoke_id(uint16_t id, const struct kfsw_command_arg *args, size_t arg_count,
 			   const struct kfsw_command_source *source,
