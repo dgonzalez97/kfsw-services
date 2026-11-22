@@ -25,8 +25,9 @@ static const struct kfsw_command_definition *registry[CONFIG_KFSW_COMMAND_MAX_CO
 static size_t registry_count;
 static bool registry_ready;
 
-/* Serializes invocation so a handler never runs concurrently with itself. */
+/* Handlers share state and must remain serialized across command definitions. */
 K_MUTEX_DEFINE(command_lock);
+static atomic_ptr_t running_command;
 
 /*
  * The claim. Held by one thread across a sequence of invocations, and read on
@@ -384,6 +385,7 @@ static int dispatch(const struct kfsw_command_definition *definition,
 		    const struct kfsw_command_source *source, struct kfsw_command_result *result)
 {
 	int handler_result;
+	const struct kfsw_command_definition *previous;
 
 	memset(result, 0, sizeof(*result));
 	if (!registry_ready) {
@@ -405,8 +407,19 @@ static int dispatch(const struct kfsw_command_definition *definition,
 		return -EBUSY;
 	}
 
-	k_mutex_lock(&command_lock, K_FOREVER);
+	if (k_mutex_lock(&command_lock, K_MSEC(CONFIG_KFSW_COMMAND_ADMISSION_MS)) != 0) {
+		const struct kfsw_command_definition *running = atomic_ptr_get(&running_command);
+
+		result->status = KFSW_COMMAND_BUSY;
+		(void)snprintf(result->detail, sizeof(result->detail), "%s refused while %s runs",
+			       definition->name,
+			       (running != NULL) ? running->name : "another command");
+		record_outcome(KFSW_EVENT_COMMAND_REJECTED, definition->id, source, result->status);
+		return -EBUSY;
+	}
+	previous = atomic_ptr_set(&running_command, (void *)definition);
 	handler_result = definition->handler(args, arg_count, source, result);
+	(void)atomic_ptr_set(&running_command, (void *)previous);
 	k_mutex_unlock(&command_lock);
 
 	/* Use FAILED when a handler returns an error without setting a status. */
@@ -414,7 +427,7 @@ static int dispatch(const struct kfsw_command_definition *definition,
 		result->status = KFSW_COMMAND_FAILED;
 	}
 	record_outcome(KFSW_EVENT_COMMAND_INVOKED, definition->id, source, result->status);
-	return handler_result;
+	return (handler_result == -EBUSY) ? -EIO : handler_result;
 }
 
 int kfsw_command_invoke(const char *name, const struct kfsw_command_arg *args, size_t arg_count,

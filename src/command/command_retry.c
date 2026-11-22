@@ -118,9 +118,9 @@ void kfsw_command_retry_dispatch(struct kfsw_command_retry_cache *cache, uint16_
 	count = kfsw_command_decode_args(request, args, ARRAY_SIZE(args), text);
 	if (count < 0) {
 		result->status = KFSW_COMMAND_INVALID_ARGUMENT;
-	} else {
-		(void)kfsw_command_invoke_id(request->command_id, args, (size_t)count, &origin,
-					     result);
+	} else if (kfsw_command_invoke_id(request->command_id, args, (size_t)count, &origin,
+					  result) == -EBUSY) {
+		return;
 	}
 	entry->result = *result;
 	entry->complete = true;
