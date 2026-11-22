@@ -84,7 +84,7 @@ enum kfsw_event_command_id {
 	KFSW_EVENT_COMMAND_INVOKED = 1,
 	/** A request named a command this node does not implement. */
 	KFSW_EVENT_COMMAND_UNKNOWN = 2,
-	/** A request failed validation before any handler ran. */
+	/** A request was refused before any handler ran. */
 	KFSW_EVENT_COMMAND_REJECTED = 3,
 };
 
@@ -154,9 +154,11 @@ struct kfsw_command_result {
 /**
  * Command implementation.
  *
- * Runs in the caller's thread under the command mutex. Remote requests use the
- * command server thread, not the CSP router. Arguments have been checked for
- * count and type. Text is NUL-terminated and valid only during the call.
+ * Runs in the caller's thread under the command mutex. Admission waits up to
+ * CONFIG_KFSW_COMMAND_ADMISSION_MS, then returns KFSW_COMMAND_BUSY without
+ * running the handler. Handler execution time is not limited. Remote requests
+ * use the command server thread, not the CSP router. Arguments have been checked
+ * for count and type. Text is NUL-terminated and valid only during the call.
  */
 typedef int (*kfsw_command_handler_t)(const struct kfsw_command_arg *args, size_t arg_count,
 				      const struct kfsw_command_source *source,
@@ -230,11 +232,17 @@ int kfsw_command_parse_arg(const char *text, enum kfsw_command_type type,
 /** Look up one registered command by name. Returns -ENOENT when absent. */
 int kfsw_command_find(const char *name, struct kfsw_command_info *info);
 
-/** Invoke a command on this node by name. */
+/**
+ * Invoke a command on this node by name.
+ * @retval -EBUSY An exclusive claim refused the call or the admission wait expired.
+ */
 int kfsw_command_invoke(const char *name, const struct kfsw_command_arg *args, size_t arg_count,
 			struct kfsw_command_result *result);
 
-/** Invoke a command on this node by wire identifier. */
+/**
+ * Invoke a command on this node by wire identifier.
+ * @retval -EBUSY An exclusive claim refused the call or the admission wait expired.
+ */
 int kfsw_command_invoke_id(uint16_t id, const struct kfsw_command_arg *args, size_t arg_count,
 			   const struct kfsw_command_source *source,
 			   struct kfsw_command_result *result);

@@ -424,6 +424,15 @@ config KFSW_COMMAND_MAX_COMMANDS
 	  Bounds the static registry. Startup fails if the composed definition
 	  sets exceed this count.
 
+config KFSW_COMMAND_ADMISSION_MS
+	int "Command admission wait in milliseconds"
+	range 1 900
+	default 500
+	help
+	  How long an invocation waits for the current handler to finish before
+	  returning BUSY without executing. This does not limit handler execution.
+	  The maximum is below the minimum remote reply timeout of 1000 ms.
+
 config KFSW_COMMAND_RETRY
 	bool "Ticketed command retries"
 	select CSPRNG_NEEDED
