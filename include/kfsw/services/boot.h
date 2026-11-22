@@ -29,11 +29,13 @@ enum kfsw_boot_revert_reason {
 	KFSW_BOOT_REVERT_REPLACED_UNKNOWN = 2,
 };
 
-/** Persistent trial diagnostics. Invalid values are UINT32_MAX / UINT8_MAX. */
+/** Trial diagnostics. Invalid attempts / revert reason are UINT32_MAX / UINT8_MAX. */
 struct kfsw_boot_diagnostics {
 	uint32_t attempts;
 	uint8_t revert_reason;
 	bool valid;
+	/** Rejected records moved to boot-trial.bad since startup; saturates at 255. */
+	uint8_t quarantined;
 };
 
 /** Copy the diagnostics, including their validity indication. */
@@ -47,7 +49,13 @@ int kfsw_boot_diagnostics_start(void);
  * @param image SHA256 image identity.
  * @param confirmed Whether the running image is confirmed.
  * @param revert_pending Whether MCUboot currently schedules a revert.
- * @return 0 after an atomic save; negative errno on failure, diagnostics invalid.
+ * A record that fails its checks (-EBADMSG: size, magic, field range or CRC) is
+ * renamed to boot-trial.bad, replacing the previous rejected record, before a
+ * fresh KBT1 record starts. An open or read error keeps the record and fails.
+ * An unconfirmed image starts at attempt one; a confirmed image starts at zero.
+ * @return 0 after an atomic save, including after quarantine. If quarantine fails,
+ * the original load error is returned and the rejected record is kept. Other
+ * failures return negative errno. Diagnostics are invalid on failure.
  */
 int kfsw_boot_record_image(const uint8_t image[KFSW_BOOT_IMAGE_ID_SIZE], bool confirmed,
 			   bool revert_pending);

@@ -144,6 +144,7 @@ static int apply_confirmed(const union kfsw_param_scalar *value)
 static uint32_t boot_attempts;
 static uint8_t boot_revert_reason;
 static uint8_t boot_trial_valid;
+static uint8_t boot_trial_quarantined;
 
 static void sample_attempts(void *value)
 {
@@ -167,6 +168,14 @@ static void sample_trial_valid(void *value)
 
 	kfsw_boot_get_diagnostics(&diagnostic);
 	*(uint8_t *)value = diagnostic.valid ? 1U : 0U;
+}
+
+static void sample_trial_quarantined(void *value)
+{
+	struct kfsw_boot_diagnostics diagnostic;
+
+	kfsw_boot_get_diagnostics(&diagnostic);
+	*(uint8_t *)value = diagnostic.quarantined;
 }
 
 static const struct kfsw_param_definition boot_param_definitions[] = {
@@ -220,6 +229,15 @@ static const struct kfsw_param_definition boot_param_definitions[] = {
 		.description = "Trial diagnostics were recovered and saved successfully",
 		.value = &boot_trial_valid,
 		.sample = sample_trial_valid,
+	},
+	{
+		.offset = 0x3dU,
+		.type = KFSW_PARAM_U8,
+		.flags = KFSW_PARAM_FLAG_READ_ONLY,
+		.name = "boot_trial_quarantined",
+		.description = "Rejected trial records moved to boot-trial.bad since startup",
+		.value = &boot_trial_quarantined,
+		.sample = sample_trial_quarantined,
 	},
 	{
 		.offset = 0x00U,

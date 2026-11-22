@@ -31,9 +31,11 @@
 #if CONFIG_KFSW_STORAGE
 #define RECORD_PATH KFSW_STORAGE_MOUNT_POINT "/boot-trial.dat"
 #define RECORD_TEMP_PATH KFSW_STORAGE_MOUNT_POINT "/boot-trial.tmp"
+#define RECORD_REJECTED_PATH KFSW_STORAGE_MOUNT_POINT "/boot-trial.bad"
 #endif
 
 K_MUTEX_DEFINE(boot_trial_lock);
+static uint8_t trial_quarantined;
 static struct kfsw_boot_diagnostics diagnostics = {
 	.attempts = UINT32_MAX,
 	.revert_reason = UINT8_MAX,
@@ -43,10 +45,27 @@ void kfsw_boot_get_diagnostics(struct kfsw_boot_diagnostics *value)
 {
 	k_mutex_lock(&boot_trial_lock, K_FOREVER);
 	*value = diagnostics;
+	value->quarantined = trial_quarantined;
 	k_mutex_unlock(&boot_trial_lock);
 }
 
 #if CONFIG_KFSW_STORAGE
+static int quarantine_record(int reason)
+{
+	int result = fs_rename(RECORD_PATH, RECORD_REJECTED_PATH);
+
+	if (result != 0) {
+		kfsw_log_error("Boot trial record rejected: %d; quarantine failed: %d", reason,
+			       result);
+		return result;
+	}
+	kfsw_log_error("Boot trial record rejected: %d; moved to boot-trial.bad", reason);
+	if (trial_quarantined < UINT8_MAX) {
+		trial_quarantined++;
+	}
+	return 0;
+}
+
 static int load_record(uint8_t *record)
 {
 	struct fs_file_t file;
@@ -113,12 +132,18 @@ int kfsw_boot_record_image(const uint8_t image[KFSW_BOOT_IMAGE_ID_SIZE], bool co
 		goto out;
 	}
 	result = load_record(record);
+	/* Only a record that fails its checks is moved aside. A read or open
+	 * error may be transient, and the record behind it may be sound.
+	 */
+	if (result == -EBADMSG) {
+		if (quarantine_record(result) != 0) {
+			goto out;
+		}
+		result = -ENOENT;
+	}
 	if (result == -ENOENT) {
 		memset(record, 0, sizeof(record));
 		memcpy(record, "KBT1", RECORD_MAGIC_SIZE);
-	} else if (result != 0) {
-		/* Keep rejected evidence rather than silently starting at one. */
-		goto out;
 	}
 	if ((record[RECORD_TRIAL_OFFSET] != 0U) &&
 	    (memcmp(&record[RECORD_IMAGE_OFFSET], image, KFSW_BOOT_IMAGE_ID_SIZE) != 0)) {
